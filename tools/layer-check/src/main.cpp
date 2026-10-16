@@ -295,7 +295,8 @@ namespace
         default:
         {
             // Unsized: four channels of the upload type.
-            return type == GL_FLOAT ? 16 : type == GL_HALF_FLOAT ? 8 : 4;
+            return type == GL_FLOAT ? 16 : type == GL_HALF_FLOAT ? 8
+                                                                 : 4;
         }
         }
     }
@@ -462,6 +463,7 @@ namespace
         ARC_WIPE,       ///< arcs[0].length sweeping, one SetConfig per frame.
         SEGMENT_TRAVEL, ///< segmentBoosts[0] moving round the ring, one SetConfig per frame.
         STOP_CHANGE,    ///< the colour stops replaced on the second frame, with a 0.5 s cross-fade.
+        OPAQUE_ONLY,    ///< debug.opaqueOnly switched on from the third frame on.
     } Motion;
 
     typedef struct LayerScene
@@ -540,7 +542,8 @@ namespace
     std::vector<LayerScene> BuildScenes()
     {
         std::vector<LayerScene> scenes;
-        auto add = [&](const std::string &id, const Config &c, Motion motion) {
+        auto add = [&](const std::string &id, const Config &c, Motion motion)
+        {
             LayerScene s;
             s.id = id;
             s.config = c;
@@ -622,6 +625,56 @@ namespace
             add("debug-overlays+stop-fade", c, Motion::STOP_CHANGE);
         }
         add("all@0.5+hue", AllLayers(), Motion::HUE);
+
+        // The shared buffer (NeonConfig::compositeScale, COMPOSITE_KEY). Each
+        // drawn twice: the main frame, and the debug view of the buffer over
+        // it, which is how its own texels reach a hash.
+        auto addShared = [&](const std::string &id, const Config &c, Motion motion)
+        {
+            add(id, c, motion);
+            Config view = c;
+            view.debug.bufferView = "NeonRenderer.Composite";
+            add(id + "+view", view, motion);
+        };
+        {
+            // At 0.5 the main frame must be byte-identical to neon/default@0.5.
+            Config c = NeonScene("default");
+            c.neon.resolutionScale = 0.5f;
+            c.neon.compositeScale = 0.5f;
+            addShared("shared/default@0.5", c, Motion::STILL);
+            // At 1 the main frame is the copy (pass 2s): still, and redrawn
+            // every frame under a rotating hue.
+            c.neon.compositeScale = 1.0f;
+            addShared("shared/default@1", c, Motion::STILL);
+            c.neon.hueRotationRate = 0.5f;
+            add("shared/default@1+hue", c, Motion::HUE);
+        }
+        {
+            // The copy under debug.opaqueOnly: once the flag is on, frames 2
+            // and 3 must equal shared/default@1+fill-only's - the fill alone,
+            // never the previous frame's whole layer.
+            Config c = NeonScene("default");
+            c.neon.resolutionScale = 0.5f;
+            c.neon.compositeScale = 1.0f;
+            c.neon.opaqueMode = OpaqueMode::INSIDE;
+            add("shared/default@1+opaque-only", c, Motion::OPAQUE_ONLY);
+            c.debug.opaqueOnly = true;
+            add("shared/default@1+fill-only", c, Motion::STILL);
+        }
+        {
+            // A one-sided glow over a shaped fill at the floor scale: the cut's
+            // back ramp and the fill's edge, a pixel of 0.4 wide, inside the
+            // main pair's boxes. Asked for at 0.25 too, which the floor draws
+            // at 0.4 - so its frames must equal the 0.4 scene's.
+            Config c = NeonScene("default");
+            c.neon.resolutionScale = 0.25f;
+            c.neon.glowSide = GlowSide::OUTSIDE;
+            c.neon.opaqueMode = OpaqueMode::INSIDE;
+            c.neon.compositeScale = 0.4f;
+            addShared("shared/outside@0.4", c, Motion::STILL);
+            c.neon.compositeScale = 0.25f;
+            addShared("shared/outside@0.25", c, Motion::STILL);
+        }
         return scenes;
     }
 
@@ -650,6 +703,11 @@ namespace
             {
                 c.neon.segmentBoosts[0].position = std::fmod(start.neon.segmentBoosts[0].position + 0.003f * f, 1.0f);
             }
+            break;
+        }
+        case Motion::OPAQUE_ONLY:
+        {
+            c.debug.opaqueOnly = frame >= 2;
             break;
         }
         case Motion::STOP_CHANGE:

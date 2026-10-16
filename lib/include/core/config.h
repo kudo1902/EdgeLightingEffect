@@ -445,11 +445,13 @@ namespace EdgeLighting
         /// buffer registry, with its contract in neon-renderer.h.
         ///
         /// 0, the default, makes none. Otherwise clamped to
-        /// [resolutionScale, 1]: never coarser than the reduced buffer it is
-        /// drawn from, whose glow it copies rather than shades again - only
-        /// the thin band round the edge is shaded a second time, at this
-        /// scale. Redrawn only on a frame the neon's own offscreen passes
-        /// run; a frame where nothing moved reuses it.
+        /// [max(resolutionScale, @ref COMPOSITE_MIN_SCALE), 1]: never coarser
+        /// than the reduced buffer it is drawn from, whose glow it copies
+        /// rather than shades again - only the thin band round the edge is
+        /// shaded a second time, at this scale - and never so coarse that
+        /// its masks' one-pixel ramps outgrow the main frame's bounds.
+        /// Redrawn only on a frame the neon's own offscreen passes run; a
+        /// frame where nothing moved reuses it.
         ///
         /// At 1 the neon's main frame becomes one copy of it: the layer is
         /// drawn once, into this buffer, instead of twice.
@@ -459,6 +461,16 @@ namespace EdgeLighting
         /// 1920 x 1080, 16.6 MB at 1. Released when it is set back to 0, or
         /// the layer is disabled.
         float compositeScale = 0.0f;
+
+        /// The coarsest scale @ref compositeScale is drawn at. The shared
+        /// buffer is drawn inside the main frame's ring and blit bounds, which
+        /// leave LIT_EDGE_SAFETY (2 full-res px) past the masks' ends and the
+        /// fill's mesh FILL_EDGE_SAFETY (3 px) past its own; the shared
+        /// buffer's ramps reach half a pixel of ITS grid further, up to 0.71
+        /// of one on a corner's diagonal - 0.71 / s full-res px. The one-sided
+        /// cut's back ramp is the tightest: 0.71 / s <= 2 needs s >= 0.355.
+        /// 0.4 leaves 0.24 px.
+        static constexpr float COMPOSITE_MIN_SCALE = 0.4f;
 
         /// Number of perimeter gather samples per fragment. Capped at
         /// @c NEON_MAX_LOOP_SAMPLES - the UBO and the shader's array are both

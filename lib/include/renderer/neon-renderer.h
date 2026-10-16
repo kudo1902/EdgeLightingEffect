@@ -364,7 +364,8 @@ namespace EdgeLighting
         /// noise, so a reader writing it to 8 bits dithers there itself.
         ///
         /// @par Where they lie
-        /// At the clamped scale s - [resolutionScale, 1] - over the whole
+        /// At the clamped scale s - [max(resolutionScale,
+        /// NeonConfig::COMPOSITE_MIN_SCALE), 1] - over the whole
         /// viewport: texel i covers caller px [i / s, (i + 1) / s], and its
         /// record is placed at origin 0, size texels / s (a pixel centre p
         /// reads uv = p / size). RGBA16F, or RGBA8 where the driver will not
@@ -497,7 +498,6 @@ namespace EdgeLighting
                                     const Config &config) override;
 
     public:
-
         /// The composited configuration changed. Records what moved and
         /// rebuilds only what that feeds: the loop samples (the geometry, the
         /// resolution scale, the sample count), the glow quad and the ring /
@@ -1344,10 +1344,10 @@ namespace EdgeLighting
         /// frame composites no glow.
         typedef struct FramePlan
         {
-            bool glowReady = false;     ///< The glow's buffers hold this frame's: the blit and the ring draw.
-            glm::vec2 centerFull{0.0f}; ///< The rect's centre, caller's framebuffer px, y up - what the one full-res transform is built from.
-            UVMap gatherUVFull;         ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
-            UVMap scaledUV;             ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
+            bool glowReady = false;       ///< The glow's buffers hold this frame's: the blit and the ring draw.
+            glm::vec2 centerFull{0.0f};   ///< The rect's centre, caller's framebuffer px, y up - what the one full-res transform is built from.
+            UVMap gatherUVFull;           ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
+            UVMap scaledUV;               ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
             LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) rather than shading (P2c), and the gain.
             /// The shared buffer is at scale 1 and holds this frame's: the main
             /// frame is one copy of it (P2s) in place of the fill, the blit and
@@ -2020,15 +2020,15 @@ namespace EdgeLighting
         /// (@ref setupFillGeometry) - a count that doubles as the "is it built"
         /// flag, so the fill and its geometry cannot disagree.
         Mesh mFillMesh{"NeonRenderer.Fill"};
-        Mesh mRingMesh{"NeonRenderer.Ring"};                           ///< The edge ring's annulus, FULL-RES rect-local px; see setupRingGeometry.
-        Mesh mBlitMesh{"NeonRenderer.BlitArea"};                       ///< The lit area outside the ring, the same; empty whenever nothing there can be lit.
-        Mesh mGatherMesh{"NeonRenderer.GatherArea"};                   ///< The gather pass's quad - pass 1b's and the ring's, padded - in SCALED rect-local px.
-        Annulus mGlowBounds;                                           ///< Pass 1b's quad; setupGeometry.
-        Annulus mGatherBounds;                                         ///< The gather quad; setupRingGeometry.
-        Annulus mRingBounds;                                           ///< The edge ring; setupRingGeometry.
-        glm::vec2 mScaledOuter{0.0f};                                  ///< What the blit reads of mScaledBuffer, half-extents in FULL-RES px; setupRingGeometry.
-        ShadeLimits mGlowLimits;                                       ///< Pass 1b and its field bake, scaled px; see @ref ShadeLimits.
-        ShadeLimits mRingLimits;                                       ///< The edge ring and its field bake, full-res px.
+        Mesh mRingMesh{"NeonRenderer.Ring"};         ///< The edge ring's annulus, FULL-RES rect-local px; see setupRingGeometry.
+        Mesh mBlitMesh{"NeonRenderer.BlitArea"};     ///< The lit area outside the ring, the same; empty whenever nothing there can be lit.
+        Mesh mGatherMesh{"NeonRenderer.GatherArea"}; ///< The gather pass's quad - pass 1b's and the ring's, padded - in SCALED rect-local px.
+        Annulus mGlowBounds;                         ///< Pass 1b's quad; setupGeometry.
+        Annulus mGatherBounds;                       ///< The gather quad; setupRingGeometry.
+        Annulus mRingBounds;                         ///< The edge ring; setupRingGeometry.
+        glm::vec2 mScaledOuter{0.0f};                ///< What the blit reads of mScaledBuffer, half-extents in FULL-RES px; setupRingGeometry.
+        ShadeLimits mGlowLimits;                     ///< Pass 1b and its field bake, scaled px; see @ref ShadeLimits.
+        ShadeLimits mRingLimits;                     ///< The edge ring and its field bake, full-res px.
 
         /// How deep inside the edge the glow can still write a non-zero pixel,
         /// FULL-RES px - the interior counterpart of @c mGlowLimits.quadMargin, which
@@ -2043,14 +2043,14 @@ namespace EdgeLighting
         float mGlowEmission = 0.0f;
 
         // --- Offscreen buffers, in pass order, each with what it holds ------
-        EmissionTable mEmission;   ///< P0 - see @ref EmissionTable.
-        GlowCoverTable mGlowCover; ///< P0b - see @ref GlowCoverTable.
-        GatherTarget mGather;      ///< P1a - see @ref GatherTarget.
-        GlowField mGlowField;      ///< P1f, read by P1c - see @ref GlowField.
-        RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
+        EmissionTable mEmission;    ///< P0 - see @ref EmissionTable.
+        GlowCoverTable mGlowCover;  ///< P0b - see @ref GlowCoverTable.
+        GatherTarget mGather;       ///< P1a - see @ref GatherTarget.
+        GlowField mGlowField;       ///< P1f, read by P1c - see @ref GlowField.
+        RingField mRingField;       ///< P1r, read by P2r - see @ref RingField.
         CompositeTarget mComposite; ///< P1s, the shared buffer - see @ref CompositeTarget.
-        OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
-        FramePlan mFramePlan;      ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.
+        OffscreenState mOffscreen;  ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
+        FramePlan mFramePlan;       ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.
 
         /// Pass 1b's target: the composited colour, one attachment at the
         /// reduced scale - full size at 1.0 - covering what the blit reads

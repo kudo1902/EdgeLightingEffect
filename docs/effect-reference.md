@@ -502,7 +502,7 @@ Draws the whole neon layer a second time, at this scale, into a buffer any
 layer or the host can read: `NeonRenderer.Composite` in the effect's buffer
 registry (`NeonRenderer::COMPOSITE_KEY`, contract in `neon-renderer.h`). The
 fill, the glow, the line, the one-sided cut and the cutoffs, premultiplied and
-NOT dithered, over the whole viewport. Clamped to [`resolutionScale`, 1]: its
+NOT dithered, over the whole viewport. Clamped to [max(`resolutionScale`, 0.4), 1]: its
 glow is the reduced buffer copied, and only the thin ring round the edge is
 shaded a second time, at this scale, so the line keeps its sampling floor there
 (a 1 px line comes out 2 px wide at 0.5). Redrawn only on frames the neon's

@@ -55,6 +55,28 @@ scale `s` into an offscreen buffer any layer or the host can read.
       `hairline`).
     - A still frame reuses the buffer (its version holds); set back to 0, it
       is released and no longer current.
+- **Review fixes (xhigh review of `01aca60`).**
+  - `debug.opaqueOnly` drew the previous frame's shared buffer at scale 1:
+    its early return left `mFramePlan.mainFromComposite` set, so the fill was
+    skipped and the stale copy drawn. The flag is now reset with `glowReady`.
+  - The shared pair is clamped to the main pair's boxes, whose lit band
+    leaves 2 px past the masks' ends; the shared ramps reach 0.71 / s px on a
+    corner's diagonal, so below s 0.355 the one-sided cut's back ramp (and
+    below ~0.28 a cutoff's, below ~0.24 the fill's past its 3 px mesh margin)
+    was cut off. The old comment's "down to 0.2" ignored the diagonal.
+    `GetCompositeScale` now floors s at `NeonConfig::COMPOSITE_MIN_SCALE`
+    (0.4).
+  - At scale 1 in the RGBA8 fallback the copy dithered 8-bit plateaus (R7's
+    contours); the main frame is copied only from a half-float buffer now.
+  - Gated since: `layer-check` has eleven `shared/` scenes (see its README).
+    Within one report, `shared/default@0.5` hashes as `neon/default@0.5`,
+    `+opaque-only`'s frames 2-3 as `+fill-only`'s, and `outside@0.25` as
+    `outside@0.4`. With the opaqueOnly fix undone, `+opaque-only` keeps the
+    copy's hash on frames 2-3, so the scene catches it. The existing 256
+    frames are identical to the report before the fixes; `partition` passes.
+    Not covered: the RGBA8 fallback (nothing forces it), and whether the
+    ramps at 0.4 are unclipped - the hashes pin the picture, they do not
+    measure it.
 - **Not done.**
   - The C ABI: skipped by request. No `el_*` call sets the scale or exports
     the texture yet.

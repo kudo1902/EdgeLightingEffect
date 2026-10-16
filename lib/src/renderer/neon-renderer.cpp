@@ -1187,18 +1187,22 @@ namespace EdgeLighting
         }
 
         /// @c NeonConfig::compositeScale as it is drawn: 0 for none, else
-        /// clamped to [resolutionScale, 1] - never coarser than the reduced
-        /// buffer the shared one copies its glow from. Below that the copy
-        /// would minify the reduced buffer, and the ring and the blit would
-        /// need wider bounds than the main frame builds the gather and the
-        /// reduced buffer for.
+        /// clamped to [max(resolutionScale, COMPOSITE_MIN_SCALE), 1]. Never
+        /// coarser than the reduced buffer the shared one copies its glow
+        /// from: below that the copy would minify the reduced buffer, and the
+        /// ring and the blit would need wider bounds than the main frame
+        /// builds the gather and the reduced buffer for. And never below
+        /// COMPOSITE_MIN_SCALE, where the shared masks' ramps - a pixel of s
+        /// wide - run past the main pair's boxes, which the shared pair is
+        /// clamped to (setupRingGeometry), and the fill's past its mesh.
         inline float GetCompositeScale(const Config &config)
         {
             if (!(config.neon.compositeScale > 0.0f))
             {
                 return 0.0f;
             }
-            return std::clamp(config.neon.compositeScale, GetClampedResolutionScale(config), 1.0f);
+            const float floorScale = std::max(GetClampedResolutionScale(config), NeonConfig::COMPOSITE_MIN_SCALE);
+            return std::clamp(config.neon.compositeScale, floorScale, 1.0f);
         }
 
         /// The shared buffer's ring at scale @p s, in FULL-RES px either side
@@ -2281,8 +2285,13 @@ namespace EdgeLighting
 
     void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
-        // Nothing for Render to composite until the glow's passes below say so.
+        // Nothing for Render to composite until the glow's passes below say so
+        // - the shared buffer's copy included: the returns just below (layer
+        // off, debug.opaqueOnly) leave the plan as they find it, and a copy
+        // left on from the frame before drew that frame's whole layer, glow
+        // and all, over a fill-only frame.
         mFramePlan.glowReady = false;
+        mFramePlan.mainFromComposite = false;
         if (!config.neon.enable)
         {
             return;
@@ -2648,7 +2657,14 @@ namespace EdgeLighting
         mFramePlan.scaledUV = scaledUV;
         mFramePlan.ringField = ringField;
         // At scale 1 the shared buffer is the main frame: phase 2 copies it.
-        mFramePlan.mainFromComposite = glowReady && compositeReady && compositeScale == 1.0f;
+        // Only from half float (SCALED_FORMATS' first tier): in the RGBA8
+        // fallback the buffer's slow gradients are 8-bit plateaus before the
+        // copy dithers them, and noise on an exact level rounds back to it -
+        // R7's contour rings, round a ring the direct passes dither from
+        // float. There the main frame is drawn directly and the shared buffer
+        // is a product only.
+        mFramePlan.mainFromComposite =
+            glowReady && compositeReady && compositeScale == 1.0f && mComposite.format == 0;
 
         if (glowReady)
         {
@@ -4010,7 +4026,10 @@ namespace EdgeLighting
         // where they already cover, and the main frame's buffers do not grow
         // with it (grown, their regions moved the main frame by a level on a
         // few pixels). The wider ramps still fit: LIT_EDGE_SAFETY (2 px) holds
-        // the half pixel of s their ends move out, down to s 0.2.
+        // the up to 0.71 pixel of s (a corner's diagonal) their ends move out
+        // down to s 0.355, which is why GetCompositeScale floors s at
+        // NeonConfig::COMPOSITE_MIN_SCALE (0.4). The fill's mesh, built for
+        // full res and drawn at s by drawFill, holds the same way.
         const float compositeScale = GetCompositeScale(config);
         glm::vec2 ringOuterShared(0.0f);
         glm::vec2 ringHoleShared(0.0f);

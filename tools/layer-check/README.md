@@ -47,6 +47,22 @@ The scenes:
 - Droplets.
 - The debug overlays, still and during a colour-stop cross-fade.
 - All five layers at once below 1.0.
+- The neon's shared buffer (`compositeScale`, `NeonRenderer.Composite`), each
+  scene twice - the main frame, and `+view`, the debug view of the buffer over
+  it, so the buffer's own texels are hashed:
+  - `shared/default@0.5`: the buffer at 0.5. Its main frame must hash as
+    `neon/default@0.5`'s - turning the buffer on moves no main-frame pixel.
+  - `shared/default@1`, still and `+hue`: the main frame as the copy (pass 2s).
+  - `shared/default@1+opaque-only`: `debug.opaqueOnly` switched on from the
+    third frame. Frames 2 and 3 must hash as `shared/default@1+fill-only`'s -
+    the fill alone, never the previous frame's copy.
+  - `shared/outside@0.4` and `@0.25`: a one-sided glow over a shaped fill at
+    the floor scale (`NeonConfig::COMPOSITE_MIN_SCALE`). 0.25 is drawn at the
+    floor, so every frame of the pair must hash alike.
+
+  Those equalities are within one report; `diff` against another report only
+  says whether a frame moved. Nothing here forces the RGBA8 fallback, so the
+  scale-1 copy's half-float-only rule is not covered.
 - The debug view on every buffer current in that frame.
 
 **The allocation counts are not the library's alone.** The tool replaces the
