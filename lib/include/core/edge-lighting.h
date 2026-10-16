@@ -8,6 +8,8 @@
 #include "core/read-list.h"
 #include <vector>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace EdgeLighting
@@ -110,6 +112,28 @@ namespace EdgeLighting
         /// and leave the list with them, so nothing listed points into a
         /// renderer that is gone. See @ref BufferRegistry.
         const BufferRegistry &GetBufferRegistry() const;
+
+        /// @brief Declare that the HOST binds the buffer under @p key after
+        ///        each @ref Render, as a renderer declares a read in
+        ///        @c BaseRenderer::CollectReads.
+        ///
+        /// A producer makes an on-demand product only while something reads
+        /// it (@c BaseRenderer::IsBufferWanted) - the neon's shared buffer
+        /// (@c NeonRenderer::COMPOSITE_KEY) is one - and a host is not a
+        /// renderer, so it has no @c CollectReads to say so from. This is that
+        /// declaration: added to every frame's reads, in the RENDER phase,
+        /// with no reader (the schedule orders no @c Prepare after it), until
+        /// @ref RemoveHostRead. Read the record through @ref GetBufferRegistry
+        /// once @ref Render returns. A key that names no buffer is logged by
+        /// the read diagnostics, as a renderer's would be.
+        ///
+        /// @returns false for an empty key, one longer than any buffer's
+        ///          (@c BUFFER_KEY_CAPACITY), or one already declared.
+        bool AddHostRead(std::string_view key);
+
+        /// @brief Withdraw a read @ref AddHostRead declared.
+        /// @returns false if @p key was not declared.
+        bool RemoveHostRead(std::string_view key);
 
         /// @brief Attach a standalone animation to be advanced and composited
         ///        each @ref Update. Ignores null and duplicates.
@@ -259,6 +283,10 @@ namespace EdgeLighting
         /// The order @ref Render calls @c Prepare in, from the frame's reads -
         /// see @ref PrepareSchedule.
         PrepareSchedule mPrepareSchedule;
+        /// The keys the host declared it reads (@ref AddHostRead), added to
+        /// every frame's reads. Changed only by the host, so a frame
+        /// allocates nothing for it.
+        std::vector<std::string> mHostReads;
         /// Moves whenever a renderer joins or leaves @c mRenderers - what the
         /// schedule's read diagnostics compare, rather than the renderers'
         /// addresses, which a new renderer can reuse.

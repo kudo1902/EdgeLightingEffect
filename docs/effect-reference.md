@@ -505,8 +505,11 @@ fill, the glow, the line, the one-sided cut and the cutoffs, premultiplied and
 NOT dithered, over the whole viewport. Clamped to [max(`resolutionScale`, 0.4), 1]: its
 glow is the reduced buffer copied, and only the thin ring round the edge is
 shaded a second time, at this scale, so the line keeps its sampling floor there
-(a 1 px line comes out 2 px wide at 0.5). Redrawn only on frames the neon's
-offscreen passes run, reused while nothing moves, released at 0. At 1 the frame
+(a 1 px line comes out 2 px wide at 0.5). Drawn only while something reads it
+- a layer's declared read, the debug buffer view, or a C++ host's
+`EdgeLightingEffect::AddHostRead(NeonRenderer::COMPOSITE_KEY)` - and then only
+on frames the neon's offscreen passes run; reused while nothing moves, released
+at 0 or once unread for 5 s. At 1 the frame
 on screen becomes one copy of it - the layer drawn once, not twice - within 1
 level of drawing directly. Turning it on does not move the main frame. Memory at
 1920 x 1080: 4.1 MB at 0.5, 16.6 MB at 1 (RGBA16F). Not yet in the C ABI.

@@ -134,6 +134,12 @@ void main() {
     // the texture read. A cutoff on the side the cut already culls is
     // neutralised (neonEdge), as neon.frag neutralises it, because the cut
     // subsumes it; a disabled one saturates its ramp to exactly 1.
+#ifdef NEON_BLIT_COPY
+    // Pass 2s, the shared buffer copied onto the caller's framebuffer: the
+    // buffer holds the masks already, so the copy is the texture read alone
+    // (NeonRenderer::renderCompositeCopyPass), with no mask uniforms to set.
+    fragColor = src;
+#else
     float cut = neonEdgeMask(gl_FragCoord.xy - uRectCenter, uRectSize * 0.5, uCornerRadius, uGlowSide,
                              uGlowSideSoftness, uInsideCutoff, uInsideCutoffSoftness, uOutsideCutoff,
                              uOutsideCutoffSoftness);
@@ -144,6 +150,7 @@ void main() {
     // exact 1.0, so that path stays bit-identical to the plain texture read
     // this shader used to be.
     fragColor = src * cut;
+#endif
 
     // The output dither (neon-grade.glsl): this is the write to the caller's
     // framebuffer, so the place the reduced buffer's half-float precision

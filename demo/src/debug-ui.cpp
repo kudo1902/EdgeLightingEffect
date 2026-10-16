@@ -930,7 +930,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         {
             ImGui::SetTooltip("Draws the whole layer a second time at this scale into\n"
                               "NeonRenderer.Composite, a buffer any layer or the host\n"
-                              "can read (Debug > Buffer View shows it). 0 = off.\n"
+                              "can read - drawn only while one does (Debug > Buffer View\n"
+                              "on NeonRenderer.Composite is one). 0 = off.\n"
                               "Clamped to [max(Res Scale, 0.4), 1]; at 1 the frame on\n"
                               "screen is one copy of it. Reused while nothing moves.");
         }

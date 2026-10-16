@@ -36,6 +36,7 @@ line per fact:
 | `mem SCENE TEX BUF` | bytes of GL textures and buffers alive after those frames, from `glTexImage2D` / `glBufferData` |
 | `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) in each of 8 more frames - the GL driver's included (below) |
 | `published NAME#N WxH chC` | each buffer the all-layers frame left current in the buffer registry - key `NAME[N]`, or `NAME` for N = 0; the `#N` form is S0's, kept so reports from either side of the string keys compare |
+| `published-in SCENE NAME#N WxH chC` | for the `shared/` scenes, `NeonRenderer.Composite` when that scene left it current |
 
 The scenes:
 
@@ -52,6 +53,10 @@ The scenes:
   it, so the buffer's own texels are hashed:
   - `shared/default@0.5`: the buffer at 0.5. Its main frame must hash as
     `neon/default@0.5`'s - turning the buffer on moves no main-frame pixel.
+  - `shared/default@0.5+host-read`: the same, read by the host
+    (`EdgeLightingEffect::AddHostRead`) rather than a layer. It has a
+    `published-in` line for `NeonRenderer.Composite#0`; `shared/default@0.5`,
+    with nothing reading the buffer, has none - it is drawn only while read.
   - `shared/default@1`, still and `+hue`: the main frame as the copy (pass 2s).
   - `shared/default@1+opaque-only`: `debug.opaqueOnly` switched on from the
     third frame. Frames 2 and 3 must hash as `shared/default@1+fill-only`'s -

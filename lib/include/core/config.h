@@ -450,16 +450,21 @@ namespace EdgeLighting
         /// rather than shades again - only the thin band round the edge is
         /// shaded a second time, at this scale - and never so coarse that
         /// its masks' one-pixel ramps outgrow the main frame's bounds.
-        /// Redrawn only on a frame the neon's own offscreen passes run; a
-        /// frame where nothing moved reuses it.
+        /// Drawn only while something reads it - a layer's declared read, or a
+        /// host's @c EdgeLightingEffect::AddHostRead - and then only on a
+        /// frame the neon's own offscreen passes run; a frame where nothing
+        /// moved reuses it.
         ///
-        /// At 1 the neon's main frame becomes one copy of it: the layer is
-        /// drawn once, into this buffer, instead of twice.
+        /// At 1 the neon's main frame becomes one copy of it, read or not -
+        /// the main frame is then its reader: the layer is drawn once, into
+        /// this buffer, instead of twice (half float only; in the RGBA8
+        /// fallback the main frame is drawn directly).
         ///
         /// Memory: an RGBA16F buffer (RGBA8 where the driver will not render
         /// half float) covering the viewport at this scale: 4.1 MB at 0.5 at
-        /// 1920 x 1080, 16.6 MB at 1. Released when it is set back to 0, or
-        /// the layer is disabled.
+        /// 1920 x 1080, 16.6 MB at 1. Released when it is set back to 0, when
+        /// the layer is disabled, or once nothing has read it for 5 s of frame
+        /// time.
         float compositeScale = 0.0f;
 
         /// The coarsest scale @ref compositeScale is drawn at. The shared

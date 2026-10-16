@@ -267,8 +267,19 @@ namespace EdgeLightingDemo
                   << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)" : " (full res, direct)")
                   << "   numSamples " << n.numSamples
                   << ", gradientLutSize " << n.gradientLutSize << "\n";
-        std::cout << "Shared buffer " << std::setprecision(3) << n.compositeScale
-                  << (n.compositeScale > 0.0f ? " (NeonRenderer.Composite drawn)" : " (off)") << "\n";
+        // The scale the library draws it at (clamped to
+        // [max(resolutionScale, COMPOSITE_MIN_SCALE), 1]), not the one asked
+        // for - as the debug panel's "Drawn at" line shows it.
+        const float sharedAt =
+            n.compositeScale > 0.0f
+                ? std::clamp(n.compositeScale,
+                             std::max(n.resolutionScale, EdgeLighting::NeonConfig::COMPOSITE_MIN_SCALE), 1.0f)
+                : 0.0f;
+        std::cout << "Shared buffer " << std::setprecision(3) << sharedAt
+                  << (sharedAt <= 0.0f   ? " (off)"
+                      : sharedAt >= 1.0f ? " (NeonRenderer.Composite; the frame is a copy of it)"
+                                         : " (NeonRenderer.Composite, drawn while read)")
+                  << "\n";
 
         // -------------------------------------------------------------------
         // Droplets. The band's SIDE is not in this sub-config at all - it is

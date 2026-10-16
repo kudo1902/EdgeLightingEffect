@@ -77,6 +77,32 @@ scale `s` into an offscreen buffer any layer or the host can read.
     Not covered: the RGBA8 fallback (nothing forces it), and whether the
     ramps at 0.4 are unclipped - the hashes pin the picture, they do not
     measure it.
+- **Second review (the C++ as it stood after the fixes), all thirteen
+  findings applied.**
+  - Demand: pass 1s runs only while something reads `COMPOSITE_KEY`
+    (`IsBufferWanted`) or the scale is 1. A C++ host declares its read with
+    the new `EdgeLightingEffect::AddHostRead` / `RemoveHostRead` (a read with
+    no reader, RENDER phase). An unread buffer is released by `Update` after
+    `GLOW_COVER_RELEASE_SECONDS`, and never reused across a frame it was not
+    made (`mComposite.cache`, its one reuse key, now with the scale in it).
+  - Scale 1: pass 1r is no longer decided or baked on a frame the main frame
+    is the copy; the copy is its own program (`mCopyShader`, `neon-blit.frag`
+    with `NEON_BLIT_COPY` - no mask, no fabricated `EdgeMask`) and draws only
+    the blit's and the ring's meshes when there is no fill (the viewport
+    with one).
+  - One construction: `GetRingBlitPair(config, scale, destScale, ...)` builds
+    both the main pair (destScale 1) and the shared one, replacing
+    `GetCompositeRingExtent` and the hand copy; `GetRingWidth` and
+    `GetRingExtent` take the destination scale. `setupCompositeGeometry`
+    builds the shared meshes, so a change to `compositeScale` alone rebuilds
+    those and nothing else - no field invalidation, no `setupGeometry`, the
+    main frame's buffers kept.
+  - Cleanups: neon.frag's mask scaling goes through `ScaleEdgeMask` too (a
+    disabled cutoff now stays at its sentinel at every scale; it used to be
+    multiplied, and read as a live cutoff 250 000 px away below 0.5);
+    `drawFill` takes its program's builder rather than testing which program
+    it was handed; pass 1s is declared and defined after pass 1r, 2s before
+    2b; pass 1s hands blending back off; the demo prints the drawn scale.
 - **Not done.**
   - The C ABI: skipped by request. No `el_*` call sets the scale or exports
     the texture yet.

@@ -260,7 +260,9 @@ and dropped; the product stays.
 
 `NeonRenderer.Composite` (`NeonRenderer::COMPOSITE_KEY`; in progress, see the
 progress log) is the whole neon layer - fill, glow, line, cut and cutoffs - at
-`NeonConfig::compositeScale` `s`, made only while that is above 0. Pass 1s
+`NeonConfig::compositeScale` `s`, made only while that is above 0 and
+something reads it - a layer's declared read or the host's
+`EdgeLightingEffect::AddHostRead` - or `s` is 1. Pass 1s
 draws it in phase 1 with the main frame's three passes, each with a program
 object of its own:
 
@@ -270,7 +272,8 @@ object of its own:
 - the **ring**, shaded again at `s` from the gather.
 
 So only the ring band is shaded twice. It is undithered (a reader dithers when
-it writes 8 bits), reused on frames where nothing moved, and released at 0. At
+it writes 8 bits), reused on frames where nothing moved, and released at 0 or
+once unread for 5 s. At
 `s` = 1 the main frame becomes one copy of it, so the layer is drawn once
 instead of twice. Turning it on leaves the main frame byte-identical: its meshes
 are clamped to the main frame's area, so the main frame's buffers do not grow.

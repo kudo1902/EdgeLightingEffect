@@ -471,6 +471,8 @@ namespace
         std::string id;
         Config config;
         Motion motion = Motion::STILL;
+        /// Keys the host declares it reads (EdgeLightingEffect::AddHostRead).
+        std::vector<std::string> hostReads;
     } LayerScene;
 
     std::string ScaleTag(float scale)
@@ -642,6 +644,11 @@ namespace
             c.neon.resolutionScale = 0.5f;
             c.neon.compositeScale = 0.5f;
             addShared("shared/default@0.5", c, Motion::STILL);
+            // Read by the host instead of a layer: drawn and listed among the
+            // published buffers, where shared/default@0.5 - nothing reading
+            // it - lists none; the main frame as neon/default@0.5's.
+            add("shared/default@0.5+host-read", c, Motion::STILL);
+            scenes.back().hostReads.push_back("NeonRenderer.Composite");
             // At 1 the main frame is the copy (pass 2s): still, and redrawn
             // every frame under a rotating hue.
             c.neon.compositeScale = 1.0f;
@@ -803,6 +810,10 @@ namespace
         SceneResult result;
         EdgeLightingEffect effect;
         CreateEffect(effect);
+        for (const std::string &key : scene.hostReads)
+        {
+            effect.AddHostRead(key);
+        }
         effect.SetConfig(scene.config);
         const bool perFrame = ChangesConfigPerFrame(scene.motion);
         for (int f = 0; f < HASHED_FRAMES; ++f)
@@ -932,6 +943,19 @@ namespace
                 for (const std::string &p : r.published)
                 {
                     out << "published " << p << "\n";
+                }
+            }
+            // The shared buffer's scenes name what they left current, with
+            // the scene: whether NeonRenderer.Composite was made is the point
+            // of several of them (it is drawn only while read).
+            if (scene.id.rfind("shared/", 0) == 0)
+            {
+                for (const std::string &p : r.published)
+                {
+                    if (p.rfind("NeonRenderer.Composite#", 0) == 0)
+                    {
+                        out << "published-in " << scene.id << " " << p << "\n";
+                    }
                 }
             }
             std::fprintf(stderr, "layer-check: %s\n", scene.id.c_str());

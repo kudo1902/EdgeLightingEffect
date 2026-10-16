@@ -95,6 +95,12 @@ namespace EdgeLighting
         {
             renderer->CollectReads(mActiveConfig, reads);
         }
+        // And the host's (AddHostRead): bound after this call returns, so in
+        // the RENDER phase, with no reader to order a Prepare after.
+        for (const std::string &key : mHostReads)
+        {
+            reads.Add(nullptr, key, ReadPhase::RENDER);
+        }
         // Two phases (3.3): every layer's offscreen passes first, then every
         // layer onto the caller's framebuffer, so that target is drawn in one
         // unbroken run - and any layer's Render can read what any layer's
@@ -124,6 +130,36 @@ namespace EdgeLighting
     const BufferRegistry &EdgeLightingEffect::GetBufferRegistry() const
     {
         return mResourceContext->GetBufferRegistry();
+    }
+
+    bool EdgeLightingEffect::AddHostRead(std::string_view key)
+    {
+        // A key no buffer could have: ReadList::Add would keep it cut and
+        // incomplete, which never matches - refused here instead, so a host
+        // learns at the call rather than from a log.
+        if (key.empty() || key.size() >= BUFFER_KEY_CAPACITY)
+        {
+            LOG_E("EdgeLightingEffect: AddHostRead given an empty key or one over %d chars - ignored.",
+                  int(BUFFER_KEY_CAPACITY) - 1);
+            return false;
+        }
+        if (std::find(mHostReads.begin(), mHostReads.end(), key) != mHostReads.end())
+        {
+            return false;
+        }
+        mHostReads.emplace_back(key);
+        return true;
+    }
+
+    bool EdgeLightingEffect::RemoveHostRead(std::string_view key)
+    {
+        const auto it = std::find(mHostReads.begin(), mHostReads.end(), key);
+        if (it == mHostReads.end())
+        {
+            return false;
+        }
+        mHostReads.erase(it);
+        return true;
     }
     const Config &EdgeLightingEffect::GetActiveConfig() const { return mActiveConfig; }
 
