@@ -553,7 +553,9 @@ Update(dt) ------------> clock.Update(dt) -> animations.Update(clockDt)
                           if active changed: --------------------------> OnConfigChanged(active)
                         for each renderer: --------------------------> Update(dt, clockTime, active)
 
-Render(w, h) ---------> for each renderer, in layer order: ----------> Prepare(w, h, clockTime, active)
+Render(w, h) ---------> for each renderer: -------------------------> CollectReads(active, reads)
+                        for each renderer, in layer order (a Prepare
+                        that reads a product after its producer): ---> Prepare(w, h, clockTime, active)
                         then for each renderer, in layer order: -----> Render(w, h, clockTime, active)
 ```
 

@@ -5599,8 +5599,11 @@ no search - and `IsGlowCoverUnread` is evaluated once a frame, by `Render`,
 which hands the result to `publishBuffers` (`BufferUse::glowCoverRead`). The
 marks still run whether or not anything reads the registry. With the list made
 of registered records a UI is complete before anything is selected - the case
-a "wanted" flag alone would have broken - and skipping the marks for a buffer
-nobody reads is the plan's S4 (read declarations).
+a "wanted" flag alone would have broken. S4 (read declarations, 2026-10-16)
+built the "wanted" test, `IsBufferWanted`, and left the marks unconditional on
+purpose: a mark is one store, and a UI shows which buffers are current, which
+skipping unread marks would blank. Demand gates on-demand products, of which
+none exists yet.
 
 ### I71. The C ABI accepts a buffer name it can never hand back - FIXED
 

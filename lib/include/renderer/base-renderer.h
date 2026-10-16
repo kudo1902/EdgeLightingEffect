@@ -3,6 +3,7 @@
 
 #include "core/config.h"
 #include "core/buffer-registry.h"
+#include "core/read-list.h"
 #include <memory>
 #include <vector>
 
@@ -64,6 +65,21 @@ namespace EdgeLighting
         /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
         virtual void Update(float deltaTime, float time, const Config &config) = 0;
+
+        /// Declares every buffer this renderer will bind this frame, by key,
+        /// and in which phase: @c out.Add(this, key, ReadPhase::...). Called by
+        /// @c EdgeLightingEffect::Render at the top of every frame, before any
+        /// @ref Prepare, with the frame's config. Nothing by default - a
+        /// renderer that reads no other renderer's buffer declares nothing.
+        ///
+        /// Declare exactly what the frame will bind - the read list is how a
+        /// producer knows a product is wanted (@ref IsBufferWanted), how the
+        /// effect orders a @ref Prepare after the one that makes what it reads
+        /// (@ref PrepareSchedule), and how a read of a key nothing produces
+        /// gets logged. A read declared and not bound costs a product made for
+        /// nothing; a read bound and not declared may find the product not
+        /// made, or not made yet.
+        virtual void CollectReads(const Config & /*config*/, ReadList & /*out*/) const {}
 
         /// The OFFSCREEN half of a frame: every pass this renderer draws into
         /// buffers of its own (@ref RenderOffscreen), and nothing onto the
@@ -203,6 +219,13 @@ namespace EdgeLighting
         /// The context's registry, or nullptr without one - for a layer that
         /// reads what other layers made.
         const BufferRegistry *GetBufferRegistry() const;
+
+        /// Whether any renderer of the effect declared a read of buffer
+        /// @p handle this frame (@ref CollectReads) - for a producer that
+        /// makes a product only on demand. Valid from the top of the frame,
+        /// so in @ref RenderOffscreen and @ref Render. False without a
+        /// context: no other renderer can read it.
+        bool IsBufferWanted(BufferHandle handle) const;
 
     private:
         /// One buffer this renderer registered: what it was registered with,

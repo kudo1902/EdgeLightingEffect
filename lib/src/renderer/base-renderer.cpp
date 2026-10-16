@@ -111,6 +111,16 @@ namespace EdgeLighting
         return mResourceContext ? &mResourceContext->GetBufferRegistry() : nullptr;
     }
 
+    bool BaseRenderer::IsBufferWanted(BufferHandle handle) const
+    {
+        if (!mResourceContext || handle < 0 || static_cast<size_t>(handle) >= mOwnedBuffers.size())
+        {
+            return false;
+        }
+        const OwnedBuffer &owned = mOwnedBuffers[size_t(handle)];
+        return owned.key[0] != '\0' && mResourceContext->GetReadList().IsWanted(owned.key);
+    }
+
     void BaseRenderer::registerOwned(OwnedBuffer &owned)
     {
         owned.slot = BufferRegistry::INVALID_SLOT;

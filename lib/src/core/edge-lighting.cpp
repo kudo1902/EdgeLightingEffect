@@ -69,14 +69,24 @@ namespace EdgeLighting
     {
         // A new frame: no buffer is current until its producer marks it, so a
         // layer that draws nothing has nothing current.
-        mResourceContext->GetBufferRegistry().BeginFrame();
+        BufferRegistry &registry = mResourceContext->GetBufferRegistry();
+        ReadList &reads = mResourceContext->GetReadList();
+        registry.BeginFrame();
         float t = mClock.GetTime();
-        // Two phases (docs/resource-sharing-plan.md 3.3): every layer's
-        // offscreen passes first, then every layer onto the caller's
-        // framebuffer, so that target is drawn in one unbroken run - and any
-        // layer's Render can read what any layer's Prepare made. Both in
-        // layer order.
+        // What every layer will bind this frame, before any of it is made
+        // (docs/resource-sharing-plan.md 3.4): producers read it for demand,
+        // and the schedule below for order.
+        reads.Clear();
         for (auto &renderer : mRenderers)
+        {
+            renderer->CollectReads(mActiveConfig, reads);
+        }
+        // Two phases (3.3): every layer's offscreen passes first, then every
+        // layer onto the caller's framebuffer, so that target is drawn in one
+        // unbroken run - and any layer's Render can read what any layer's
+        // Prepare made. Render in layer order; Prepare too, but for a Prepare
+        // that reads another layer's product, which runs after its producer.
+        for (BaseRenderer *renderer : mPrepareSchedule.Build(mRenderers, reads, registry))
         {
             renderer->Prepare(viewportWidth, viewportHeight, t, mActiveConfig);
         }

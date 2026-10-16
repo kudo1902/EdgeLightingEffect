@@ -108,6 +108,16 @@ namespace EdgeLighting
         }
     }
 
+    void DebugRenderer::CollectReads(const Config &config, ReadList &out) const
+    {
+        // The one buffer this layer binds: the view's, under the gate Render
+        // draws it under.
+        if (config.debug.enable && !config.debug.bufferView.empty())
+        {
+            out.Add(this, config.debug.bufferView, ReadPhase::RENDER);
+        }
+    }
+
     void DebugRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.debug.enable)

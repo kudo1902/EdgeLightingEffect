@@ -62,9 +62,12 @@ Two calls per frame, from the host:
    every renderer.
 4. Call `Update(dt, clockTime, active)` on every renderer.
 
-**`Render(w, h)`** - in two phases: `Prepare(w, h, clockTime, active)` on every
-renderer, then `Render(w, h, clockTime, active)` on every renderer, both in
-registration order. `Prepare` draws only into a layer's own buffers
+**`Render(w, h)`** - first `CollectReads(active, reads)` on every renderer,
+which declares the buffers each will bind this frame; then, in two phases,
+`Prepare(w, h, clockTime, active)` on every renderer - in registration order,
+except that one whose `Prepare` reads another's buffer runs after it
+(`PrepareSchedule`) - and `Render(w, h, clockTime, active)` on every renderer,
+in registration order. `Prepare` draws only into a layer's own buffers
 (`RenderOffscreen`), `Render` only onto the caller's framebuffer, so that
 target is drawn in one unbroken run and any layer's `Render` can read what any
 layer's `Prepare` made. A renderer drawn on its own, with no effect, runs its
@@ -89,6 +92,7 @@ four pure virtuals and one optional one:
 | `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
 | `RenderOffscreen(w, h, t, cfg)` (protected, optional) | every frame, through `Prepare`, before any layer's `Render` | Draw into the renderer's own buffers only. The neon's tables, gather and reduced buffer; the flare's and spotlight's reduced buffers below 1.0. A renderer that overrides it calls `EnsurePrepared` first thing in `Render`. |
 | `Render(w, h, t, cfg)` | every frame | Draw onto the caller's framebuffer. |
+| `CollectReads(cfg, out)` (optional) | every frame, before any `Prepare` | Declare every other renderer's buffer this one will bind, by key and phase. Only the debug view declares one today. |
 
 Five renderers ship, registered by the demo in this order - which is also the
 compositing order, since they blend onto one another in the order they draw:

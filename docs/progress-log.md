@@ -5,9 +5,40 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S3: the two-phase frame
+## 2026-10-16 - Sharing plan S4: read declarations
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S3 (`d9e1d95`). AMD Radeon Pro 5300M, Debug build. Section 7.5 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - Every renderer declares the buffers it will bind this frame
+    (`CollectReads`), into the context's `ReadList`.
+  - Producers can ask `IsBufferWanted`.
+  - The effect calls `Prepare` in `PrepareSchedule`'s order: compositing
+    order, except that a `Prepare` reading another layer's product runs after
+    it. A cycle is refused, logged, and drawn in compositing order.
+  - The debug view declares its selection.
+  - The schedule logs a read of a key nothing registered, an overlong key,
+    and a `DEBUG` buffer read outside the debug layer - once per read.
+- **Measured.**
+  - All 248 `layer-check` frames identical to S3; memory and allocation
+    counts unchanged; no log line in any of the 62 scenes.
+  - `check` and `partition` pass.
+  - A probe with two host renderers covered the order under each kind of
+    read and a cycle refused and logged once over 6 animated frames. Each
+    diagnostic logged exactly once.
+- **Departures.**
+  - The diagnostics log when a read first appears, not once per config
+    change: an animation changes the config every frame.
+  - Marks stay ungated by demand, against I70's note: a UI shows what is
+    current.
+- **Open.** Next is S5: the shared quad, and the debug strip reading the
+  neon's live gradient ring.
+
+## 2026-10-16 - Sharing plan S3: the two-phase frame
+
+Committed as `d9e1d95`, on `design_system_sharing_resources_between_renderers`, measured
 against S2 (`d6d2175`). AMD Radeon Pro 5300M. Section 7.4 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

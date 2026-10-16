@@ -5,6 +5,7 @@
 #include "animation/clock.h"
 #include "animation/animation.h"
 #include "renderer/base-renderer.h"
+#include "core/read-list.h"
 #include <vector>
 #include <memory>
 
@@ -64,8 +65,12 @@ namespace EdgeLighting
 
         /// @brief Draw every renderer, in two phases: each one's offscreen
         ///        passes (@ref BaseRenderer::Prepare), then each one onto the
-        ///        caller's framebuffer (@ref BaseRenderer::Render), both in
-        ///        compositing order.
+        ///        caller's framebuffer (@ref BaseRenderer::Render).
+        ///
+        /// First every renderer declares the buffers it will read
+        /// (@ref BaseRenderer::CollectReads). @c Render runs in compositing
+        /// order; @c Prepare too, except that one whose passes read another
+        /// renderer's buffer runs after that renderer's (@ref PrepareSchedule).
         /// @param viewportWidth  Current framebuffer width in pixels.
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);
@@ -237,6 +242,9 @@ namespace EdgeLighting
         /// back owning the buffers the previous active config held, already the
         /// right size for the next frame's copy.
         Config mScratchConfig;
+        /// The order @ref Render calls @c Prepare in, from the frame's reads -
+        /// see @ref PrepareSchedule.
+        PrepareSchedule mPrepareSchedule;
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;

@@ -7,8 +7,8 @@ the same day, each one as recommended (section 5). The steps start with the
 shared shader cache.
 
 **Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
-(2026-10-16, `d6d2175`) and S3 (2026-10-16, uncommitted).** Section 7 has what
-each measured.
+(2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`) and S4 (2026-10-16,
+uncommitted).** Section 7 has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -746,4 +746,60 @@ Where the build departs from 3.3, and why:
 
 The tiler measurement is open: `neon-scale-check time` and the layer timing
 probe on the M2, with the flare and the spotlight at 0.5.
+
+### 7.5 S4 - reads
+
+`core/read-list.h`:
+- `ReadList` sits in the context, rebuilt each frame with its capacity kept.
+- `BufferRead` is a key, a reader and a phase.
+- `PrepareSchedule` is owned by the effect.
+
+`BaseRenderer` gains `CollectReads` and `IsBufferWanted`.
+`EdgeLightingEffect::Render` runs every renderer's `CollectReads` first, then
+calls `Prepare` in `PrepareSchedule::Build`'s order, then `Render` in
+compositing order. The only read declared today is the debug view's selection,
+in the `RENDER` phase. Measured on an AMD Radeon Pro 5300M against S3
+(`d9e1d95`).
+
+- **Frames**: all 248 identical to S3, Debug build. Every scene's memory
+  and allocation counts are unchanged too. The read list keeps its capacity,
+  so a frame with the view on allocates nothing more.
+- **No log lines**: across the 62 scenes - the view on each of the ten current
+  buffers among them - the diagnostics wrote none.
+- `neon-scale-check check` and `partition` pass.
+- **The probe**, two host renderers (`CUSTOM`), each owning one buffer and
+  reading the other's:
+  - **No reads**: `Prepare` in compositing order, and the product not
+    wanted.
+  - **A `RENDER` read**: orders nothing; the product is wanted.
+  - **A `PREPARE` read**: the producer's `Prepare` runs first (`PP CP`
+    against `CP PP`), `Render` unchanged, and the product is wanted.
+  - **A read of the reader's own buffer**: orders nothing.
+  - **A cycle** (A reads B, B reads A, in `PREPARE`): refused, and every
+    `Prepare` in compositing order on all 6 frames. Logged once, though the
+    config changed every frame.
+  - **Diagnostics** over 6 animated frames: logged exactly once each. They
+    cover a key nothing registered, a `DEBUG` buffer read by a host renderer,
+    and an 80-char key. When another read changed, none was logged again.
+
+Where the build departs from 3.4, and why:
+
+- **When the diagnostics log.** Each read is logged when it first appears.
+  Every read is checked again when the renderers or the registered buffers
+  change, since either can answer a read or stop answering it. The plan said
+  once per config change. An animation changes the config every frame, so
+  that rule would log every frame.
+- **A `DEBUG` buffer read by a layer other than the debug layer is logged.**
+  This enforces 3.2's split between intermediates and products. Nothing reads
+  one today.
+- **Marks are not gated on demand** - the I70 note in the review findings
+  said S4 would gate them. A mark is one store. A UI shows which buffers are
+  current, and gating would blank every buffer nobody has selected. Demand is
+  for on-demand products, and none exists until S6 (or P-b).
+- **No ordering cost on a normal frame.** `Build` sorts only when some read
+  is in the `PREPARE` phase; otherwise it returns the compositing order after
+  one pass over the reads.
+
+Not timed. The per-frame work is a few virtual calls and a pass over a list
+of at most a few reads, and the allocation counts are unchanged.
 
