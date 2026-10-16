@@ -209,7 +209,7 @@ namespace EdgeLighting
 
     void BufferRegistry::MarkCurrent(int slot, bool changed)
     {
-        if (slot < 0 || static_cast<size_t>(slot) >= mRecords.size() || !mRecords[size_t(slot)].IsRegistered())
+        if (mClosed || slot < 0 || static_cast<size_t>(slot) >= mRecords.size() || !mRecords[size_t(slot)].IsRegistered())
         {
             return;
         }
@@ -221,7 +221,7 @@ namespace EdgeLighting
 
     void BufferRegistry::MarkCurrent(int slot, const glm::vec2 &origin, const glm::vec2 &size, bool changed)
     {
-        if (slot < 0 || static_cast<size_t>(slot) >= mRecords.size() || !mRecords[size_t(slot)].IsRegistered())
+        if (mClosed || slot < 0 || static_cast<size_t>(slot) >= mRecords.size() || !mRecords[size_t(slot)].IsRegistered())
         {
             return;
         }

@@ -739,6 +739,11 @@ Where the build departs from 3.3, and why:
   first thing in its `Render`, which runs `RenderOffscreen` itself when no
   `Prepare` came. So a renderer drawn without an effect still draws its whole
   frame, and an override cannot forget the flag.
+  - Since the review fixes of 2026-10-16, `Render` is not virtual either, and
+    `EnsurePrepared` is gone: `BaseRenderer::Render` runs `RenderOffscreen`
+    when no `Prepare` came, then the protected `RenderOnscreen` each renderer
+    overrides. An override can no longer return before phase 1, or leave the
+    flag set for the next frame.
 - **A `Render` sets every piece of state it reads.** Between a renderer's
   `Prepare` and its `Render`, every other layer's `Prepare` runs.
   - The flare's and the spotlight's blits used to inherit their blend from

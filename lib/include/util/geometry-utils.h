@@ -325,6 +325,16 @@ namespace EdgeLighting
             return Detail::GetPointOnRectangleCCW(t, geom);
         }
 
+        /// The rect's centre on a caller's framebuffer @p viewportHeight px
+        /// tall: full-res px, origin bottom-left (gl_FragCoord's), y mirrored
+        /// up out of Config's y-down convention. Every layer that places the
+        /// rect on the framebuffer takes it from here.
+        inline glm::vec2 GetRectCenter(const RectGeometry &geom, int viewportHeight)
+        {
+            return glm::vec2(geom.position.x + geom.width * 0.5f,
+                             static_cast<float>(viewportHeight) - geom.position.y - geom.height * 0.5f);
+        }
+
         /// Converts an app-space point (rect top-left = (0,0), +Y down) to local space
         /// (rect center = (0,0), +Y up).
         inline glm::vec2 AppToLocal(const glm::vec2 &appPt, float halfW, float halfH)

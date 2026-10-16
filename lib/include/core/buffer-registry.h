@@ -136,6 +136,15 @@ namespace EdgeLighting
         /// draws.
         void BeginFrame() { ++mFrame; }
 
+        /// Ends the frames for good: the effect that began them is gone. No
+        /// record is current from here on, and marks are ignored. The records
+        /// stay listed until their producers go - a renderer the host kept
+        /// still owns its buffers - but without an effect there is no frame
+        /// for "current" to describe, and a kept renderer drawn on its own
+        /// would otherwise leave every record it last marked current for good.
+        /// @c ~EdgeLightingEffect.
+        void Close() { mClosed = true; }
+
         /// Lists attachment @p attachment of @p buffer under @p key, owned by
         /// @p producer. Refused - logged, and @ref INVALID_SLOT returned - for
         /// an empty key, one that does not fit in @ref BUFFER_KEY_CAPACITY, or
@@ -166,10 +175,11 @@ namespace EdgeLighting
 
         /// Whether @p record describes the frame being drawn (or, between
         /// frames, the last one): marked by its producer since the last
-        /// @ref BeginFrame, and allocated.
+        /// @ref BeginFrame, and allocated - and never once the registry is
+        /// closed (@ref Close).
         bool IsCurrent(const BufferRecord &record) const
         {
-            return record.IsRegistered() && record.frame == mFrame && record.GetTexture() != 0;
+            return !mClosed && record.IsRegistered() && record.frame == mFrame && record.GetTexture() != 0;
         }
 
         /// The record registered under @p key, current or not, or nullptr.
@@ -193,6 +203,7 @@ namespace EdgeLighting
         /// Frames begun so far; starts at 1 so a record never marked (frame 0)
         /// is never current.
         uint64_t mFrame = 1;
+        bool mClosed = false; ///< Set by @ref Close: no frame will begin again.
     };
 
 } // namespace EdgeLighting

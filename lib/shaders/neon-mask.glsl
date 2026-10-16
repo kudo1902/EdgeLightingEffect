@@ -73,24 +73,33 @@ struct NeonEdge
 // (a dark seam), and at full res it squared the shared boundary.
 // NeonRenderer::setupGeometry mirrors this for the quad's hole. A disabled
 // side arrives as a huge sentinel and saturates its smoothstep to exactly 1.
-NeonEdge neonEdge(vec2 p, float d, vec2 halfSize, float r, float aa, int glowSide, float sideSoftness,
-                  float inCutoff, float inSoftness, float outCutoff, float outSoftness)
+//
+// neonEdgeSide fills the cut's half (d, sideSoft, sideBack); neonEdge both.
+NeonEdge neonEdgeSide(float d, float aa, float sideSoftness)
 {
     NeonEdge e;
     e.d        = d;
     e.sideSoft = max(sideSoftness, aa);
     e.sideBack = 0.5 * aa;
-    e.inHalf   = 0.5 * max(inSoftness,  aa);
-    e.outHalf  = 0.5 * max(outSoftness, aa);
-    e.inMid    = inCutoff  + 0.5 * max(inSoftness,  0.0);
-    e.outMid   = outCutoff + 0.5 * max(outSoftness, 0.0);
+    return e;
+}
+
+// The cutoffs' half of neonEdge: their ramps, midpoints and distances, filled
+// into @p e, which neonEdgeSide began.
+void neonEdgeCutoffs(inout NeonEdge e, vec2 p, vec2 halfSize, float r, float aa, int glowSide,
+                     float inCutoff, float inSoftness, float outCutoff, float outSoftness)
+{
+    e.inHalf  = 0.5 * max(inSoftness,  aa);
+    e.outHalf = 0.5 * max(outSoftness, aa);
+    e.inMid   = inCutoff  + 0.5 * max(inSoftness,  0.0);
+    e.outMid  = outCutoff + 0.5 * max(outSoftness, 0.0);
     if (glowSide == GLOW_SIDE_INSIDE)
     {
         e.dOut = -CUTOFF_NEUTRALISED;
     }
     else
     {
-        e.dOut = bandOuterDistance(p, d, halfSize, r, e.outMid);
+        e.dOut = bandOuterDistance(p, e.d, halfSize, r, e.outMid);
     }
     if (glowSide == GLOW_SIDE_OUTSIDE)
     {
@@ -98,8 +107,17 @@ NeonEdge neonEdge(vec2 p, float d, vec2 halfSize, float r, float aa, int glowSid
     }
     else
     {
-        e.dIn = bandInnerDistance(d, e.inMid);
+        e.dIn = bandInnerDistance(e.d, e.inMid);
     }
+}
+
+// The whole edge: the cut's half (neonEdgeSide) and the cutoffs'
+// (neonEdgeCutoffs).
+NeonEdge neonEdge(vec2 p, float d, vec2 halfSize, float r, float aa, int glowSide, float sideSoftness,
+                  float inCutoff, float inSoftness, float outCutoff, float outSoftness)
+{
+    NeonEdge e = neonEdgeSide(d, aa, sideSoftness);
+    neonEdgeCutoffs(e, p, halfSize, r, aa, glowSide, inCutoff, inSoftness, outCutoff, outSoftness);
     return e;
 }
 
@@ -147,6 +165,12 @@ bool neonEdgeMaskLive(int glowSide, float inCutoff, float outCutoff)
 // order - for a program on the caller's framebuffer: the blit, and a layer
 // that reads the glow product and draws at full resolution. Exactly 1 when
 // nothing is live. Call it in uniform control flow (it takes a derivative).
+//
+// The cutoffs only where one binds - enabled, on a side the cut does not
+// cull. Otherwise both their factors are exact 1s, so they are skipped rather
+// than computed, and a one-sided glow without cutoffs pays the cut alone, as
+// the blit always has (its branch was measured a straight saving). Both
+// conditions are of uniforms, so control flow stays uniform.
 float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftness, float inCutoff,
                    float inSoftness, float outCutoff, float outSoftness)
 {
@@ -156,10 +180,15 @@ float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftn
     }
     float d  = sdRoundBox(p, halfSize, r);
     float aa = max(sdRoundBoxFwidth(p, halfSize, r), 1e-6);
-    NeonEdge e = neonEdge(p, d, halfSize, r, aa, glowSide, sideSoftness, inCutoff, inSoftness, outCutoff,
-                          outSoftness);
+    NeonEdge e = neonEdgeSide(d, aa, sideSoftness);
     float mask = neonSideCut(e, glowSide);
-    mask *= neonInsideCutoff(e);
-    mask *= neonOutsideCutoff(e);
+    bool cutIn  = glowSide != GLOW_SIDE_OUTSIDE && inCutoff  < 0.5 * CUTOFF_NEUTRALISED;
+    bool cutOut = glowSide != GLOW_SIDE_INSIDE  && outCutoff < 0.5 * CUTOFF_NEUTRALISED;
+    if (cutIn || cutOut)
+    {
+        neonEdgeCutoffs(e, p, halfSize, r, aa, glowSide, inCutoff, inSoftness, outCutoff, outSoftness);
+        mask *= neonInsideCutoff(e);
+        mask *= neonOutsideCutoff(e);
+    }
     return mask;
 }

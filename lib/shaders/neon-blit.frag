@@ -8,7 +8,7 @@ precision highp float;
 // exactly 0, so NeonRenderer::setupRingGeometry, which builds both areas,
 // leaves those pixels out. The
 // opaque-mode silhouette is handled entirely by the black-rect fullscreen pass
-// drawn just before this blit in NeonRenderer::Render - the black quad's
+// drawn just before this blit in NeonRenderer::RenderOnscreen - the black quad's
 // analytic SDF anti-aliasing lands cleanly on rounded corners regardless of
 // softness, whereas the old per-fragment discard here stair-stepped at any
 // corner radius > 0.

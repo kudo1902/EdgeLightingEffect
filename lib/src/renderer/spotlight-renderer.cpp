@@ -713,10 +713,8 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void SpotlightRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void SpotlightRenderer::RenderOnscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
-        // This frame's offscreen pass, unless Prepare already ran it.
-        EnsurePrepared(viewportWidth, viewportHeight, time, config);
         if (!config.spotlight.enable || mVertexCount <= 0 ||
             viewportWidth <= 0 || viewportHeight <= 0)
         {

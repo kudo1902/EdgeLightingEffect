@@ -20,10 +20,16 @@ namespace EdgeLighting
     {
     }
 
-    // Nothing to clear in the registry: each renderer freed here takes its own
-    // records out of it (~BaseRenderer), and one the host kept still owns
-    // live buffers, which it may go on drawing into the same context.
-    EdgeLightingEffect::~EdgeLightingEffect() = default;
+    EdgeLightingEffect::~EdgeLightingEffect()
+    {
+        // The context outlives this effect for a renderer the host kept. Its
+        // records stay listed - each renderer freed here takes its own out
+        // (~BaseRenderer), and a kept one still owns live buffers - but no
+        // frame will begin again, so nothing is current from here on, and
+        // nothing is read either.
+        mResourceContext->GetBufferRegistry().Close();
+        mResourceContext->GetReadList().Clear();
+    }
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -36,6 +42,11 @@ namespace EdgeLighting
             if (!(*it)->Initialize())
             {
                 LOG_E("EdgeLightingEffect: a renderer failed to initialize - removing it.");
+                // Out of the context too, as AddRenderer does for a late one:
+                // a renderer the host still holds would otherwise keep its
+                // buffer keys in this effect's registry, listed though it is
+                // not drawn, and refuse them to a replacement.
+                (*it)->SetResourceContext(nullptr);
                 it = mRenderers.erase(it);
                 allOk = false;
             }
@@ -44,9 +55,8 @@ namespace EdgeLighting
                 ++it;
             }
         }
-        // A renderer the erase above freed has taken its buffer records with
-        // it (~BaseRenderer); one the host still holds keeps them, and they
-        // point into a renderer that is alive.
+        // A renderer the erase above dropped has left the context's registry
+        // with its records, whether the erase freed it or the host holds it.
         // From here on AddRenderer has to initialise what it is handed - this
         // loop is not coming round again for it.
         mInitialized = true;
@@ -122,6 +132,14 @@ namespace EdgeLighting
     {
         if (!renderer)
         {
+            return;
+        }
+        // Once only. A renderer listed twice would draw twice a frame, and the
+        // second Render would find its Prepare consumed by the first and run
+        // its offscreen passes again, between the on-screen ones.
+        if (std::find(mRenderers.begin(), mRenderers.end(), renderer) != mRenderers.end())
+        {
+            LOG_E("EdgeLightingEffect: AddRenderer given a renderer already registered - ignored.");
             return;
         }
 

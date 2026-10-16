@@ -131,7 +131,8 @@ namespace EdgeLighting
         /// it always did.
         ///
         /// Either way the renderer is handed the current active config
-        /// immediately, so its first frame is not a blank one.
+        /// immediately, so its first frame is not a blank one. A renderer
+        /// already registered is refused (logged): it would draw twice a frame.
         ///
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
@@ -155,9 +156,11 @@ namespace EdgeLighting
         /// order: @ref Update and the config notifications reach every renderer
         /// regardless, and no renderer reads another's output except through
         /// the framebuffer, which is exactly what the order decides - and
-        /// through @ref GetBufferRegistry, where a record is current only once
-        /// its producer has drawn this frame: a layer finds current there only
-        /// what the layers drawn BEFORE it marked.
+        /// through @ref GetBufferRegistry, whose records go current in
+        /// @c Prepare. Every @c Prepare runs before any @c Render, so a
+        /// @c Render finds every layer's products current whatever the order;
+        /// and a @c Prepare that declares a read (@c CollectReads) runs after
+        /// that buffer's producer, not in this order.
         ///
         /// @returns false (and changes nothing) if @p order is not a
         ///          permutation of the registered renderers.

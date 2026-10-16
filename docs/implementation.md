@@ -71,7 +71,8 @@ in registration order. `Prepare` draws only into a layer's own buffers
 (`RenderOffscreen`), `Render` only onto the caller's framebuffer, so that
 target is drawn in one unbroken run and any layer's `Render` can read what any
 layer's `Prepare` made. A renderer drawn on its own, with no effect, runs its
-offscreen passes from `Render` (`EnsurePrepared`).
+offscreen passes from `Render`, which calls `RenderOffscreen` itself when no
+`Prepare` came.
 
 The step-3 condition matters and is easy to misread: `SetConfig` returns early
 when the base is unchanged, and `refreshActiveConfig` returns early when the
@@ -90,8 +91,8 @@ four pure virtuals and one optional one:
 | `Initialize()` | once | Compile shaders, allocate GL objects. Returning false makes the orchestrator drop the renderer. |
 | `OnConfigChanged(cfg)` | on change | Re-bake whatever the changed fields feed. Dirty-gated internally. |
 | `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
-| `RenderOffscreen(w, h, t, cfg)` (protected, optional) | every frame, through `Prepare`, before any layer's `Render` | Draw into the renderer's own buffers only. The neon's tables, gather and reduced buffer; the flare's and spotlight's reduced buffers below 1.0. A renderer that overrides it calls `EnsurePrepared` first thing in `Render`. |
-| `Render(w, h, t, cfg)` | every frame | Draw onto the caller's framebuffer. |
+| `RenderOffscreen(w, h, t, cfg)` (protected, optional) | every frame, through `Prepare`, before any layer's `Render` | Draw into the renderer's own buffers only. The neon's tables, gather and reduced buffer; the flare's and spotlight's reduced buffers below 1.0. `Render` runs it itself on a frame no `Prepare` came. |
+| `RenderOnscreen(w, h, t, cfg)` (protected) | every frame, through `Render` (non-virtual) | Draw onto the caller's framebuffer. |
 | `CollectReads(cfg, out)` (optional) | every frame, before any `Prepare` | Declare every other renderer's buffer this one will bind, by key and phase. Only the debug view declares one today. |
 
 Five renderers ship, registered by the demo in this order - which is also the

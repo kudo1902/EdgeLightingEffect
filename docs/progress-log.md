@@ -5,6 +5,49 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - Review fixes on the sharing branch
+
+On `design_system_sharing_resources_between_renderers`, uncommitted, on top
+of `b0c05e3`. A deep review of `main...HEAD` filed 15 findings; all are
+fixed. AMD Radeon Pro 5300M.
+
+- **Lifetimes.**
+  - A renderer that fails `Initialize` leaves the effect's context with it,
+    so a host that keeps it no longer pins its keys in the registry.
+  - `AddRenderer` refuses a renderer already registered. Added twice, it ran
+    its offscreen half three times a frame, once in the on-screen phase.
+  - The effect's destructor closes the registry and clears the read list. A
+    renderer that outlives the effect can still draw alone, but nothing it
+    marks reads as current any more.
+- **`Render` is non-virtual.** It runs `RenderOffscreen` when no `Prepare`
+  came this frame, then the protected `RenderOnscreen` each renderer
+  overrides. `EnsurePrepared` is gone, so an override can no longer skip
+  phase 1 or leave the flag set for the next frame.
+- **The edge mask** (`neon-mask.glsl`) is split into the cut's half and the
+  cutoffs' half (`neonEdgeSide`, `neonEdgeCutoffs`). `neonEdgeMask` computes
+  the cutoffs only where one binds, so a one-sided glow without cutoffs pays
+  the cut alone again, as the blit did before S6a. `neon-field.frag` takes
+  the mask chunk only in its `NEON_FIELD_RING` variant.
+- **Tools.** `layer-check` counts allocations per thread (the counter was a
+  data race), and its record ids no longer throw on a keyed record with an
+  attachment above 0.
+- **Cleanups.** One rect-centre formula (`GeometryUtils::GetRectCenter`) for
+  the neon, the fill, the droplets and the debug overlays. One private
+  `addOwned` behind the three `RegisterBuffer` overloads. Braced discards.
+  Stale docs on the debug view, the layer order and the PUBLIC glow record.
+- **Found while probing.** `BaseRenderer`'s inline default constructor made
+  a host renderer that includes only `base-renderer.h` fail to compile, since
+  S5a: it destroys a `unique_ptr<VertexArray>` of an incomplete type. The
+  constructor is now defined in the .cpp.
+- **Measured.**
+  - All 256 `layer-check` frames are identical to S6b, and so are the
+    allocation and memory lines. `check` and `partition` pass, and `check`'s
+    table is unchanged.
+  - Under ASan, a probe of the lifetime and phase cases passes. The glow
+    product reader is still within 1 level on four configs.
+  - TIMING
+- **Open.** Nothing measured on the M2 or the target device.
+
 ## 2026-10-16 - Sharing plan S6c: the pilot, built and dropped
 
 On `design_system_sharing_resources_between_renderers`, never committed.

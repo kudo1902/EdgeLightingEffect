@@ -50,7 +50,11 @@ namespace EdgeLighting
     class BaseRenderer
     {
     public:
-        BaseRenderer() = default;
+        /// Defined in the .cpp, like the destructor: a constructor destroys the
+        /// members on a throw, and @c mOwnFullscreenQuad's @c VertexArray is
+        /// only forward-declared here, so an inline one would stop a host's
+        /// subclass compiling from this header alone.
+        BaseRenderer();
         /// Unregisters every buffer this renderer registered, so no record
         /// outlives the Framebuffer it points into.
         virtual ~BaseRenderer();
@@ -102,9 +106,12 @@ namespace EdgeLighting
         /// on its own, without an effect, draws exactly as before.
         void Prepare(int viewportWidth, int viewportHeight, float time, const Config &config);
 
-        /// Draws the renderer's visual layer onto the caller's framebuffer - the
-        /// on-screen half of the frame, after @ref Prepare (which it runs
-        /// itself when nothing called it this frame).
+        /// Draws the renderer's visual layer onto the caller's framebuffer: the
+        /// on-screen half of the frame (@ref RenderOnscreen), after this
+        /// frame's offscreen half (@ref RenderOffscreen) - which it runs itself
+        /// first when no @ref Prepare came since the last Render, so a renderer
+        /// drawn on its own, without an effect, draws its whole frame. Not
+        /// virtual: the guard is here, so no renderer can forget it.
         ///
         /// @pre The GL viewport is @c (0, 0, viewportWidth, viewportHeight).
         ///      Renderers may rely on this and may restore it by reconstruction
@@ -131,7 +138,7 @@ namespace EdgeLighting
         /// @param viewportHeight Current framebuffer height.
         /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) = 0;
+        void Render(int viewportWidth, int viewportHeight, float time, const Config &config);
 
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.
@@ -159,22 +166,20 @@ namespace EdgeLighting
         /// What @ref Prepare draws: this renderer's offscreen passes, into
         /// buffers of its own. Nothing by default - a renderer that draws only
         /// onto the caller's framebuffer, or a host's own renderer that still
-        /// does everything in @ref Render, leaves it alone and works as before;
-        /// it only misses the ordering.
-        ///
-        /// A renderer that overrides it calls @ref EnsurePrepared first thing
-        /// in its @ref Render, and keeps whatever its on-screen passes need
-        /// from it in members.
+        /// does everything in @ref RenderOnscreen, leaves it alone and works as
+        /// before; it only misses the ordering. Keep whatever the on-screen
+        /// passes need from it in members.
         virtual void RenderOffscreen(int /*viewportWidth*/, int /*viewportHeight*/, float /*time*/,
                                      const Config & /*config*/)
         {
         }
 
-        /// For the @ref Render of a renderer with offscreen passes, before
-        /// anything else, early returns included: runs @ref RenderOffscreen
-        /// when no @ref Prepare came since the last @ref Render - the renderer
-        /// is being drawn on its own - and marks the frame's Prepare consumed.
-        void EnsurePrepared(int viewportWidth, int viewportHeight, float time, const Config &config);
+        /// What @ref Render draws once the frame's offscreen half has run: this
+        /// renderer's passes onto the caller's framebuffer, and nothing
+        /// offscreen. Every other renderer's offscreen half may have run since
+        /// this one's, so it sets every piece of GL state it reads - blend,
+        /// texture and uniform-block bindings - rather than inheriting it.
+        virtual void RenderOnscreen(int viewportWidth, int viewportHeight, float time, const Config &config) = 0;
 
         /// A program linking the vertex stage @p vertSrc and the fragment
         /// stage @p fragSrc - with @p fragDefines spliced in after its
@@ -263,6 +268,10 @@ namespace EdgeLighting
             int slot = BufferRegistry::INVALID_SLOT;
         } OwnedBuffer;
 
+        /// What the three @ref RegisterBuffer overloads share: keys @p owned
+        /// from @p name (plus "[n]" for @p keyAttachment n > 0), logging a key
+        /// that does not fit, lists it, keeps it and returns its handle.
+        BufferHandle addOwned(OwnedBuffer owned, const char *name, int keyAttachment);
         /// Lists @p owned in the context's registry, if there is a context.
         void registerOwned(OwnedBuffer &owned);
         /// Takes every record this renderer owns out of the context's
@@ -277,8 +286,8 @@ namespace EdgeLighting
         /// The fullscreen quad of a renderer drawn without a context - see
         /// @ref GetFullscreenQuad. Null until one is asked for.
         std::unique_ptr<VertexArray> mOwnFullscreenQuad;
-        /// Set by @ref Prepare, consumed by @ref EnsurePrepared: whether this
-        /// frame's offscreen passes have run.
+        /// Set by @ref Prepare, consumed by @ref Render: whether this frame's
+        /// offscreen passes have run.
         bool mPrepared = false;
     };
 

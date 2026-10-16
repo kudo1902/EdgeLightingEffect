@@ -785,8 +785,9 @@ namespace EdgeLighting
         /// reduced buffer has no line (the edge ring draws it) and none of the
         /// one-sided cut's or the cutoffs' soft edges (the blit applies them);
         /// the fields are pre-tone-map, so @c bufferViewGain brings them into
-        /// range. Only a layer drawn BEFORE this one can be shown - the default
-        /// order puts this one last.
+        /// range. Every layer marks its buffers in its @c Prepare, which runs
+        /// before any layer's @c Render, so a buffer of any layer can be shown
+        /// wherever the debug layer sits in the order.
         std::string bufferView;
 
         /// Which channels @c bufferView shows.

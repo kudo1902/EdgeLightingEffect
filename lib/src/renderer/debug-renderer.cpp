@@ -58,18 +58,17 @@ namespace EdgeLighting
         return true;
     }
 
-    void DebugRenderer::Update(float deltaTime, float, const Config &config)
+    void DebugRenderer::Update(float, float, const Config &)
     {
         // Nothing per frame: the strip reads the neon's own ring
         // (NeonRenderer::GRADIENT_RING_KEY), which the neon ticks.
-        (void)deltaTime;
-        (void)config;
     }
 
     void DebugRenderer::CollectReads(const Config &config, ReadList &out) const
     {
-        // The one buffer this layer binds: the view's, under the gate Render
-        // draws it under.
+        // Every buffer this layer binds, each under the gate Render draws it
+        // under: the buffer view's selection, and the neon's colour ring for
+        // the strip.
         if (config.debug.enable && !config.debug.bufferView.empty())
         {
             out.Add(this, config.debug.bufferView, ReadPhase::RENDER);
@@ -81,7 +80,7 @@ namespace EdgeLighting
         }
     }
 
-    void DebugRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void DebugRenderer::RenderOnscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.debug.enable)
         {
@@ -144,14 +143,13 @@ namespace EdgeLighting
         // `center` reaches the screen by two routes - folded into `mvp` for the
         // strip and the box, and added to each stop's perimeter point for the
         // markers - so deriving it once here is what keeps the three overlays
-        // aligned with each other and with the glow they annotate. Viewport y runs down in
-        // Config but up in the projection, hence the mirror.
+        // aligned with each other and with the glow they annotate
+        // (GeometryUtils::GetRectCenter, the centre the neon draws about).
         const float halfRectW = config.geometry.width * 0.5f;
         const float halfRectH = config.geometry.height * 0.5f;
         const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth),
                                           0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
-        const glm::vec2 center(config.geometry.position.x + halfRectW,
-                               static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        const glm::vec2 center = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
         const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
 
         // The buffer first: in place it replaces the frame inside its box,

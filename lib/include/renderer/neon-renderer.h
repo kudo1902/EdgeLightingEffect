@@ -381,9 +381,6 @@ namespace EdgeLighting
         /// A reader that declares the same set uploads through here.
         static void UploadEdgeMask(ShaderProgram &shader, const EdgeMask &mask);
 
-        /// The rect's centre on a caller's framebuffer @p viewportHeight px
-        /// tall: full-res px, y mirrored up out of Config's y-down convention.
-        static glm::vec2 GetRectCenter(const RectGeometry &geometry, int viewportHeight);
         /// Releases every GL object it holds, through their RAII wrappers; the
         /// context they were created in must be current.
         virtual ~NeonRenderer() = default;
@@ -432,12 +429,11 @@ namespace EdgeLighting
         virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
                                      const Config &config) override;
 
-    public:
         /// Phase 2 of the neon's frame, onto the caller's framebuffer,
         /// premultiplied over: the opaque fill (P2a), the blit (P2b), the edge
         /// ring - shaded (P2c) or from its field (P2r) - from what phase 1
-        /// (@ref RenderOffscreen) left in @c mFramePlan, running phase 1 first
-        /// when nothing prepared this frame. Nothing when
+        /// (@ref RenderOffscreen) left in @c mFramePlan. @c BaseRenderer::Render
+        /// runs phase 1 first when nothing prepared this frame. Nothing when
         /// @c NeonConfig::enable is off. The passes in their declaration order
         /// below, and docs/neon-shader-outputs.html, show each one.
         ///
@@ -459,7 +455,10 @@ namespace EdgeLighting
         /// @param viewportHeight Its height, px.
         /// @param time           Seconds of animation time: what the hue rotates by.
         /// @param config         The active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void RenderOnscreen(int viewportWidth, int viewportHeight, float time,
+                                    const Config &config) override;
+
+    public:
 
         /// The composited configuration changed. Records what moved and
         /// rebuilds only what that feeds: the loop samples (the geometry, the

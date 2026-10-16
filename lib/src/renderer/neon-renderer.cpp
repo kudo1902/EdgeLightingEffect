@@ -141,7 +141,7 @@ namespace EdgeLighting
         /// exactly who would be relying on them.
         ///
         /// @note Blending is NOT part of this question even though a clear
-        ///       ignores it too - @ref NeonRenderer::Render owns the blend
+        ///       ignores it too - @ref NeonRenderer::RenderOnscreen owns the blend
         ///       mode for the phase and sets premultiplied-over immediately
         ///       above, under which a coverage-1 source composites to itself.
         inline bool ClearClipsLikeDraw()
@@ -1987,9 +1987,7 @@ namespace EdgeLighting
         inline BufferRegion GetFieldRegion(const Config &config, const glm::vec2 &scaledOuter, int viewportWidth,
                                            int viewportHeight)
         {
-            const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
-                                       static_cast<float>(viewportHeight) - config.geometry.position.y -
-                                           config.geometry.height * 0.5f);
+            const glm::vec2 centerFull = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
             return GetBufferRegion(scaledOuter, centerFull, viewportWidth, viewportHeight,
                                    GetClampedResolutionScale(config), true);
         }
@@ -2063,7 +2061,7 @@ namespace EdgeLighting
     NeonRenderer::EdgeMask NeonRenderer::GetEdgeMask(const Config &config, int viewportHeight)
     {
         EdgeMask mask;
-        mask.rectCenter = GetRectCenter(config.geometry, viewportHeight);
+        mask.rectCenter = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
         mask.rectSize = glm::vec2(config.geometry.width, config.geometry.height);
         mask.cornerRadius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
         mask.glowSide = static_cast<int>(config.neon.glowSide);
@@ -2086,14 +2084,6 @@ namespace EdgeLighting
         shader.SetUniform("uInsideCutoffSoftness", mask.insideCutoffSoftness);
         shader.SetUniform("uOutsideCutoff", mask.outsideCutoff);
         shader.SetUniform("uOutsideCutoffSoftness", mask.outsideCutoffSoftness);
-    }
-
-    glm::vec2 NeonRenderer::GetRectCenter(const RectGeometry &geometry, int viewportHeight)
-    {
-        // Viewport y runs down in Config but up in the projection, so the
-        // centre is mirrored about the viewport height.
-        return glm::vec2(geometry.position.x + geometry.width * 0.5f,
-                         static_cast<float>(viewportHeight) - geometry.position.y - geometry.height * 0.5f);
     }
 
     bool NeonRenderer::Initialize()
@@ -2249,12 +2239,12 @@ namespace EdgeLighting
         const float scale = GetClampedResolutionScale(config);
 
         // The rect centre in the caller's framebuffer, full-res px, y up
-        // (GetRectCenter). The offscreen passes draw through their own region
+        // (GeometryUtils::GetRectCenter). The offscreen passes draw through their own region
         // projections (GetBufferRegion, GetRegionProjection) in SCALED space,
         // so the quads, the rect size and the loop samples all agree; the
         // passes on the caller's framebuffer share one full-res transform,
         // built in Render.
-        const glm::vec2 centerFull = GetRectCenter(config.geometry, viewportHeight);
+        const glm::vec2 centerFull = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
 
         // Debug: the fill and nothing else - Render's, so nothing offscreen.
         // What lands on screen is the opaque silhouette by itself - which is
@@ -2571,10 +2561,8 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::RenderOnscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
-        // This frame's offscreen phase, unless Prepare already ran it.
-        EnsurePrepared(viewportWidth, viewportHeight, time, config);
         if (!config.neon.enable)
         {
             return;
@@ -4013,9 +4001,7 @@ namespace EdgeLighting
         inputs.cornerRadius = GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale;
         inputs.attachments = mEffectiveSegments.empty() ? 1 : 2;
         inputs.viewport = glm::ivec2(viewportWidth, viewportHeight);
-        inputs.center = glm::vec2(config.geometry.position.x + config.geometry.width * 0.5f,
-                                  static_cast<float>(viewportHeight) - config.geometry.position.y -
-                                      config.geometry.height * 0.5f);
+        inputs.center = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
         return inputs;
     }
 
@@ -4608,12 +4594,8 @@ namespace EdgeLighting
         // real advantage - a clean edge at any radius - for nothing.
         //
         // The centre is derived here rather than taken from Render's scaled
-        // transform for the same reason. Viewport y runs down in Config but up
-        // in gl_FragCoord, hence the mirror about the viewport height.
-        const float halfRectW = config.geometry.width * 0.5f;
-        const float halfRectH = config.geometry.height * 0.5f;
-        const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
-                                   static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        // transform for the same reason.
+        const glm::vec2 centerFull = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
 
         // A shaped mode reaching the shader below draws the band ring built by
         // @ref setupFillGeometry, which is in full-res rect-local pixels and so

@@ -186,7 +186,7 @@ section 11, which adds why the viewport origin must be (0, 0)):
   +y                     (0,0) +----------> +x       origin = rect centre   -1 v
 ```
 
-The conversions, in the order the code applies them (`NeonRenderer::Render`):
+The conversions, in the order the code applies them (`NeonRenderer::RenderOffscreen` and `RenderOnscreen`):
 
 ```
 centerFull.x = position.x + width/2                      // rect centre, GL window x
@@ -1479,7 +1479,7 @@ RenderOffscreen                                  // phase 1: run by Prepare, or 
         ... every other layer's Prepare ...
 
 Render                                           // phase 2: the caller's framebuffer
- |- EnsurePrepared()                             // phase 1 now, if no Prepare came this frame
+ |- RenderOffscreen() if no Prepare came this frame   // BaseRenderer::Render, then the neon's RenderOnscreen:
  |- return if !neon.enable
  |- [blend ON: GL_ONE, GL_ONE_MINUS_SRC_ALPHA]
  |- if opaqueMode != NONE: P2a fill              // alone under debug.opaqueOnly

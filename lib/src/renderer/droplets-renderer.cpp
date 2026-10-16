@@ -97,19 +97,16 @@ namespace EdgeLighting
     {
     }
 
-    void DropletsRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void DropletsRenderer::RenderOnscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.droplets.enable || viewportWidth <= 0 || viewportHeight <= 0)
         {
             return;
         }
 
-        float halfRectW = config.geometry.width * 0.5f;
-        float halfRectH = config.geometry.height * 0.5f;
         // Rect centre in framebuffer pixel space (origin at bottom-left, matching
-        // gl_FragCoord). Config::geometry uses a top-left origin, hence the flip.
-        glm::vec2 rectCenter(config.geometry.position.x + halfRectW,
-                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        // gl_FragCoord).
+        const glm::vec2 rectCenter = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
 
         // The quad is built in rect-local px around the origin (@ref
         // setupGeometry), so the transform is just "put the origin at the rect

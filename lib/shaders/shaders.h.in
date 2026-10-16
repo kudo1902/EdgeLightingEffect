@@ -15,7 +15,9 @@
 // neon-grade.glsl (the tone map) into neon.frag and the field's composite.
 // neon-mask.glsl (the glow's one-sided cut and cutoffs, as coverage) goes into
 // the three programs that apply it - neon.frag, the blit and the field's
-// composite - after neon-sdf.glsl, whose distances it reads.
+// composite - after neon-sdf.glsl, whose distances it reads; into the field's
+// composite under NEON_FIELD_RING only, the ring's variant that applies it, so
+// the glow field's composite does not compile it for nothing.
 // spotlight-dither.glsl (the spotlight's output noise) goes into the two
 // programs that write that layer to the caller's framebuffer - spotlight.frag
 // and the spotlight's blit.
@@ -85,7 +87,9 @@ namespace EdgeLighting
 @NEON_TUNING@
 @NEON_GRADE@
 @NEON_SDF@
+#ifdef NEON_FIELD_RING
 @NEON_MASK@
+#endif
 @NEON_FIELD_FRAG_CONTENT@
 )shadersrc";
 

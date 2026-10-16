@@ -2,7 +2,7 @@ precision highp float;
 
 // Debug: draws a filled disc in uMarkerColor with a thin white ring so the
 // marker reads on any background - used to spot each colour-stop position
-// on the perimeter (see NeonRenderer::Render, showColorStops).
+// on the perimeter (see DebugRenderer::RenderOnscreen, showColorStops).
 //
 // The vertex data is a unit quad in [-1, +1]; the C++ side scales the model
 // matrix by the desired marker radius so vPos here is always in disc space.

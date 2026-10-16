@@ -47,10 +47,12 @@ namespace EdgeLighting
         virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
                                      const Config &config) override;
 
-    public:
         /// The scaled path's blit, or at scale 1.0 the flare itself, onto the
         /// caller's framebuffer, premultiplied over.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void RenderOnscreen(int viewportWidth, int viewportHeight, float time,
+                                    const Config &config) override;
+
+    public:
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::LENS_FLARE; }
 

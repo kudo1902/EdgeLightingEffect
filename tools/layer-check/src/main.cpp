@@ -46,11 +46,16 @@ using namespace EdgeLighting;
 // Heap allocations, counted only inside the window a measurement opens and
 // never inside a GL hook below, whose own bookkeeping would otherwise count.
 // -----------------------------------------------------------------------------
+//
+// Counted on the THREAD that opens the window only: both flags are
+// thread_local, so the GL driver's own threads - which allocate too, and whose
+// count varied from run to run - see them false and count nothing, and
+// gNewCount is only ever touched by that one thread (no data race).
 namespace
 {
     long gNewCount = 0;
-    bool gCountingNews = false;
-    bool gInHook = false;
+    thread_local bool gCountingNews = false;
+    thread_local bool gInHook = false;
 
     void *CountedAlloc(std::size_t size)
     {
@@ -705,10 +710,15 @@ namespace
     /// from before and after the registry's string keys stay comparable.
     std::string RecordId(const BufferRecord &record)
     {
+        // Only a key that ends in its own "[n]" carries one to strip: a
+        // product registered under a key of its own has none, whatever its
+        // attachment.
         std::string id(record.key);
-        if (record.attachment > 0)
+        const std::string suffix = "[" + std::to_string(record.attachment) + "]";
+        if (record.attachment > 0 && id.size() > suffix.size() &&
+            id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0)
         {
-            id.erase(id.rfind('['));
+            id.erase(id.size() - suffix.size());
         }
         return id + "#" + std::to_string(record.attachment);
     }

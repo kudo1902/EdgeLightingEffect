@@ -42,7 +42,10 @@ The scenes:
 
 **The allocation counts are not the library's alone.** The tool replaces the
 global `operator new`, and on macOS that also catches Apple's GL stack, which
-is C++. It counts:
+is C++. It counts on the rendering thread only - the window's flag is
+`thread_local`, so the driver's own threads count nothing (before that, they
+were counted, racily, which is part of why counts varied between runs). On
+that thread it counts:
 - 24 B per draw;
 - 40 B per change of framebuffer;
 - a burst whenever the driver starts a command buffer. That happens every few

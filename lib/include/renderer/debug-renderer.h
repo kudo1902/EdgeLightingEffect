@@ -68,9 +68,13 @@ namespace EdgeLighting
         /// The buffer view's selection (@c DebugConfig::bufferView), read in
         /// @ref Render, while the overlays are on.
         virtual void CollectReads(const Config &config, ReadList &out) const override;
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::DEBUG; }
+
+    protected:
+        /// The overlays, onto the caller's framebuffer. No offscreen half.
+        virtual void RenderOnscreen(int viewportWidth, int viewportHeight, float time,
+                                    const Config &config) override;
 
     private:
         bool setupShaders();

@@ -671,8 +671,14 @@ void main() {
     bool  blitOwnsCut = (uBlitOwnsCut != 0);
     float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : edge.sideBack;
     // Deliberately NOT mirrored in neon-gather.frag - see the note at its top.
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
+    if (uGlowSide == GLOW_SIDE_INSIDE && d > sideCull)
+    {
+        discard;
+    }
+    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull)
+    {
+        discard;
+    }
 
     // Hard geometric CUTOFFS. The band is [-uInsideCutoff, +uOutsideCutoff];
     // each side's feather starts at that boundary and runs its softness beyond
@@ -688,8 +694,14 @@ void main() {
     // reason sideCull does. The guard is an exact 0 for the ring, which keeps
     // culling exactly where its own masks end.
     float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
-    if (edge.dOut >  outHalf + cutGuard ) discard;
-    if (edge.dIn  < -(inHalf + cutGuard)) discard;
+    if (edge.dOut > outHalf + cutGuard)
+    {
+        discard;
+    }
+    if (edge.dIn < -(inHalf + cutGuard))
+    {
+        discard;
+    }
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile: core(ad) = exp(-ln(2) * (ad / sigma)^N),

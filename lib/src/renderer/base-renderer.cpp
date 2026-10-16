@@ -9,6 +9,8 @@
 namespace EdgeLighting
 {
 
+    BaseRenderer::BaseRenderer() = default;
+
     BaseRenderer::~BaseRenderer()
     {
         // The derived class's Framebuffers are already gone, but nothing reads
@@ -20,6 +22,19 @@ namespace EdgeLighting
     {
         mPrepared = true;
         RenderOffscreen(viewportWidth, viewportHeight, time, config);
+    }
+
+    void BaseRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        // This frame's offscreen half, unless a Prepare already ran it: a
+        // renderer drawn on its own draws its whole frame. Consumed here, so a
+        // frame's Prepare serves exactly one Render.
+        if (!mPrepared)
+        {
+            RenderOffscreen(viewportWidth, viewportHeight, time, config);
+        }
+        mPrepared = false;
+        RenderOnscreen(viewportWidth, viewportHeight, time, config);
     }
 
     void BaseRenderer::SetResourceContext(std::shared_ptr<ResourceContext> context)
@@ -34,15 +49,6 @@ namespace EdgeLighting
         {
             registerOwned(owned);
         }
-    }
-
-    void BaseRenderer::EnsurePrepared(int viewportWidth, int viewportHeight, float time, const Config &config)
-    {
-        if (!mPrepared)
-        {
-            RenderOffscreen(viewportWidth, viewportHeight, time, config);
-        }
-        mPrepared = false;
     }
 
     ShaderProgram BaseRenderer::BuildProgram(const char *vertSrc, const char *fragSrc, const char *name,
@@ -79,14 +85,7 @@ namespace EdgeLighting
         owned.buffer = &buffer;
         owned.attachment = attachment;
         owned.visibility = visibility;
-        if (!MakeBufferKey(buffer.GetName(), attachment, owned.key))
-        {
-            LOG_E("BaseRenderer: buffer '%s' attachment %d has no key that fits in %d chars - never listed.",
-                  buffer.GetName(), attachment, BUFFER_KEY_CAPACITY);
-        }
-        registerOwned(owned);
-        mOwnedBuffers.push_back(owned);
-        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+        return addOwned(owned, buffer.GetName(), attachment);
     }
 
     BufferHandle BaseRenderer::RegisterBuffer(const Framebuffer &buffer, const char *key, BufferVisibility visibility,
@@ -96,14 +95,7 @@ namespace EdgeLighting
         owned.buffer = &buffer;
         owned.attachment = attachment;
         owned.visibility = visibility;
-        if (!MakeBufferKey(key, 0, owned.key))
-        {
-            LOG_E("BaseRenderer: key '%s' does not fit in %d chars - never listed.", key ? key : "",
-                  BUFFER_KEY_CAPACITY);
-        }
-        registerOwned(owned);
-        mOwnedBuffers.push_back(owned);
-        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+        return addOwned(owned, key, 0);
     }
 
     BufferHandle BaseRenderer::RegisterBuffer(const BaseLUT &lut, const char *key, BufferVisibility visibility)
@@ -111,14 +103,7 @@ namespace EdgeLighting
         OwnedBuffer owned;
         owned.lut = &lut;
         owned.visibility = visibility;
-        if (!MakeBufferKey(key, 0, owned.key))
-        {
-            LOG_E("BaseRenderer: LUT key '%s' does not fit in %d chars - never listed.", key ? key : "",
-                  BUFFER_KEY_CAPACITY);
-        }
-        registerOwned(owned);
-        mOwnedBuffers.push_back(owned);
-        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+        return addOwned(owned, key, 0);
     }
 
     void BaseRenderer::MarkBufferCurrent(BufferHandle handle, bool changed)
@@ -166,6 +151,18 @@ namespace EdgeLighting
         }
         const OwnedBuffer &owned = mOwnedBuffers[size_t(handle)];
         return owned.key[0] != '\0' && mResourceContext->GetReadList().IsWanted(owned.key);
+    }
+
+    BufferHandle BaseRenderer::addOwned(OwnedBuffer owned, const char *name, int keyAttachment)
+    {
+        if (!MakeBufferKey(name, keyAttachment, owned.key))
+        {
+            LOG_E("BaseRenderer: buffer '%s' attachment %d has no key that fits in %d chars - never listed.",
+                  name ? name : "", keyAttachment, BUFFER_KEY_CAPACITY);
+        }
+        registerOwned(owned);
+        mOwnedBuffers.push_back(owned);
+        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
     }
 
     void BaseRenderer::registerOwned(OwnedBuffer &owned)
