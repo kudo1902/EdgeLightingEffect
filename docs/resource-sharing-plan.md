@@ -10,8 +10,9 @@ shared shader cache.
 (2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`), S4 (2026-10-16,
 `7584bdb`), S5a, the shared quad (2026-10-16, `186bc48`), S5b, the
 gradient ring (2026-10-16, `02bfedc`), S6a, the mask chunk (2026-10-16,
-`b9a2781`), and S6b, the glow product (2026-10-16, uncommitted).** Section 7
-has what each measured.
+`b9a2781`) and S6b, the glow product (2026-10-16, `37b9716`). S6c, the
+pilot, was built, measured and dropped (2026-10-16).** Section 7 has what
+each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -529,6 +530,9 @@ Settled by the owner on 2026-10-15, each as recommended.
      either form.
 7. **The order: the shader cache first** (S1). It is the earliest measurable
    gain, and it needs nothing from the registry.
+8. **The pilot dropped** (2026-10-16, after it was built and measured). The
+   drops lit by the glow could not be seen at 1:1 (section 7.10). The glow
+   product stays, with no reader in the library.
 
 ---
 
@@ -970,3 +974,49 @@ Measured on an AMD Radeon Pro 5300M against S6a (`b9a2781`):
 
 What is left of S6 is the pilot, S6c: droplets lit by the glow.
 
+### 7.10 S6c - the pilot: built, measured, dropped
+
+Built on 2026-10-16 and removed the same day, at the owner's call, before
+it was committed. `DropletsConfig::glowLight` (default 0, in the C ABI and
+both demos) lit the drops with the neon's glow:
+
+- the droplets declared a `RENDER` read of `GLOW_KEY`;
+- they drew a second program, `droplets.frag` with `DROPLETS_GLOW_LIGHT`,
+  with the neon chunks injected under that define;
+- it masked the product with `neonEdgeMask` and added
+  `glow * glowLight * (c.x * 0.5 + rim)` to each drop, with its brightest
+  channel added to the alpha.
+
+What it measured, on an AMD Radeon Pro 5300M against S6b (`37b9716`):
+
+- **Default**: all 256 `layer-check` frames identical, and the variant was
+  never built. `check` and `partition` passed.
+- **Cost on**: +4.7 us a frame still and +12.2 us with the hue rotating, at
+  1080p (1.02-1.03x, within the noise).
+- **Effect on**, at 1280 x 720 with drops at amount 1 and a 32 px band:
+  - At `glowLight` 1, 4,567 px changed - 0.5% of the frame, every one inside
+    the band - 1,011 of them by 32 levels or more, up to 72.
+  - At 2, 4,749 px changed, up to 105.
+  - With the neon off it changed nothing.
+
+Why it was dropped: at 1:1 it could not be seen.
+
+- **Too few pixels**: a drop is 6-12 px across, so the change was a few
+  pinker specks in the frame.
+- **It cancels over the tube**: the light was added with coverage, so a drop
+  over the tube hid about as much of it as it added - visible as a dark core
+  in the difference map of a drop on the line.
+- **The product has no filament** (P-a), so a drop on the tube could only
+  take the halo's colour, not the core's.
+
+A version that adds the light without coverage, or P-b with the line in it,
+would have been visible. Neither was wanted.
+
+What stays: the product (S6b) and its contract. Its only reader is the S6b
+probe, a host renderer outside the tree. Nothing in the library reads it
+today, so it is a product without a consumer. The next one to want the glow
+(P-b, a host, a later effect) builds on that probe's pattern: declare the
+read, take the placement, apply `neonEdgeMask` with `GetEdgeMask`'s inputs.
+
+S6 is done. S7, the render-target pool, waits for a temporary target to give
+it (3.7, decision 2); the pilot never needed one.

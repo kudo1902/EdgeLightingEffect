@@ -5,9 +5,31 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - Sharing plan S6c: the pilot, built and dropped
+
+On `design_system_sharing_resources_between_renderers`, never committed.
+AMD Radeon Pro 5300M. Section 7.10 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.** `DropletsConfig::glowLight` lit the drops with the neon's glow
+  product, through a second droplets program with the neon's mask chunk
+  injected.
+- **Measured.**
+  - Default frames identical to S6b; +5-12 us a frame with it on.
+  - At 1, only 0.5% of the frame changed - drops 6-12 px across. Up to 72
+    levels per pixel, but not visible at 1:1.
+  - Over the tube it partly cancelled, because the light was added with
+    coverage. And the product has no filament, so a drop on the line took
+    the halo's colour.
+- **Decided (owner).** Dropped. The code was removed before any commit. The
+  glow product and its contract (S6b) stay, with no reader in the library.
+- **Open.** S6 is done. S7, the render-target pool, waits for a temporary
+  target - none exists yet. Nothing in S0-S6 is measured on the M2 or the
+  target device.
+
 ## 2026-10-16 - Sharing plan S6b: the glow as a public product
 
-Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+Committed as `37b9716`, on `design_system_sharing_resources_between_renderers`, measured
 against S6a (`b9a2781`). AMD Radeon Pro 5300M, Debug build. Section 7.9 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 
