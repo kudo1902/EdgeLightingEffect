@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600" viewBox="0 0 1000 600" role="img" aria-label="What a renderer gets from its ResourceContext">
+<title>What a renderer gets from its ResourceContext</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="999" height="599" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="30" y="40" width="290" height="520" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="48" y="66" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">a renderer (BaseRenderer)</text>
+<text x="48" y="110" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">BuildProgram(vert, frag)</text>
+<text x="48" y="125" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">Initialize / first use</text>
+<text x="48" y="230" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">RegisterBuffer(framebuffer)</text>
+<text x="48" y="245" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">constructor, once</text>
+<text x="48" y="266" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">MarkBufferCurrent(handle)</text>
+<text x="48" y="281" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">phase 1, each frame</text>
+<text x="48" y="302" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">Find(key), IsCurrent, GetTexture</text>
+<text x="48" y="317" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">a reader, each frame</text>
+<text x="48" y="382" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">CollectReads(config, out)</text>
+<text x="48" y="397" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">top of each frame</text>
+<text x="48" y="482" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">GetFullscreenQuad()</text>
+<text x="48" y="497" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">draw time</text>
+<rect x="400" y="30" width="570" height="540" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="418" y="56" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">ResourceContext (one per effect, shared_ptr)</text>
+<rect x="420" y="76" width="530" height="96" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="432" y="98" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">ShaderCache</text>
+<text x="432" y="118" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">stages compiled once per effect, matched by text (length + 64-bit hash)</text>
+<text x="432" y="136" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">neon.vert: 1 compile, not 15 | a failed stage stays failed</text>
+<text x="432" y="154" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">programs are never shared: one per pass target and blend state</text>
+<rect x="420" y="190" width="530" height="132" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="432" y="212" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">BufferRegistry</text>
+<text x="432" y="232" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">records: key -&gt; the owner's Framebuffer attachment or LUT</text>
+<text x="432" y="250" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">read live: texture, size, format | never a copy</text>
+<text x="432" y="268" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">PUBLIC (a product, a contract)  |  DEBUG (an intermediate)</text>
+<text x="432" y="286" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">current = marked since BeginFrame | version moves on change</text>
+<text x="432" y="304" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">slots in a deque: a Find pointer survives later registrations</text>
+<rect x="420" y="340" width="530" height="96" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="432" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">ReadList  -&gt;  PrepareSchedule</text>
+<text x="432" y="382" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">each renderer's declared reads: key and phase (PREPARE / RENDER)</text>
+<text x="432" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">orders a Prepare after the producer it reads</text>
+<text x="432" y="418" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">logs a missing key, or a DEBUG buffer read outside debug</text>
+<rect x="420" y="454" width="530" height="96" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="432" y="476" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Fullscreen quad</text>
+<text x="432" y="496" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">six NDC vertices, built on first request</text>
+<text x="432" y="514" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">every whole-target pass; the debug markers and view</text>
+<text x="432" y="532" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">a renderer without a context builds its own</text>
+<path d="M 300 114 L 420 114" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 300 234 L 420 234" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 300 270 L 420 270" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 420 300 L 300 300" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 300 386 L 420 386" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 300 486 L 420 486" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+</svg>

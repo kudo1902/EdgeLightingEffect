@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="450" viewBox="0 0 980 450" role="img" aria-label="A buffer record's life in the registry">
+<title>A buffer record's life in the registry</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="979" height="449" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<circle cx="225" cy="40" r="9" fill="#1f2328"/>
+<path d="M 225 49 L 225 150" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="235.0" y="103.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">RegisterBuffer (constructor)</text>
+<rect x="100" y="150" width="250" height="80" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="112" y="172" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">listed, not current</text>
+<text x="112" y="192" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">Find returns it; IsCurrent false</text>
+<text x="112" y="210" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">no texture yet, or not marked</text>
+<rect x="650" y="150" width="250" height="80" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="662" y="172" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">current this frame</text>
+<text x="662" y="192" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">IsCurrent true; version moved</text>
+<text x="662" y="210" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">if the bytes changed</text>
+<path d="M 350 172 L 650 172" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="500.0" y="142.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="middle">MarkBufferCurrent in phase 1,</text>
+<text x="500.0" y="158.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="middle">once it holds what the frame used</text>
+<path d="M 650 210 L 350 210" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="500.0" y="230.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="middle">next registry.BeginFrame()</text>
+<rect x="40" y="340" width="260" height="80" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="52" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">in another context</text>
+<text x="52" y="382" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">SetResourceContext(other) moved it:</text>
+<text x="52" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">listed in that effect's registry</text>
+<path d="M 170 230 L 170 340" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="178.0" y="275.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">renderer joins</text>
+<text x="178.0" y="291.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">another effect</text>
+<rect x="360" y="340" width="280" height="80" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="372" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">removed</text>
+<text x="372" y="382" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">slot free for a later key</text>
+<text x="372" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">~BaseRenderer, SetResourceContext(nullptr)</text>
+<path d="M 320 230 L 320 290 L 500 290 L 500 340" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="329.6" y="282.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">renderer destroyed, or fails Initialize</text>
+<rect x="680" y="340" width="280" height="80" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.5"/>
+<text x="692" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">closed: never current again</text>
+<text x="692" y="382" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">the effect is gone: registry.Close()</text>
+<text x="692" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">a kept renderer still draws, alone</text>
+<path d="M 775 230 L 775 340" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="783.0" y="275.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">effect destroyed</text>
+<text x="783.0" y="291.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">(from either state)</text>
+</svg>

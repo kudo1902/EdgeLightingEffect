@@ -1,8 +1,11 @@
 # Implementation
 
 The short version of how this library is put together and how a frame runs.
-For depth, see [`neon-onboarding-guide.md`](neon-onboarding-guide.md) (the
-neon from first principles, every pass and config field),
+For the system as a whole - components, ownership, how renderers share
+resources and read each other's buffers - see
+[`architecture.md`](architecture.md). For depth, see
+[`neon-onboarding-guide.md`](neon-onboarding-guide.md) (the neon from first
+principles, every pass and config field),
 [`effect-reference.md`](effect-reference.md) (per-parameter behaviour), and
 [`neon-renderer-explained.html`](neon-renderer-explained.html) (why the shader
 is shaped the way it is). When any of them disagrees with the
@@ -45,6 +48,9 @@ Concretely it holds:
 - a `Clock` (play/pause time accumulator).
 - an `AnimationManager` (by `unique_ptr`).
 - a `vector<shared_ptr<BaseRenderer>>`, registered by the host.
+- a `ResourceContext` (by `shared_ptr`, shared with every renderer): the
+  shader cache, the buffer registry, the frame's declared reads and one
+  fullscreen quad - [`architecture.md`](architecture.md) section 4.
 
 Renderers are independent visual layers with no scene graph and no depth
 sorting. They composite by blending, list order is stacking order, and any
@@ -435,6 +441,10 @@ the other.
 
 Conventions (naming, bracing, the no-em-dash rule) are in
 [`AGENTS.md`](../AGENTS.md) and enforced by hand. There is no formatter config
-and no test target; the nearest thing is the optional
+and no test target; the nearest things are the optional tools
+(`-DEDGE_LIGHTING_BUILD_TOOLS=ON`):
 [`tools/neon-scale-check`](../tools/neon-scale-check/README.md), a regression
-check for the neon's resolution scale (`-DEDGE_LIGHTING_BUILD_TOOLS=ON`).
+check for the neon's resolution scale, and
+[`tools/layer-check`](../tools/layer-check/README.md), which hashes every frame
+of all five layers so two builds can be diffed. Which to run when is in
+[`architecture.md`](architecture.md) section 9.

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="600" viewBox="0 0 1100 600" role="img" aria-label="Layering: every band uses only the bands below it">
+<title>Layering: every band uses only the bands below it</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="1099" height="599" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="200" y="30" width="640" height="50" rx="8" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.5"/>
+<text x="184" y="60" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Hosts</text>
+<text x="214" y="60" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">demo/, demo-capi/, tools/ (layer-check, neon-scale-check, neon-guide-figures)</text>
+<rect x="200" y="98" width="640" height="50" rx="8" fill="#eaeef2" stroke="#6e7781" stroke-width="1.5"/>
+<text x="184" y="128" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">C ABI</text>
+<text x="214" y="128" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">lib/capi/: libedge-lighting-c, flat el_* calls (C++ hosts skip it)</text>
+<rect x="200" y="166" width="640" height="50" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="184" y="196" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Orchestrator</text>
+<text x="214" y="196" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">core/edge-lighting.h: EdgeLightingEffect | animation/: Modulator, Animation</text>
+<rect x="200" y="234" width="640" height="50" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="184" y="264" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Renderers</text>
+<text x="214" y="264" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">renderer/: BaseRenderer and the five layers, their LUTs and tuning headers</text>
+<rect x="200" y="302" width="640" height="50" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="184" y="332" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Shared services</text>
+<text x="214" y="332" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">core/: ResourceContext, BufferRegistry, ReadList | gl/: ShaderCache</text>
+<rect x="200" y="370" width="640" height="50" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="184" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Data</text>
+<text x="214" y="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">core/config.h: Config, one plain sub-struct per layer, each with operator==</text>
+<rect x="200" y="438" width="640" height="50" rx="8" fill="#eaeef2" stroke="#6e7781" stroke-width="1.5"/>
+<text x="184" y="468" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">GL and helpers</text>
+<text x="214" y="468" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">gl/: RAII wrappers | util/ | lib/shaders/ -&gt; ShaderSource::*</text>
+<rect x="200" y="506" width="640" height="50" rx="8" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.5"/>
+<text x="184" y="536" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="end">Third party</text>
+<text x="214" y="536" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">GLAD | GLM | GLFW (demos and tools only)</text>
+<path d="M 1060 40 L 1060 546" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="1052.0" y="293.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="end">uses</text>
+<path d="M 840 259.0 L 880 259.0 L 880 191.0 L 842 191.0" fill="none" stroke="#57606a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<text x="892" y="209.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">the one upward name:</text>
+<text x="892" y="225.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">BaseRenderer befriends the</text>
+<text x="892" y="241.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">effect, so only it calls</text>
+<text x="892" y="257.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">Prepare</text>
+</svg>

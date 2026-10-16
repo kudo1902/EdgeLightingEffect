@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="760" viewBox="0 0 1000 760" role="img" aria-label="One frame: Update, then Render in two phases">
+<title>One frame: Update, then Render in two phases</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="999" height="759" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="30" y="36" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1f2328" text-anchor="start">Update(dt)</text>
+<rect x="30" y="50" width="170" height="58" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="115.0" y="83.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">clock.Update(dt)</text>
+<rect x="218" y="50" width="170" height="58" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="303.0" y="74.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">animations:</text>
+<text x="303.0" y="92.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">Update + Apply</text>
+<path d="M 200 79 L 218 79" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="406" y="50" width="170" height="58" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="491.0" y="74.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">active config</text>
+<text x="491.0" y="92.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">changed?</text>
+<path d="M 388 79 L 406 79" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="594" y="50" width="170" height="58" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="679.0" y="74.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">OnConfigChanged</text>
+<text x="679.0" y="92.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">(each renderer)</text>
+<path d="M 576 79 L 594 79" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="782" y="50" width="170" height="58" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="867.0" y="74.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">Update</text>
+<text x="867.0" y="92.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">(each renderer)</text>
+<path d="M 764 79 L 782 79" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="540" y="128" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="middle" font-style="italic">only when the composited config changed - an idle effect never calls it</text>
+<text x="30" y="172" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1f2328" text-anchor="start">Render(w, h)</text>
+<rect x="30" y="186" width="220" height="58" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="140.0" y="210.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">registry.BeginFrame()</text>
+<text x="140.0" y="228.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">nothing is current</text>
+<rect x="272" y="186" width="220" height="58" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="382.0" y="210.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">CollectReads</text>
+<text x="382.0" y="228.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">(each renderer)</text>
+<path d="M 250 215 L 272 215" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="514" y="186" width="220" height="58" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="624.0" y="210.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">PrepareSchedule::Build</text>
+<text x="624.0" y="228.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">the Prepare order</text>
+<path d="M 492 215 L 514 215" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 624 244 L 624 300" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="30" y="320" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">Now: every Prepare, then every Render</text>
+<rect x="170" y="330" width="800" height="50" rx="6" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<rect x="170" y="390" width="800" height="50" rx="6" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="160" y="360" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="end">own buffers</text>
+<text x="160" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="end">caller's framebuffer</text>
+<rect x="178" y="337" width="230" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="293.0" y="360" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">neon: tables, gather, 1b, fields</text>
+<rect x="414" y="337" width="120" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="474.0" y="360" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">flare (&lt; 1.0)</text>
+<rect x="540" y="337" width="130" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="605.0" y="360" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">spotlight (&lt; 1.0)</text>
+<rect x="678" y="397" width="120" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="738.0" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">neon: fill, blit, ring</text>
+<rect x="802" y="397" width="52" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="828.0" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">drops</text>
+<rect x="858" y="397" width="36" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="876.0" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">flare</text>
+<rect x="898" y="397" width="36" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="916.0" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">spot</text>
+<rect x="938" y="397" width="28" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="952.0" y="420" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">dbg</text>
+<path d="M 674 382 L 674 394" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="178" y="466" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">Phase 1 (Prepare -&gt; RenderOffscreen) marks each buffer current in the registry.</text>
+<text x="178" y="484" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">Phase 2 (Render -&gt; RenderOnscreen) draws the caller's target in ONE run: on a tiler, one store per frame.</text>
+<text x="30" y="550" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">Before S3: each layer's offscreen pass inside its Render</text>
+<rect x="170" y="560" width="800" height="50" rx="6" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<rect x="170" y="620" width="800" height="50" rx="6" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="160" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="end">own buffers</text>
+<text x="160" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="end">caller's framebuffer</text>
+<rect x="178" y="567" width="150" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="253.0" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">neon offscreen</text>
+<rect x="332" y="627" width="130" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="397.0" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">neon on target</text>
+<rect x="466" y="627" width="40" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="486.0" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">drops</text>
+<rect x="510" y="567" width="110" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="565.0" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">flare offscreen</text>
+<rect x="624" y="627" width="70" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="659.0" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">flare blit</text>
+<rect x="698" y="567" width="120" height="36" rx="5" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="758.0" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">spot offscreen</text>
+<rect x="822" y="627" width="70" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="857.0" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">spot blit</text>
+<rect x="896" y="627" width="40" height="36" rx="5" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="916.0" y="650" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="middle">dbg</text>
+<text x="178" y="696" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#cf222e" text-anchor="start" font-style="italic">Every switch away from the caller's target and back stores its tiles out and loads them in again.</text>
+</svg>

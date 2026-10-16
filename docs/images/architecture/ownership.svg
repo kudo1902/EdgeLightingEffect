@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="560" viewBox="0 0 980 560" role="img" aria-label="Who owns what">
+<title>Who owns what</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="979" height="559" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="40" y="40" width="220" height="60" rx="8" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.5"/>
+<text x="150.0" y="62" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">Host</text>
+<text x="150.0" y="82" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="middle">or an el_effect handle</text>
+<rect x="360" y="40" width="240" height="60" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="480.0" y="62" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">EdgeLightingEffect</text>
+<text x="480.0" y="82" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="middle">Config, Clock, animations</text>
+<rect x="360" y="210" width="240" height="60" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="480.0" y="232" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">a renderer</text>
+<text x="480.0" y="252" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="middle">BaseRenderer subclass</text>
+<rect x="360" y="400" width="240" height="76" rx="8" fill="#eaeef2" stroke="#6e7781" stroke-width="1.5"/>
+<text x="480.0" y="422" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">its GL objects</text>
+<text x="480.0" y="442" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">programs, Framebuffers,</text>
+<text x="480.0" y="460" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="middle">LUTs, VAOs, UBOs (RAII)</text>
+<rect x="690" y="180" width="260" height="330" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="820" y="206" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">ResourceContext</text>
+<text x="820" y="224" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="middle">cache, registry, reads, quad</text>
+<rect x="710" y="270" width="220" height="60" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="820.0" y="292" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">buffer records</text>
+<text x="820.0" y="312" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="middle">in the registry's slots</text>
+<rect x="710" y="410" width="220" height="60" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="820.0" y="432" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="middle">compiled stages</text>
+<text x="820.0" y="452" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="middle">in the ShaderCache</text>
+<path d="M 260 70 L 360 70" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="316.0" y="64.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">owns</text>
+<path d="M 480 100 L 480 210" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="488.0" y="159.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">shared_ptr (the list)</text>
+<path d="M 150 100 L 150 240 L 360 240" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="158.0" y="205.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">may keep a</text>
+<text x="158.0" y="221.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">shared_ptr</text>
+<path d="M 600 70 L 820 70 L 820 180" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="725.0" y="62.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">shared_ptr</text>
+<path d="M 600 232 L 690 232" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="611.0" y="224.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">shared_ptr</text>
+<path d="M 480 270 L 480 400" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="472.0" y="339.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="end">owns (RAII members)</text>
+<path d="M 600 255 L 650 255 L 650 300 L 710 300" fill="none" stroke="#57606a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<text x="644.0" y="294.25" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="end">registers</text>
+<path d="M 710 318 L 600 420" fill="none" stroke="#57606a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<text x="643.0" y="363.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="end">refers to its</text>
+<text x="643.0" y="379.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="end">Framebuffer</text>
+<path d="M 600 450 L 710 440" fill="none" stroke="#57606a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<text x="655.0" y="435.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="middle">links</text>
+<rect x="40" y="440" width="280" height="96" rx="6" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<path d="M 54 464 L 104 464" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="114" y="468" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="start">owns / strong reference</text>
+<path d="M 54 490 L 104 490" stroke="#57606a" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<text x="114" y="494" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#1f2328" text-anchor="start">refers, does not own</text>
+<text x="54" y="520" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">a linked program keeps its stages alive in GL</text>
+</svg>
