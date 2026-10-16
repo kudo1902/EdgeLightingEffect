@@ -925,6 +925,21 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
                               "re-shaded at full resolution - the line stays sharp.\n"
                               "Pays mostly on frames whose config animates.");
         }
+        SliderWithInput("Shared Scale##Neon", cfg.neon.compositeScale, 0.0f, 1.0f, "%.3f");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Draws the whole layer a second time at this scale into\n"
+                              "NeonRenderer.Composite, a buffer any layer or the host\n"
+                              "can read (Debug > Buffer View shows it). 0 = off.\n"
+                              "Clamped to [Res Scale, 1]; at 1 the frame on screen is\n"
+                              "one copy of it. Reused while nothing moves.");
+        }
+        if (cfg.neon.compositeScale > 0.0f)
+        {
+            const float drawnAt = std::clamp(cfg.neon.compositeScale, cfg.neon.resolutionScale, 1.0f);
+            ImGui::TextDisabled("Drawn at %.3f%s", drawnAt,
+                                (drawnAt >= 1.0f) ? " - the frame is a copy of it" : "");
+        }
         SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
         SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
         ImGui::TreePop();

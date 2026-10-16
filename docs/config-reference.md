@@ -210,6 +210,7 @@ summed in HDR and tone-mapped together. Also owns the opaque fill pass
 |---|---|---|---|---|
 | `enable` | bool | `false` | - | Master switch. Nothing draws when false |
 | `resolutionScale` | fraction `(0, 1]` | `0.5` | `[0.001, 1.0]`, useful `0.25-1.0` | One path at every scale (the direct path at `1.0` was removed in I57; `1.0` is the same passes with a full-size buffer). The gather runs alone into a small buffer at its own coarse scale (about 2 texels per colour kernel, `GetGatherScale`), the glow is shaded from it into an offscreen buffer at that fraction, then bilinear-blitted (`neon-blit.frag`) everywhere except a thin ring around the edge, which is re-shaded at full res from the same gather result (`neon.frag`, second program object). Buys the gather loop (~95% of the cost) almost entirely, and the rest of the shading on (1 - scale^2) of the glow. Clamped at draw time; `>= 1.0` all identical, `<= 0.001` all identical (a 1 px buffer). Within 2/255 of `1.0` down to `0.125` on the comparison page's scenes, except a 160 x 96 rect (4 at `0.25`, 10 at `0.125`) - the error grows as the rect shrinks (20 x 17: 18 / 53 / 93 at `0.5` / `0.25` / `0.125`), so keep small rects at `1.0`; before the edge ring the defaults sat 7/255 away at `0.5` and 25 at `0.25`. NOT a guaranteed saving: the ring and the blit are a fixed cost, so a tight cutoff band rendered ~2x SLOWER below `1.0` on an AMD 5300M (before the ring and blit were bounded to the lit band, which took 44% off that scene at `0.25` on llvmpipe), and a soft filament (`filamentFalloff` < ~0.3) widens the ring. Memory below `1.0`: an RGBA8 buffer over what the blit reads, never more than the whole viewport at that fraction, plus an RGBA16F gather buffer (two attachments with segments) over the glow - at 1920 x 1080 and `0.5`, 2.15 MB for a full-screen rect, 1.8 MB for a 900 x 540 one, against 4.1 MB before `neon-resolution-scale-plan.md` section 13. See `neon-resolution-scale-comparison.html` |
+| `compositeScale` | fraction `[0, 1]` | `0` (off) | `[resolutionScale, 1]` | The whole layer drawn a second time at this scale into `NeonRenderer.Composite`, a PUBLIC buffer any layer or the host can read (contract: `NeonRenderer::COMPOSITE_KEY`). Fill, glow, line, cut and cutoffs, premultiplied, undithered, RGBA16F over the viewport. Its glow is the reduced buffer copied; only the edge ring is shaded again, at this scale. Reused while nothing moves; released at `0`. At `1` the main frame is one copy of it (within 1 level of drawing directly). Turning it on leaves the main frame byte-identical. 4.1 MB at `0.5`, 16.6 MB at `1` (1080p). Not in the C ABI yet |
 | `numSamples` | int | `128` (`NEON_MAX_LOOP_SAMPLES`) | `[1, 128]`, converged `>= 96` | Gather samples per fragment. Lower = faster + grainier halo. `128`, `129` and `512` are identical; so are `0` and `1`. Against `128`: `96` is 1/255, `64` is 3/255, `32` is 12/255, `16` is 29/255 |
 | `gradientLutSize` | texels | `256` | `>= 4`, no cap; converged `>= 128` | Baked ring LUT width. Size change snaps, never cross-fades. Floored at 4 (`1` through `4` identical, `5` is the first that differs); there is NO upper clamp - the demo's `32-256` slider is a UI choice, and `512`/`4096` do render (3/255 and 5/255 past `256`) |
 | `opaqueMode` | enum | `NONE` | - | Fill geometry (see `OpaqueMode`) |
@@ -320,7 +321,8 @@ current. Always full-res. Draw order: buffer view, box, strip, markers.
 
 Registered buffers (`BufferRegistry`: every one listed from the moment its
 renderer joins the effect, each current only on a frame its producer marks
-it - so only a layer drawn before the debug layer can be viewed):
+it - in its `Prepare`, so a buffer of any layer can be viewed, wherever the
+debug layer sits):
 
 | Key | Producer | Placed | Current when |
 |---|---|---|---|
@@ -330,6 +332,7 @@ it - so only a layer drawn before the debug layer can be viewed):
 | `NeonRenderer.Field` | neon P1f | field region (from its bake) | P1c read it, or P1f baked it this frame and the bake succeeded |
 | `NeonRenderer.Scaled` | neon P1b / P1c | reduced buffer's region | glow drawn |
 | `NeonRenderer.Glow` | the same texture, PUBLIC: the glow product, whose contract is `NeonRenderer::GLOW_KEY`'s | reduced buffer's region | glow drawn |
+| `NeonRenderer.Composite` | neon P1s, PUBLIC: the shared buffer, the whole layer at `compositeScale` (contract: `NeonRenderer::COMPOSITE_KEY`) | whole viewport | `compositeScale` > 0 and the glow drawn; redrawn when the offscreen passes ran, reused otherwise |
 | `NeonRenderer.RingField` | neon P1r | panel (packed strips) | P2r read it, or P1r baked it this frame and the bake succeeded |
 | `NeonRenderer.GradientRing` | neon's `mGradientLUT` (a LUT, baked on the CPU) | panel (`gradientLutSize` x 1) | the glow is on (`neon.enable`, not `opaqueOnly`); the debug strip reads it |
 | `LensFlare.Scaled` / `Spotlight.Scaled` | flare / spotlight | whole viewport | scaled path ran |

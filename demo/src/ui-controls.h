@@ -267,6 +267,8 @@ namespace EdgeLightingDemo
                   << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)" : " (full res, direct)")
                   << "   numSamples " << n.numSamples
                   << ", gradientLutSize " << n.gradientLutSize << "\n";
+        std::cout << "Shared buffer " << std::setprecision(3) << n.compositeScale
+                  << (n.compositeScale > 0.0f ? " (NeonRenderer.Composite drawn)" : " (off)") << "\n";
 
         // -------------------------------------------------------------------
         // Droplets. The band's SIDE is not in this sub-config at all - it is

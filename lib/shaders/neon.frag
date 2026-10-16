@@ -78,6 +78,19 @@ uniform int   uUniformCover;
 // than as a bug.
 uniform float uResolutionScale;
 
+// The scale of the grid this pass's output is finally SEEN at: 1.0 for every
+// pass whose pixels reach the caller's framebuffer (pass 1b through the
+// full-res blit, the ring directly), the shared buffer's scale for its ring
+// (NeonRenderer::COMPOSITE_KEY). The masks antialias over one pixel of that
+// grid, which is uResolutionScale / uDestScale of this pass's own pixels -
+// an exact r / 1.0 = r on every pass but the shared ring.
+uniform float uDestScale;
+
+// 1 when this pass's output is final and gets the output dither (the ring on
+// the caller's framebuffer); 0 for the shared buffer's ring, a buffer others
+// read back filtered, which must carry no noise (R7).
+uniform int uDither;
+
 // 1 for a pass whose output the blit composites - pass 1b, and the field bake
 // that stands in for it - which leaves the one-sided cut and the cutoffs to
 // the blit; 0 for the edge ring and its field bake, which draw the frame's own
@@ -648,7 +661,7 @@ void main() {
     // discard, because a derivative downstream of non-uniform control flow is
     // undefined. This is the only derivative in this shader - keep it at the
     // top if a second one is ever needed.
-    float sideAA = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius) * uResolutionScale, 1e-6);
+    float sideAA = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius) * (uResolutionScale / uDestScale), 1e-6);
 
     // The mask's edges - the one-sided cut's feather and anchor, and each
     // cutoff's ramp, midpoint and distance - from neon-mask.glsl, the one copy
@@ -1209,6 +1222,7 @@ void main() {
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
     // The output dither, on the ring's write to the caller's framebuffer only:
-    // pass 1b writes the reduced buffer, which the blit dithers as it writes.
-    fragColor = vec4(blitOwnsCut ? result : neonDither(result), alpha);
+    // pass 1b writes the reduced buffer, which the blit dithers as it writes,
+    // and the shared buffer's ring (uDither 0) a buffer read back filtered.
+    fragColor = vec4((blitOwnsCut || uDither == 0) ? result : neonDither(result), alpha);
 }

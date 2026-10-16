@@ -1144,7 +1144,11 @@ namespace EdgeLighting
         /// every pass that composites the glow writes 0 - and drawing there is
         /// pure cost, which is what @ref NeonRenderer::setupRingGeometry stops
         /// paying for.
-        inline EdgeExtent GetLitExtent(const Config &config)
+        ///
+        /// @p destPx is one destination pixel in full-res px - 1 for the
+        /// caller's framebuffer, 1 / s for the shared buffer at scale s, whose
+        /// masks ramp over one of ITS pixels and so end further out.
+        inline EdgeExtent GetLitExtent(const Config &config, float destPx = 1.0f)
         {
             const NeonConfig &neon = config.neon;
             EdgeExtent lit{CUTOFF_DISABLED_SIZE, CUTOFF_DISABLED_SIZE};
@@ -1154,7 +1158,7 @@ namespace EdgeLighting
             }
             else if (neon.insideCutoff.enable)
             {
-                lit.in = GetCutoffEnd(neon.insideCutoff, CUTOFF_FLOOR_PX);
+                lit.in = GetCutoffEnd(neon.insideCutoff, CUTOFF_FLOOR_PX * destPx);
             }
             if (neon.glowSide == GlowSide::INSIDE)
             {
@@ -1162,7 +1166,7 @@ namespace EdgeLighting
             }
             else if (neon.outsideCutoff.enable)
             {
-                lit.out = GetCutoffEnd(neon.outsideCutoff, CUTOFF_FLOOR_PX);
+                lit.out = GetCutoffEnd(neon.outsideCutoff, CUTOFF_FLOOR_PX * destPx);
             }
             return lit;
         }
@@ -1180,6 +1184,39 @@ namespace EdgeLighting
             const float ringWidth = GetRingWidth(config, scale);
             const EdgeExtent lit = GetLitExtent(config);
             return {std::min(ringWidth, lit.in + LIT_EDGE_SAFETY), std::min(ringWidth, lit.out + LIT_EDGE_SAFETY)};
+        }
+
+        /// @c NeonConfig::compositeScale as it is drawn: 0 for none, else
+        /// clamped to [resolutionScale, 1] - never coarser than the reduced
+        /// buffer the shared one copies its glow from. Below that the copy
+        /// would minify the reduced buffer, and the ring and the blit would
+        /// need wider bounds than the main frame builds the gather and the
+        /// reduced buffer for.
+        inline float GetCompositeScale(const Config &config)
+        {
+            if (!(config.neon.compositeScale > 0.0f))
+            {
+                return 0.0f;
+            }
+            return std::clamp(config.neon.compositeScale, GetClampedResolutionScale(config), 1.0f);
+        }
+
+        /// The shared buffer's ring at scale @p s, in FULL-RES px either side
+        /// of the edge: @ref GetRingExtent for a destination at @p s rather
+        /// than at full resolution. The line it must cover is the one it
+        /// draws, at @p s (Nyquist floor and all), and the one the reduced
+        /// buffer at @p bufferScale left out, plus that buffer's bilinear
+        /// footprint; clipped to the band its masks leave lit, whose ramps are
+        /// a pixel of @p s wide. At @p s 1 it is exactly the main ring.
+        inline EdgeExtent GetCompositeRingExtent(const Config &config, float s, float bufferScale)
+        {
+            const float drawnReach = GetFilamentExtent(config, s).reach / s;
+            const float bufferReach = GetFilamentExtent(config, bufferScale).reach / bufferScale;
+            const float ringWidth =
+                std::max(drawnReach, bufferReach) + static_cast<float>(RING_GUARD_TEXELS) / bufferScale;
+            const EdgeExtent lit = GetLitExtent(config, 1.0f / s);
+            const float safety = LIT_EDGE_SAFETY / s;
+            return {std::min(ringWidth, lit.in + safety), std::min(ringWidth, lit.out + safety)};
         }
 
         /// How many reduced-buffer texels the blit's bilinear read can reach
@@ -1370,6 +1407,31 @@ namespace EdgeLighting
             mask.outsideCutoff = GetCutoffSize(config.neon.outsideCutoff);
             mask.outsideCutoffSoftness = config.neon.outsideCutoff.softness;
             return mask;
+        }
+
+        /// A cutoff size for a target at @p scale: scaled when it is enabled,
+        /// left at its sentinel when not, so it still reads as disabled.
+        inline float ScaleCutoffSize(float size, float scale)
+        {
+            return size < 0.5f * CUTOFF_DISABLED_SIZE ? size * scale : size;
+        }
+
+        /// @p mask (full-res, caller's px) for a target at @p scale whose rect
+        /// centre is @p center: every length scaled, a disabled cutoff kept at
+        /// its sentinel. What the shared buffer's blit applies.
+        inline NeonRenderer::EdgeMask ScaleEdgeMask(const NeonRenderer::EdgeMask &mask, float scale,
+                                                    const glm::vec2 &center)
+        {
+            NeonRenderer::EdgeMask scaled = mask;
+            scaled.rectCenter = center;
+            scaled.rectSize = mask.rectSize * scale;
+            scaled.cornerRadius = mask.cornerRadius * scale;
+            scaled.glowSideSoftness = mask.glowSideSoftness * scale;
+            scaled.insideCutoff = ScaleCutoffSize(mask.insideCutoff, scale);
+            scaled.insideCutoffSoftness = mask.insideCutoffSoftness * scale;
+            scaled.outsideCutoff = ScaleCutoffSize(mask.outsideCutoff, scale);
+            scaled.outsideCutoffSoftness = mask.outsideCutoffSoftness * scale;
+            return scaled;
         }
 
         inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
@@ -2073,6 +2135,8 @@ namespace EdgeLighting
         // The reduced buffer a second time, as the product: its contract is
         // GLOW_KEY's (neon-renderer.h), not the intermediate's.
         mBufferRecords.glow = RegisterBuffer(mScaledBuffer, GLOW_KEY, BufferVisibility::PUBLIC);
+        // The shared buffer, the whole layer at another scale: a product too.
+        mBufferRecords.composite = RegisterBuffer(mComposite.buffer, COMPOSITE_KEY, BufferVisibility::PUBLIC);
     }
 
     NeonRenderer::EdgeMask NeonRenderer::GetEdgeMask(const Config &config, int viewportHeight)
@@ -2152,6 +2216,8 @@ namespace EdgeLighting
         mBlitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mGatherMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mRingField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mComposite.ringMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mComposite.blitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         // The atlas bakes and the glow quad's interior hole read the merged
         // transient+preserved view, which OnConfigChanged normally keeps
@@ -2386,7 +2452,23 @@ namespace EdgeLighting
                 }
             }
         }
-        if (!reuseOffscreen || field.bake || ringField.bake)
+        // The shared buffer (pass 1s, COMPOSITE_KEY), while its scale is
+        // above 0: drawn on a frame the offscreen passes run, and REUSED on
+        // one where nothing moved - it is drawn from exactly what they hold,
+        // at its own scale over this viewport, so the same buffers and the
+        // same viewport give the same picture. Its programs are built the
+        // first frame it is wanted.
+        const float compositeScale = mComposite.scale;
+        const glm::ivec2 compositeTexels(GetScaledExtent(viewportWidth, std::max(compositeScale, MIN_RESOLUTION_SCALE)),
+                                         GetScaledExtent(viewportHeight, std::max(compositeScale, MIN_RESOLUTION_SCALE)));
+        const bool compositeWanted = glowReady && compositeScale > 0.0f &&
+                                     compositeScale == GetCompositeScale(config) && ensureCompositePrograms();
+        const bool compositeReused = compositeWanted && reuseOffscreen && mComposite.drawn &&
+                                     mComposite.viewport == viewport && mComposite.texels == compositeTexels;
+        const bool compositeDraw = compositeWanted && !compositeReused;
+        bool compositeReady = compositeReused;
+
+        if (!reuseOffscreen || field.bake || ringField.bake || compositeDraw)
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -2527,7 +2609,18 @@ namespace EdgeLighting
                 bufferUse.ringFieldWritten = baked;
             }
 
-            if (!reuseOffscreen || field.bake || ringField.bake)
+            // --- Pass 1s: the shared buffer, from what the passes above left
+            // in the reduced buffer and the gather - so after all of them.
+            if (compositeDraw && glowReady)
+            {
+                compositeReady = renderCompositePass(viewportWidth, viewportHeight, centerFull, scaledRegion,
+                                                     gatherRegion, time, config);
+                bufferUse.compositeWritten = compositeReady;
+                mComposite.drawn = compositeReady;
+                mComposite.viewport = viewport;
+            }
+
+            if (!reuseOffscreen || field.bake || ringField.bake || compositeDraw)
             {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
@@ -2554,6 +2647,8 @@ namespace EdgeLighting
         mFramePlan.gatherUVFull = gatherUVFull;
         mFramePlan.scaledUV = scaledUV;
         mFramePlan.ringField = ringField;
+        // At scale 1 the shared buffer is the main frame: phase 2 copies it.
+        mFramePlan.mainFromComposite = glowReady && compositeReady && compositeScale == 1.0f;
 
         if (glowReady)
         {
@@ -2563,6 +2658,7 @@ namespace EdgeLighting
             // read them wherever it sits in the order.
             bufferUse.fieldRead = field.use || bufferUse.fieldWritten;
             bufferUse.ringFieldRead = ringField.use || bufferUse.ringFieldWritten;
+            bufferUse.compositeRead = compositeReady;
             publishBuffers(centerFull, gatherRegion, scaledRegion, bufferUse, config);
         }
 
@@ -2589,12 +2685,19 @@ namespace EdgeLighting
         // Full-res on the caller's framebuffer, under the glow: before the
         // blit and the ring. Alone under DebugConfig::opaqueOnly, which leaves
         // the plan's glowReady off.
-        if (config.neon.opaqueMode != OpaqueMode::NONE)
+        if (config.neon.opaqueMode != OpaqueMode::NONE && !mFramePlan.mainFromComposite)
         {
             renderFillPass(viewportWidth, viewportHeight, config);
         }
 
-        if (mFramePlan.glowReady)
+        // --- Pass 2s: at scale 1 the shared buffer holds this whole layer -
+        // the fill, the blit and the ring, drawn once in phase 1 - so the
+        // main frame is one copy of it.
+        if (mFramePlan.mainFromComposite)
+        {
+            renderCompositeCopyPass();
+        }
+        else if (mFramePlan.glowReady)
         {
             // The ring reads the segment and arc blocks, bound by
             // packLightBlocks in the offscreen phase - and every other layer's
@@ -2714,7 +2817,10 @@ namespace EdgeLighting
                                    // The same shape of mistake as adding a field to a Config struct
                                    // and not to its operator== - see AGENTS.md.
                                    config.neon.glowSide != mCurrentConfig.neon.glowSide ||
-                                   config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff;
+                                   config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
+                                   // The shared buffer's ring and blit meshes are built with
+                                   // the main pair, at its scale (setupRingGeometry).
+                                   config.neon.compositeScale != mCurrentConfig.neon.compositeScale;
         // The fill ring is bounded by the FILL's own cutoff pair (sizes and
         // feathers), not by the glow reach, so it gets its own gate rather
         // than riding on geometryDirty: opaqueMode and the fill cutoffs move
@@ -2920,6 +3026,13 @@ namespace EdgeLighting
         {
             mGlowCover.buffer.Release();
             mGather.buffer.Release();
+        }
+        // The shared buffer, the moment nothing wants it: the scale back to
+        // 0, or the layer off. 4 MB at 0.5 at 1080p, 16 at 1.
+        if (!config.neon.enable || GetCompositeScale(config) <= 0.0f)
+        {
+            mComposite.buffer.Release();
+            mComposite.drawn = false;
         }
         // The segment table goes with the main one, and whenever the segments
         // are baked into the main table directly. Here, as the main table's
@@ -3195,6 +3308,23 @@ namespace EdgeLighting
         // never compiles it.
         return ensureProgram(mFillShader, ShaderSource::BLACK_RECT_FRAG_SRC, nullptr, "NeonRenderer.Fill",
                              PROGRAM_FILL, 0, "opaque mode will draw no fill");
+    }
+
+    bool NeonRenderer::ensureCompositePrograms()
+    {
+        // The main frame's three passes again, as program objects of their
+        // own: these draw the shared buffer in phase 1 while the main ones
+        // draw the caller's framebuffer in phase 2 (the AB rule - see
+        // ensureGlowPrograms). Same stages from the shader cache, so each is
+        // a link, not a compile. The fill is built here whatever the opaque
+        // mode, since a mode change must not stall a frame on a first build.
+        const char *noShared = "the shared buffer is not made";
+        return ensureProgram(mCompositeFillShader, ShaderSource::BLACK_RECT_FRAG_SRC, nullptr,
+                             "NeonRenderer.CompositeFill", PROGRAM_COMPOSITE_FILL, 0, noShared) &&
+               ensureProgram(mCompositeBlitShader, ShaderSource::NEON_BLIT_FRAG_SRC, nullptr,
+                             "NeonRenderer.CompositeBlit", PROGRAM_COMPOSITE_BLIT, 0, noShared) &&
+               ensureProgram(mCompositeRingShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.CompositeRing",
+                             PROGRAM_COMPOSITE_RING, BLOCK_SEGMENT | BLOCK_ARC, noShared);
     }
 
     bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
@@ -3867,6 +3997,45 @@ namespace EdgeLighting
         // past it are never read, so they need not exist.
         mScaledOuter = blitOuter + glm::vec2(FOOTPRINT_TEXELS / scale + 1.0f);
 
+        // THE SHARED BUFFER'S PAIR (pass 1s, COMPOSITE_KEY), when it is on:
+        // the same construction for a destination at its scale s. Its ring
+        // covers the line as drawn at s (GetCompositeRingExtent), and every
+        // mask ramp, and so the lit band, is a pixel of s wide - 1 / s full-res
+        // px - where the main pair's is one full-res px. At s 1 every value
+        // below is the main pair's, bit for bit.
+        //
+        // Then clamped to the main pair's own boxes: the shared buffer draws
+        // nothing where the main frame draws nothing - which is what it is a
+        // picture of - and so reads the reduced buffer and the gather only
+        // where they already cover, and the main frame's buffers do not grow
+        // with it (grown, their regions moved the main frame by a level on a
+        // few pixels). The wider ramps still fit: LIT_EDGE_SAFETY (2 px) holds
+        // the half pixel of s their ends move out, down to s 0.2.
+        const float compositeScale = GetCompositeScale(config);
+        glm::vec2 ringOuterShared(0.0f);
+        glm::vec2 ringHoleShared(0.0f);
+        glm::vec2 blitOuterShared(0.0f);
+        glm::vec2 blitHoleShared(0.0f);
+        if (compositeScale > 0.0f)
+        {
+            const float s = compositeScale;
+            const EdgeExtent ringShared = GetCompositeRingExtent(config, s, scale);
+            ringOuterShared = GetCircumscribedBox(halfW, halfH, ringShared.out);
+            ringHoleShared = GetInscribedBox(halfW, halfH, radius, -ringShared.in);
+            const EdgeExtent litShared = GetLitExtent(config, 1.0f / s);
+            const float safetyShared = LIT_EDGE_SAFETY / s;
+            const float glowBoundShared = (mGlowLimits.quadMargin + FOOTPRINT_TEXELS) / scale + 1.0f / s;
+            const float glowInnerBoundShared = mGlowInnerReach + FOOTPRINT_TEXELS / scale + 1.0f / s;
+            const float blitOutShared =
+                std::max(ringShared.out, std::min(glowBoundShared, litShared.out + safetyShared));
+            const float blitInShared =
+                std::max(ringShared.in, std::min(glowInnerBoundShared, litShared.in + safetyShared));
+            blitOuterShared = glm::min(GetCircumscribedBox(halfW, halfH, blitOutShared), blitOuter);
+            blitHoleShared = glm::max(GetInscribedBox(halfW, halfH, radius, -blitInShared), blitHole);
+            ringOuterShared = glm::min(ringOuterShared, ringOuter);
+            ringHoleShared = glm::max(ringHoleShared, ringHole);
+        }
+
         // THE PARTITION. Both arrays are emitted from the SAME floats: the
         // ring's outer box is the blit's outer band's inner edge, and the
         // ring's hole is the blit's inner band's outer edge. Axis-aligned edges
@@ -3911,6 +4080,32 @@ namespace EdgeLighting
         mGatherMesh.Upload(gatherVerts.data(), gatherVerts.size());
         mRingMesh.Upload(ringVerts.data(), ringVerts.size());
         mBlitMesh.Upload(blitVerts.data(), blitVerts.size());
+
+        // The shared pair, in the shared buffer's own px: the boxes above
+        // times s, each box multiplied once and pushed into both arrays, so
+        // the two still share every edge bit for bit - the partition, at s.
+        // Its ring's limits at s too, as mRingLimits are at 1.0.
+        if (compositeScale > 0.0f || mComposite.scale > 0.0f)
+        {
+            std::vector<float> compositeRingVerts;
+            std::vector<float> compositeBlitVerts;
+            if (compositeScale > 0.0f)
+            {
+                const float s = compositeScale;
+                const glm::vec2 ringOuterPx = ringOuterShared * s;
+                const glm::vec2 ringHolePx = ringHoleShared * s;
+                compositeRingVerts.reserve(48);
+                compositeBlitVerts.reserve(96);
+                PushAnnulus(compositeRingVerts, ringOuterPx, ringHolePx);
+                PushAnnulus(compositeBlitVerts, blitOuterShared * s, ringOuterPx);
+                PushAnnulus(compositeBlitVerts, ringHolePx, blitHoleShared * s);
+                mComposite.limits.quadMargin = GetGlowMargin(config, s, false);
+                mComposite.limits.cornerSkip = GetCornerSkip(config, s, mGlowEmission);
+            }
+            mComposite.ringMesh.Upload(compositeRingVerts.data(), compositeRingVerts.size());
+            mComposite.blitMesh.Upload(compositeBlitVerts.data(), compositeBlitVerts.size());
+        }
+        mComposite.scale = compositeScale;
     }
 
     NeonRenderer::RingFieldLayout NeonRenderer::computeRingFieldLayout(const Annulus &ring,
@@ -4032,10 +4227,11 @@ namespace EdgeLighting
 
     void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
                                           float time, const ShadeLimits &limits, bool blitOwnsCut,
-                                          const Config &config)
+                                          const Config &config, float destScale)
     {
         uploadShapeUniforms(shader, mvp, scale, config);
         shader.SetUniform("uResolutionScale", scale);
+        shader.SetUniform("uDestScale", destScale);
         shader.SetUniform("uBlitOwnsCut", blitOwnsCut ? 1 : 0);
         shader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         shader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
@@ -4607,7 +4803,12 @@ namespace EdgeLighting
         // The centre is derived here rather than taken from Render's scaled
         // transform for the same reason.
         const glm::vec2 centerFull = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
+        drawFill(viewportWidth, viewportHeight, centerFull, 1.0f, mFillShader, config);
+    }
 
+    void NeonRenderer::drawFill(int targetWidth, int targetHeight, const glm::vec2 &center, float scale,
+                                ShaderProgram &program, const Config &config)
+    {
         // A shaped mode reaching the shader below draws the band ring built by
         // @ref setupFillGeometry, which is in full-res rect-local pixels and so
         // needs a full-res transform to place it. A coverage-1 mode that could
@@ -4764,20 +4965,27 @@ namespace EdgeLighting
         glm::mat4 fillMvp(1.0f);
         if (ring)
         {
-            const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth),
-                                              0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
-            fillMvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+            const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(targetWidth),
+                                              0.0f, static_cast<float>(targetHeight), -1.0f, 1.0f);
+            fillMvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+            // The band ring is in full-res px; the shared buffer's are fewer.
+            if (scale != 1.0f)
+            {
+                fillMvp = fillMvp * glm::scale(glm::mat4(1.0f), glm::vec3(scale, scale, 1.0f));
+            }
         }
 
-        if (!ensureFillProgram())
+        // The main fill builds on first use; the shared buffer's was built
+        // with its other two programs (ensureCompositePrograms).
+        if (&program == &mFillShader ? !ensureFillProgram() : !program.IsValid())
         {
             return;
         }
-        mFillShader.Use();
-        mFillShader.SetUniform("uMVP", fillMvp);
-        mFillShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mFillShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        mFillShader.SetUniform("uRectCenter", centerFull);
+        program.Use();
+        program.SetUniform("uMVP", fillMvp);
+        program.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height) * scale);
+        program.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
+        program.SetUniform("uRectCenter", center);
         // The FILL's own cutoff pair, never the glow's - see
         // NeonConfig::opaqueInsideCutoff. Same size, sentinel and softness as
         // setupFillGeometry reads, so the ring bounds exactly what this
@@ -4786,12 +4994,12 @@ namespace EdgeLighting
         // floors its width at `aa`, so a CPU-side clamp would add nothing.
         const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
         const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
-        mFillShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-        mFillShader.SetUniform("uInsideCutoff", GetCutoffSize(fillIn));
-        mFillShader.SetUniform("uInsideCutoffSoftness", fillIn.softness);
-        mFillShader.SetUniform("uOutsideCutoff", GetCutoffSize(fillOut));
-        mFillShader.SetUniform("uOutsideCutoffSoftness", fillOut.softness);
-        mFillShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
+        program.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+        program.SetUniform("uInsideCutoff", ScaleCutoffSize(GetCutoffSize(fillIn), scale));
+        program.SetUniform("uInsideCutoffSoftness", fillIn.softness * scale);
+        program.SetUniform("uOutsideCutoff", ScaleCutoffSize(GetCutoffSize(fillOut), scale));
+        program.SetUniform("uOutsideCutoffSoftness", fillOut.softness * scale);
+        program.SetUniform("uOpaqueColor", config.neon.opaqueColor);
         if (ring)
         {
             mFillMesh.Draw();
@@ -4800,7 +5008,7 @@ namespace EdgeLighting
         {
             GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         }
-        mFillShader.Unuse();
+        program.Unuse();
     }
 
     void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV)
@@ -4821,11 +5029,17 @@ namespace EdgeLighting
         // cutoff band no wider than the ring, leaves nothing outside the ring
         // that can be lit (setupRingGeometry). That is not a failure to fall
         // back from: drawing anything here would draw over the ring.
-        if (mBlitMesh.count == 0)
+        drawBlit(mBlitShader, mBlitMesh, mvp, mask, scaledUV, true);
+    }
+
+    void NeonRenderer::drawBlit(ShaderProgram &program, Mesh &mesh, const glm::mat4 &mvp, const EdgeMask &mask,
+                                const UVMap &scaledUV, bool dither)
+    {
+        if (mesh.count == 0)
         {
             return;
         }
-        mBlitShader.Use();
+        program.Use();
 
         // FULL-RES geometry, under the full-res transform Render built for
         // this pass and the ring together - not Render's scaled one; the same
@@ -4839,22 +5053,23 @@ namespace EdgeLighting
         // onto the reduced buffer through @p scaledUV - its
         // region's map (GetBufferRegion), which Render derives with the region.
         // The ring finds its gather texels the same way.
-        mBlitShader.SetUniform("uMVP", mvp);
-        mBlitShader.SetUniform("uUVScale", scaledUV.scale);
-        mBlitShader.SetUniform("uUVOffset", scaledUV.offset);
+        program.SetUniform("uMVP", mvp);
+        program.SetUniform("uUVScale", scaledUV.scale);
+        program.SetUniform("uUVOffset", scaledUV.offset);
+        program.SetUniform("uDither", dither ? 1 : 0);
         // The edge mask, as a reader of the glow product takes it: the cutoff
         // values renderShadePass gives neon.frag, without the scale. A
         // disabled side goes up as the sentinel, and the shader works out for
         // itself which side glowSide subsumes, exactly as neon.frag does.
-        UploadEdgeMask(mBlitShader, mask);
+        UploadEdgeMask(program, mask);
 
         // Just bind it. The filter is requested through Resize in pass 1b
         // (renderShadePass), so this pass sets no texture parameters at all.
         mScaledBuffer.BindTexture(0);
-        mBlitShader.SetUniform("uSource", 0);
+        program.SetUniform("uSource", 0);
 
-        mBlitMesh.Draw();
-        mBlitShader.Unuse();
+        mesh.Draw();
+        program.Unuse();
     }
 
     void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config)
@@ -4875,6 +5090,7 @@ namespace EdgeLighting
         // packLightBlocks; the LUTs are bound by the upload.
         mRingShader.Use();
         uploadNeonUniforms(mRingShader, mvp, 1.0f, time, mRingLimits, false, config);
+        mRingShader.SetUniform("uDither", 1);
 
         // What the gather pass produced, in place of running the loop here -
         // the same buffer pass 1 shaded from, through the same region, here
@@ -4883,6 +5099,93 @@ namespace EdgeLighting
 
         mRingMesh.Draw();
         mRingShader.Unuse();
+    }
+
+    bool NeonRenderer::renderCompositePass(int viewportWidth, int viewportHeight, const glm::vec2 &centerFull,
+                                           const BufferRegion &scaledRegion, const BufferRegion &gatherRegion,
+                                           float time, const Config &config)
+    {
+        // An offscreen target: the host's scissor is in the wrong coordinates
+        // here - see renderShadePass.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // The whole viewport at the shared scale s. A full-res point p lands
+        // on p * s in it: every pass below draws through one ortho onto its
+        // texels, from geometry in its own px.
+        const float s = mComposite.scale;
+        const glm::ivec2 texels(GetScaledExtent(viewportWidth, s), GetScaledExtent(viewportHeight, s));
+        if (!ResizeInBestFormat(mComposite.buffer, SCALED_FORMATS, std::size(SCALED_FORMATS), mComposite.format,
+                                texels.x, texels.y, GL_LINEAR, 1, "shared",
+                                "The shared buffer's slow gradients are rounded to 8 bits, undithered."))
+        {
+            return false;
+        }
+        mComposite.buffer.Bind();
+        mComposite.buffer.ClearBuffer();
+
+        // Premultiplied over, as the three passes composite on the caller's
+        // framebuffer: the fill under the glow, then the blit and the ring,
+        // which cover disjoint areas.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        const glm::vec2 center = centerFull * s;
+        const glm::mat4 mvp = glm::ortho(0.0f, static_cast<float>(texels.x), 0.0f, static_cast<float>(texels.y),
+                                         -1.0f, 1.0f) *
+                              glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+
+        if (config.neon.opaqueMode != OpaqueMode::NONE)
+        {
+            drawFill(texels.x, texels.y, center, s, mCompositeFillShader, config);
+        }
+
+        // The blit: the reduced buffer, read from this buffer's px, masked in
+        // them - one of its pixels the ramps' floor - and not dithered.
+        drawBlit(mCompositeBlitShader, mComposite.blitMesh, mvp,
+                 ScaleEdgeMask(GetEdgeMask(config, viewportHeight), s, center),
+                 GetRegionUVMap(scaledRegion, s), false);
+
+        // The ring, shaded at s: every length at s, the line's Nyquist floor
+        // in this buffer's px, the masks antialiased over one of them
+        // (uDestScale), no dither. The light blocks are bound again - every
+        // pass before this one in phase 1 could have repointed them.
+        if (mComposite.ringMesh.count > 0)
+        {
+            mLightBlocks.segment.BindBase(SEGMENT_BLOCK_BINDING);
+            mLightBlocks.arc.BindBase(ARC_BLOCK_BINDING);
+            mCompositeRingShader.Use();
+            uploadNeonUniforms(mCompositeRingShader, mvp, s, time, mComposite.limits, false, config, s);
+            mCompositeRingShader.SetUniform("uDither", 0);
+            bindGatherBuffer(mCompositeRingShader, GetRegionUVMap(gatherRegion, s));
+            mComposite.ringMesh.Draw();
+            mCompositeRingShader.Unuse();
+        }
+        mComposite.texels = texels;
+        return true;
+    }
+
+    void NeonRenderer::renderCompositeCopyPass()
+    {
+        // One fullscreen quad, the shared buffer texel for pixel - it is
+        // viewport-sized at scale 1 - through the main blit's program: the
+        // caller's framebuffer, premultiplied over, as the three passes it
+        // stands in for. The mask is off (BOTH, no cutoffs: an exact 1), the
+        // buffer holding the masks already; the dither on, the three passes'
+        // own, applied once to their composite. NDC -> uv is 0.5 v + 0.5.
+        EdgeMask none;
+        none.glowSide = static_cast<int>(GlowSide::BOTH);
+        none.insideCutoff = CUTOFF_DISABLED_SIZE;
+        none.outsideCutoff = CUTOFF_DISABLED_SIZE;
+        mBlitShader.Use();
+        mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mBlitShader.SetUniform("uUVScale", glm::vec2(0.5f));
+        mBlitShader.SetUniform("uUVOffset", glm::vec2(0.5f));
+        mBlitShader.SetUniform("uDither", 1);
+        UploadEdgeMask(mBlitShader, none);
+        mComposite.buffer.BindTexture(0);
+        mBlitShader.SetUniform("uSource", 0);
+        GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
+        mBlitShader.Unuse();
     }
 
     void NeonRenderer::renderRingFieldCompositePass(const glm::mat4 &mvp, const UVMap &gatherUV, float gain,
@@ -4952,6 +5255,13 @@ namespace EdgeLighting
         if (use.ringFieldRead)
         {
             MarkBufferCurrent(mBufferRecords.ringField, use.ringFieldWritten);
+        }
+        // The shared buffer covers the viewport from its corner: texel i is
+        // caller px [i / s, (i + 1) / s].
+        if (use.compositeRead)
+        {
+            MarkBufferCurrent(mBufferRecords.composite, glm::vec2(0.0f),
+                              glm::vec2(mComposite.texels) / mComposite.scale, use.compositeWritten);
         }
     }
 

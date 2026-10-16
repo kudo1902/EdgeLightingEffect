@@ -497,6 +497,20 @@ the reduced-scale shading on hue-rotating frames (I50): 1.55x on those frames
 at 0.5, for 0.84 MB more on that rect - which narrows the gap without closing
 it, since the blit and the ring are full-resolution costs it does not touch.
 
+**`neon.compositeScale`** (default 0 - off)
+Draws the whole neon layer a second time, at this scale, into a buffer any
+layer or the host can read: `NeonRenderer.Composite` in the effect's buffer
+registry (`NeonRenderer::COMPOSITE_KEY`, contract in `neon-renderer.h`). The
+fill, the glow, the line, the one-sided cut and the cutoffs, premultiplied and
+NOT dithered, over the whole viewport. Clamped to [`resolutionScale`, 1]: its
+glow is the reduced buffer copied, and only the thin ring round the edge is
+shaded a second time, at this scale, so the line keeps its sampling floor there
+(a 1 px line comes out 2 px wide at 0.5). Redrawn only on frames the neon's
+offscreen passes run, reused while nothing moves, released at 0. At 1 the frame
+on screen becomes one copy of it - the layer drawn once, not twice - within 1
+level of drawing directly. Turning it on does not move the main frame. Memory at
+1920 x 1080: 4.1 MB at 0.5, 16.6 MB at 1 (RGBA16F). Not yet in the C ABI.
+
 **`neon.numSamples`** (default 128)
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`
 (128), which sizes both the UBO and the shader's array. The samples are spread

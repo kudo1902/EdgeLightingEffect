@@ -197,7 +197,7 @@ attachment n > 0, or a key of its own for a product. Today's keys are:
 
 | Owner | Keys |
 | ----- | ---- |
-| `NeonRenderer` | `Emission`, `GlowCover`, `GlowCoverSegments`, `Gather`, `Gather[1]`, `Field`, `Scaled`, `RingField`, `GradientRing` (a LUT), and `Glow`, all prefixed `NeonRenderer.` |
+| `NeonRenderer` | `Emission`, `GlowCover`, `GlowCoverSegments`, `Gather`, `Gather[1]`, `Field`, `Scaled`, `RingField`, `GradientRing` (a LUT), `Glow`, and `Composite` (only while `compositeScale` > 0), all prefixed `NeonRenderer.` |
 | `LensFlareRenderer` | `LensFlare.Scaled` |
 | `SpotlightRenderer` | `Spotlight.Scaled` |
 
@@ -216,7 +216,7 @@ later.
 Every record is either:
 
 - **`PUBLIC`** - a product with a written contract that any layer may bind.
-  One exists: `NeonRenderer.Glow`.
+  Two exist: `NeonRenderer.Glow` and `NeonRenderer.Composite`.
 - **`DEBUG`** - an intermediate its producer may change with any
   optimisation. The debug layer's buffer view and a host UI read these; any
   other layer reading one is logged.
@@ -256,7 +256,26 @@ halo or bloom out of it, or skips pass 1b on a frame it is marked current
 breaks every reader. The one pilot reader (droplets lit by the glow) was built
 and dropped; the product stays.
 
-### 4.5 One quad
+### 4.5 The shared buffer
+
+`NeonRenderer.Composite` (`NeonRenderer::COMPOSITE_KEY`; in progress, see the
+progress log) is the whole neon layer - fill, glow, line, cut and cutoffs - at
+`NeonConfig::compositeScale` `s`, made only while that is above 0. Pass 1s
+draws it in phase 1 with the main frame's three passes, each with a program
+object of its own:
+
+- the **fill**, at `s`;
+- the **blit**, a copy of the reduced buffer masked in the shared buffer's
+  pixels;
+- the **ring**, shaded again at `s` from the gather.
+
+So only the ring band is shaded twice. It is undithered (a reader dithers when
+it writes 8 bits), reused on frames where nothing moved, and released at 0. At
+`s` = 1 the main frame becomes one copy of it, so the layer is drawn once
+instead of twice. Turning it on leaves the main frame byte-identical: its meshes
+are clamped to the main frame's area, so the main frame's buffers do not grow.
+
+### 4.6 One quad
 
 The context builds one six-vertex NDC quad on first request. Every
 whole-target pass draws it through `BaseRenderer::GetFullscreenQuad()`, as do
@@ -264,7 +283,7 @@ the debug layer's markers and buffer view, which place it with a model matrix.
 Without a context a renderer builds its own. Ask for it at draw time: it
 changes with the context.
 
-### 4.6 The rules every sharer keeps
+### 4.7 The rules every sharer keeps
 
 From `resource-sharing-plan.md` section 2:
 

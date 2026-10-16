@@ -438,6 +438,28 @@ namespace EdgeLighting
         /// 900 x 540 one. Released when the layer is disabled.
         float resolutionScale = 0.5f;
 
+        /// The neon as a SHARED buffer: the whole layer - the opaque fill,
+        /// the glow, the line, the one-sided cut and the cutoffs - drawn a
+        /// second time, at this scale, into an offscreen buffer any layer or
+        /// the host can read: @c NeonRenderer::COMPOSITE_KEY in the effect's
+        /// buffer registry, with its contract in neon-renderer.h.
+        ///
+        /// 0, the default, makes none. Otherwise clamped to
+        /// [resolutionScale, 1]: never coarser than the reduced buffer it is
+        /// drawn from, whose glow it copies rather than shades again - only
+        /// the thin band round the edge is shaded a second time, at this
+        /// scale. Redrawn only on a frame the neon's own offscreen passes
+        /// run; a frame where nothing moved reuses it.
+        ///
+        /// At 1 the neon's main frame becomes one copy of it: the layer is
+        /// drawn once, into this buffer, instead of twice.
+        ///
+        /// Memory: an RGBA16F buffer (RGBA8 where the driver will not render
+        /// half float) covering the viewport at this scale: 4.1 MB at 0.5 at
+        /// 1920 x 1080, 16.6 MB at 1. Released when it is set back to 0, or
+        /// the layer is disabled.
+        float compositeScale = 0.0f;
+
         /// Number of perimeter gather samples per fragment. Capped at
         /// @c NEON_MAX_LOOP_SAMPLES - the UBO and the shader's array are both
         /// sized by it - and clamped to >= 1 at upload time. Lower is faster
@@ -668,6 +690,7 @@ namespace EdgeLighting
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
+                   compositeScale == o.compositeScale &&
                    numSamples == o.numSamples &&
                    gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&

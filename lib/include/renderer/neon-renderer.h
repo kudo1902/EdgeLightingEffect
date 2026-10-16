@@ -350,6 +350,44 @@ namespace EdgeLighting
         /// contract here and in CLAUDE.md's neon section first.
         static constexpr const char *GLOW_KEY = "NeonRenderer.Glow";
 
+        /// The key the neon's SHARED buffer is published under
+        /// (@ref BufferRegistry): a PUBLIC product - the whole neon layer,
+        /// drawn a second time at @c NeonConfig::compositeScale, for any layer
+        /// or the host to read. Made only while that scale is above 0.
+        ///
+        /// @par What its texels mean
+        /// Premultiplied RGBA, the neon layer exactly as it composites onto
+        /// the caller's framebuffer: the opaque fill under the glow, the halo
+        /// and bloom, the line, the one-sided cut and the cutoffs - over
+        /// transparent black, so a reader composites it with premultiplied
+        /// "over". NOT dithered: a buffer read back filtered must carry no
+        /// noise, so a reader writing it to 8 bits dithers there itself.
+        ///
+        /// @par Where they lie
+        /// At the clamped scale s - [resolutionScale, 1] - over the whole
+        /// viewport: texel i covers caller px [i / s, (i + 1) / s], and its
+        /// record is placed at origin 0, size texels / s (a pixel centre p
+        /// reads uv = p / size). RGBA16F, or RGBA8 where the driver will not
+        /// render half float; LINEAR and clamp-to-edge, which a reader must
+        /// not change.
+        ///
+        /// @par When
+        /// Current on every frame the glow is drawn while the scale is above
+        /// 0, made in the neon's @c Prepare - read it in a @c Render, or in a
+        /// @c Prepare ordered after the neon's. Redrawn only on a frame the
+        /// neon's offscreen passes run; its version moves then and holds on a
+        /// frame where nothing moved, which reuses it. Under an intensity
+        /// animation its glow may be the field's composite, as @ref GLOW_KEY's.
+        ///
+        /// @par What it constrains
+        /// It is the main frame drawn at another scale, from the same reduced
+        /// buffer and gather, by the same three passes (fill, blit, ring) with
+        /// their own program objects. A change to what the main frame looks
+        /// like changes it the same way; a change that makes the two differ
+        /// beyond resolution (a pass the main frame draws and this does not)
+        /// breaks every reader. At scale 1 the main frame IS one copy of it.
+        static constexpr const char *COMPOSITE_KEY = "NeonRenderer.Composite";
+
         /// The glow's edge mask - the one-sided cut and the inside / outside
         /// cutoffs - as the inputs neon-mask.glsl's @c neonEdgeMask takes, in
         /// FULL-RES px: what a reader of @ref GLOW_KEY multiplies into the
@@ -1176,6 +1214,41 @@ namespace EdgeLighting
             LazyBake schedule;
         } RingField;
 
+        /// The shared buffer (pass 1s, @ref COMPOSITE_KEY): the whole neon at
+        /// @c NeonConfig::compositeScale, its own blit and ring meshes, and
+        /// what it was last drawn for.
+        typedef struct CompositeTarget
+        {
+            /// The neon layer at the shared scale over the whole viewport, one
+            /// attachment, RGBA16F or RGBA8 (SCALED_FORMATS). Released when
+            /// the scale goes back to 0 or the layer is disabled.
+            Framebuffer buffer{"NeonRenderer.Composite"};
+            /// Index into SCALED_FORMATS of the best format the driver has not
+            /// refused - as @c mScaledFormat, for its reasons.
+            size_t format = 0;
+
+            /// The blit's and the ring's areas at the shared scale, in its
+            /// rect-local px: built by @ref setupRingGeometry from ONE set of
+            /// floats, as the main pair is, so the two tile the buffer
+            /// exactly. Sized for this scale - the line's floor and the masks'
+            /// one-pixel ramps are in its pixels - so not the main pair scaled.
+            Mesh ringMesh{"NeonRenderer.CompositeRing"};
+            Mesh blitMesh{"NeonRenderer.CompositeBlit"};
+
+            /// The ring's limits at the shared scale (@c uQuadMargin,
+            /// @c uCornerSkip), as @c mRingLimits are at 1.0.
+            ShadeLimits limits;
+            /// The clamped scale the meshes and limits were built for; 0 when
+            /// none were.
+            float scale = 0.0f;
+
+            /// What the buffer holds: whether it was drawn, at which size and
+            /// for which viewport - so a frame where nothing moved can reuse it.
+            bool drawn = false;
+            glm::ivec2 texels{0};
+            glm::ivec2 viewport{0};
+        } CompositeTarget;
+
         /// Whether the offscreen phase can be skipped on this frame, and the
         /// viewport that decision holds for.
         typedef struct OffscreenState
@@ -1239,6 +1312,7 @@ namespace EdgeLighting
             BufferHandle ringField = -1;         ///< @c mRingField.buffer, a table: four strips packed, no one box.
             BufferHandle gradientRing = -1;      ///< @c mGradientLUT, a table, under @ref GRADIENT_RING_KEY.
             BufferHandle glow = -1;              ///< @c mScaledBuffer again, as the PUBLIC product @ref GLOW_KEY, placed like @c scaled.
+            BufferHandle composite = -1;         ///< @c mComposite.buffer, the PUBLIC product @ref COMPOSITE_KEY, placed over the viewport.
             /// The ring's upload count at its last mark: a change since is a
             /// new version of the record.
             uint32_t gradientRingUploads = 0;
@@ -1259,6 +1333,8 @@ namespace EdgeLighting
             bool scaledWritten = false;    ///< Pass 1b or 1c drew the reduced buffer rather than reusing it.
             bool ringFieldRead = false;    ///< The ring's field holds this frame's, as @c fieldRead.
             bool ringFieldWritten = false; ///< Pass 1r ran and succeeded.
+            bool compositeRead = false;    ///< The shared buffer holds this frame's: drawn, or reused on a frame nothing moved.
+            bool compositeWritten = false; ///< Pass 1s drew it.
         } BufferUse;
 
         /// What phase 1 (@ref RenderOffscreen) leaves for phase 2
@@ -1273,6 +1349,10 @@ namespace EdgeLighting
             UVMap gatherUVFull;         ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
             UVMap scaledUV;             ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
             LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) rather than shading (P2c), and the gain.
+            /// The shared buffer is at scale 1 and holds this frame's: the main
+            /// frame is one copy of it (P2s) in place of the fill, the blit and
+            /// the ring.
+            bool mainFromComposite = false;
         } FramePlan;
 
         // --- Programs: built once, on first use ------------------------------
@@ -1332,6 +1412,15 @@ namespace EdgeLighting
         /// compiles it. A failed build is recorded in @c mFailedPrograms and
         /// never retried, and the fill is skipped.
         bool ensureFillProgram();
+
+        /// Make sure the shared buffer's three programs - its fill
+        /// (black-rect.frag), its blit (neon-blit.frag) and its ring
+        /// (neon.frag) - are built: program objects of their own, since each
+        /// draws the shared buffer while the main frame's draw the caller's
+        /// framebuffer (the AB rule, @ref ensureGlowPrograms). Their stages
+        /// come from the shader cache, so each costs a link. A failure is
+        /// recorded in @c mFailedPrograms; the shared buffer is then not made.
+        bool ensureCompositePrograms();
 
         // --- Buffers: allocated in the best format the driver gives ----------
         /// Make sure @c mGlowCover.buffer is allocated, allocating it if not, at
@@ -1548,9 +1637,13 @@ namespace EdgeLighting
         /// the blit composites (pass 1b and its field bake), which leaves the
         /// one-sided cut and the cutoffs to it, false for the edge ring and its
         /// field bake, which apply both after the grade (uBlitOwnsCut).
+        /// @p destScale is the scale of the grid the output is finally seen
+        /// at (uDestScale): 1.0 for everything reaching the caller's
+        /// framebuffer, the shared buffer's scale for its ring.
         /// @pre @p shader is in use.
         void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float time,
-                                const ShadeLimits &limits, bool blitOwnsCut, const Config &config);
+                                const ShadeLimits &limits, bool blitOwnsCut, const Config &config,
+                                float destScale = 1.0f);
 
         /// Bind the gather loop's own inputs - the sample block, the count and
         /// the emission table - for @p shader, which is in use. Only the
@@ -1729,6 +1822,16 @@ namespace EdgeLighting
         /// paint through a mask the host set up to clip this pass.
         void renderFillPass(int viewportWidth, int viewportHeight, const Config &config);
 
+        /// The fill as @ref renderFillPass draws it, onto whatever target is
+        /// bound at @p targetWidth x @p targetHeight, with @p program, at
+        /// @p scale: the rect centred at @p center (target px, y up), every
+        /// length scaled - an enabled fill cutoff and its softness included,
+        /// a disabled one left at its sentinel - and @c mFillMesh, built in
+        /// full-res px, placed by a scaled transform. At scale 1 it is exactly
+        /// the main frame's fill.
+        void drawFill(int targetWidth, int targetHeight, const glm::vec2 &center, float scale, ShaderProgram &program,
+                      const Config &config);
+
         /// Pass 2b: bilinear composite of the reduced buffer onto the caller's
         /// framebuffer, AND the one-sided glow cut and the inside/outside
         /// cutoffs, at full resolution, for what pass 1b drew (the ring applies
@@ -1749,6 +1852,13 @@ namespace EdgeLighting
         ///      full-resolution viewport are restored.
         void renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV);
 
+        /// The blit as @ref renderBlitPass draws it, with @p program over
+        /// @p mesh: the reduced buffer through @p scaledUV, masked by @p mask
+        /// (in the bound target's px), dithered when @p dither. Nothing for an
+        /// empty @p mesh.
+        void drawBlit(ShaderProgram &program, Mesh &mesh, const glm::mat4 &mvp, const EdgeMask &mask,
+                      const UVMap &scaledUV, bool dither);
+
         /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with
         /// @c mRingShader, which takes the gather's result from
         /// @c mGather.buffer instead of running the gather - so the filament,
@@ -1760,6 +1870,30 @@ namespace EdgeLighting
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored; pass 1 succeeded.
         void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config);
+
+        /// Pass 1s: the shared buffer (@ref COMPOSITE_KEY). Allocates it at
+        /// the shared scale over the viewport, clears it, and draws into it,
+        /// premultiplied over, what the main frame draws onto the caller's -
+        /// the fill, the blit of the reduced buffer (@p scaledRegion) and the
+        /// ring shaded from the gather (@p gatherRegion) - each at that
+        /// scale, with its own program and mesh, undithered. @p centerFull is
+        /// the rect's centre in the caller's px.
+        /// @pre Pass 1b (or 1c) and pass 1a hold this frame's; the shared
+        ///      programs are built; the segment and arc blocks are bound.
+        /// @return false if the buffer could not be allocated. Leaves the
+        ///         shared buffer bound; @ref RenderOffscreen restores the target.
+        bool renderCompositePass(int viewportWidth, int viewportHeight, const glm::vec2 &centerFull,
+                                 const BufferRegion &scaledRegion, const BufferRegion &gatherRegion, float time,
+                                 const Config &config);
+
+        /// Pass 2s: the main frame as one copy of the shared buffer, when it
+        /// is at scale 1 and holds this frame's - in place of the fill, the
+        /// blit and the ring, which drew into it in phase 1. Dithered here,
+        /// on the way to 8 bits, the dither the three passes would have
+        /// applied.
+        /// @pre Premultiplied-over blending; the caller's framebuffer and
+        ///      viewport are restored.
+        void renderCompositeCopyPass();
 
         /// Pass 2r: in pass 2c's place, @c mRingMesh drawn through
         /// @p mvp - the matrix the blit drew with, so the partition holds -
@@ -1798,6 +1932,9 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_FILL = 1u << 8;                 ///< @c mFillShader, P2a.
         static constexpr unsigned int PROGRAM_EMISSION = 1u << 9;             ///< @c mEmissionShader, P0 - built in Initialize, whose failure fails it.
         static constexpr unsigned int PROGRAM_GLOW_COVER_FILL = 1u << 10;     ///< @c mGlowCoverFillShader, P0f.
+        static constexpr unsigned int PROGRAM_COMPOSITE_FILL = 1u << 11;      ///< @c mCompositeFillShader, P1s.
+        static constexpr unsigned int PROGRAM_COMPOSITE_BLIT = 1u << 12;      ///< @c mCompositeBlitShader, P1s.
+        static constexpr unsigned int PROGRAM_COMPOSITE_RING = 1u << 13;      ///< @c mCompositeRingShader, P1s.
 
         /// Uniform blocks a program declares, for @ref ensureProgram.
         static constexpr unsigned int BLOCK_SEGMENT = 1u << 0; ///< SegmentBlock
@@ -1839,6 +1976,9 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;               ///< P2b, neon-blit.frag. Built on the first frame.
         ShaderProgram mRingShader;               ///< P2c, neon.frag again, its own object - see ensureGlowPrograms. Built on the first frame.
         ShaderProgram mRingFieldCompositeShader; ///< P2r, neon-field.frag + NEON_FIELD_RING. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
+        ShaderProgram mCompositeFillShader;      ///< P1s, black-rect.frag, into the shared buffer. Built on the first frame it is wanted.
+        ShaderProgram mCompositeBlitShader;      ///< P1s, neon-blit.frag, into the shared buffer. Built with it.
+        ShaderProgram mCompositeRingShader;      ///< P1s, neon.frag, into the shared buffer. Built with it.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.
@@ -1908,6 +2048,7 @@ namespace EdgeLighting
         GatherTarget mGather;      ///< P1a - see @ref GatherTarget.
         GlowField mGlowField;      ///< P1f, read by P1c - see @ref GlowField.
         RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
+        CompositeTarget mComposite; ///< P1s, the shared buffer - see @ref CompositeTarget.
         OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
         FramePlan mFramePlan;      ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.
 

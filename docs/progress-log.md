@@ -5,6 +5,68 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - The shared neon buffer (`NeonRenderer.Composite`): built, in progress
+
+On `design_system_sharing_resources_between_renderers`, uncommitted, on top of
+the last commit. AMD Radeon Pro 5300M, Debug build. The whole neon layer -
+fill, glow, line, the one-sided cut and the cutoffs - drawn a second time at a
+scale `s` into an offscreen buffer any layer or the host can read.
+
+- **Built.**
+  - `NeonConfig::compositeScale`: 0 (the default) makes nothing; otherwise
+    clamped to [`resolutionScale`, 1], so the buffer is never coarser than
+    the reduced buffer it copies its glow from.
+  - `NeonRenderer::COMPOSITE_KEY` (`NeonRenderer.Composite`), a PUBLIC record
+    with its contract beside the key in `neon-renderer.h`: premultiplied,
+    undithered, RGBA16F (RGBA8 fallback), over the whole viewport, placed at
+    origin 0, size texels / s.
+  - Pass 1s, in phase 1 after pass 1r: the main frame's three passes again -
+    fill, blit, ring - at `s`, into the shared buffer, with program objects of
+    their own (`mCompositeFillShader`, `mCompositeBlitShader`,
+    `mCompositeRingShader`; links only, from the shader cache). The glow is
+    the reduced buffer copied, not shaded again; only the ring band is shaded
+    again, at `s`. Its ring and blit meshes come from one set of floats (the
+    partition at `s`) and are clamped to the main pair's boxes, so the main
+    frame's buffers do not grow with it.
+  - Reused on a frame where nothing moved (`mOffscreen.reusable`); released
+    when the scale goes back to 0 or the layer is disabled.
+  - At `s` 1 the main frame is pass 2s, one dithered copy of the buffer, in
+    place of the fill, the blit and the ring.
+  - Two shader switches, byte-identical on every existing pass: `uDestScale`
+    (the masks antialias over one pixel of the grid the output is seen at:
+    `uResolutionScale / uDestScale`, an exact r / 1 on every pass but the
+    shared ring) and `uDither` on the ring and the blit (0 into the shared
+    buffer).
+- **Verified.**
+  - With the buffer off: all 256 `layer-check` frames identical to
+    `bcf51e2`'s report, memory and allocation lines identical, `check`'s
+    table unchanged, `partition` passes.
+  - A probe over the twelve `neon-scale-check` scenes:
+    - Turning the buffer on at 0.5 leaves the main frame byte-identical in
+      all twelve.
+    - The buffer at 0.5 against the main frame box-filtered 2 x 2: within 1
+      level from 12 px out of the edge in all twelve - no seam. Nearer, the
+      line and steep ramps are drawn at 0.5 rather than shrunk: up to 82
+      levels on `hairline` (its 1 px line drawn 2 shared px wide, the
+      filament's Nyquist floor), 13 on `bounded_band`'s cutoff ramps, 3-6 on
+      the rest. Side-by-side crops show the same picture at half resolution.
+    - At 1: the main frame drawn as the copy against the direct one, and the
+      buffer against the direct frame, within 1 level (2 on 3-4 pixels of
+      `hairline`).
+    - A still frame reuses the buffer (its version holds); set back to 0, it
+      is released and no longer current.
+- **Not done.**
+  - The C ABI: skipped by request. No `el_*` call sets the scale or exports
+    the texture yet.
+  - A control in the C++ demo.
+  - Timing: what pass 1s costs on moving frames, and whether the scale-1
+    copy beats drawing directly (it trades the ring field's cached composite
+    for a full-res ring shaded on every frame the buffer is redrawn).
+  - The probe is in scratch, not a repository gate; no `layer-check` scene
+    turns the buffer on yet.
+  - The buffer covers the whole viewport; sizing it to the neon's lit box
+    would save memory (4.1 MB at 0.5, 16.6 at 1, at 1080p).
+
 ## 2026-10-16 - The branch against main: speed, startup, memory
 
 The working tree (`bcf51e2` plus the third review's fixes) against `main`
