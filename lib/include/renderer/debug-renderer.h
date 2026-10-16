@@ -51,7 +51,7 @@ namespace EdgeLighting
     ///
     /// The buffer view is the exception to reading only the config: a buffer
     /// is another renderer's output, which no config describes, so this layer
-    /// finds it in the effect's @ref BufferRegistry - where it is listed only
+    /// finds it in the effect's @ref BufferRegistry - where it is current only
     /// once its producer has drawn this frame, which the order above already
     /// guarantees for every layer but this one.
     class DebugRenderer : public BaseRenderer
@@ -90,12 +90,12 @@ namespace EdgeLighting
 
         /// @p buffer, nearest-sampled, with a 1 px outline: over the box it is
         /// placed at when it has one, else as a panel in the lower-left
-        /// corner. Caller guards on @c bufferView naming a buffer published
+        /// corner. Caller guards on @c bufferView naming a buffer current
         /// this frame.
         /// @pre Blending disabled - in place, the view replaces the frame in
         ///      its box rather than compositing over what was drawn from it.
         void renderBufferView(const glm::mat4 &proj, int viewportWidth, int viewportHeight,
-                              const PublishedBuffer &buffer, const Config &config);
+                              const BufferRecord &buffer, const Config &config);
 
         /// The baked gradient LUT as a strip at the geometry centre.
         /// Caller guards on @c showGradientLUT.

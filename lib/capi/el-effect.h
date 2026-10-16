@@ -959,30 +959,39 @@ extern "C"
     EL_API el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect,
                                                            float *outR, float *outG, float *outB, float *outA);
 
-    /** @brief Draw one of the offscreen buffers the renderers published this
-     *         frame, by its name and colour attachment (0 but for a buffer
-     *         with several - see @ref el_effect_get_buffer_info) - or none,
-     *         for a @c NULL or empty name.
-     *  @details One flat block per texel with a 1 px magenta outline, drawn
+    /** @brief Draw one of the offscreen buffers the renderers own, by its key
+     *         - or none, for a @c NULL or empty name.
+     *  @details A key is the buffer's name, with "[n]" after it for colour
+     *           attachment n > 0: "NeonRenderer.Scaled",
+     *           "NeonRenderer.Gather[1]" - what @ref el_effect_get_buffer_name
+     *           hands back. Either pass the key with @p attachment 0 (or the
+     *           attachment it already names), or a name without the suffix
+     *           and the attachment, which compose the same key. A key of
+     *           @ref EL_BUFFER_NAME_CAPACITY chars or more, or an attachment
+     *           that contradicts the key's, is refused with
+     *           @ref EL_ERROR_INVALID_PARAMETER: no buffer has such a key, and
+     *           @ref el_effect_get_debug_buffer_view could not hand it back.
+     *
+     *           One flat block per texel with a 1 px magenta outline, drawn
      *           opaque under the other overlays: in place over the area of
      *           the frame the buffer maps onto (a reduced-resolution buffer,
      *           the neon's gather or field), or as a panel in the lower-left
      *           corner for a table that maps onto none. List what can be named
      *           with @ref el_effect_get_buffer_count and
-     *           @ref el_effect_get_buffer_name. A name nothing published this
-     *           frame draws nothing.
+     *           @ref el_effect_get_buffer_name. Drawn only on a frame the
+     *           buffer is current (@ref el_effect_get_buffer_current); a key
+     *           nothing registered draws nothing.
      *
      *           It shows the buffer, not the frame: the neon's reduced buffer
      *           has no line (the edge ring draws it) and no soft edges for the
      *           one-sided cut or the cutoffs (its blit applies them). */
     EL_API el_result_e el_effect_set_debug_buffer_view(el_effect_handle_t effect, const char *name,
                                                        int32_t attachment);
-    /** @brief The name and attachment @ref el_effect_set_debug_buffer_view
-     *         set, the name into @p outName (@p capacity chars, NUL included;
-     *         empty when none).
+    /** @brief The key @ref el_effect_set_debug_buffer_view set, into
+     *         @p outName (@p capacity chars, NUL included; empty when none),
+     *         and the attachment it names into @p outAttachment.
      *  @returns @ref EL_ERROR_INVALID_PARAMETER, and an empty string, when it
-     *           does not fit - @ref EL_BUFFER_NAME_CAPACITY always does for a
-     *           name the library publishes. */
+     *           does not fit - @ref EL_BUFFER_NAME_CAPACITY always does. */
     EL_API el_result_e el_effect_get_debug_buffer_view(el_effect_handle_t effect, char *outName, int32_t capacity,
                                                        int32_t *outAttachment);
 
@@ -997,23 +1006,29 @@ extern "C"
     EL_API el_result_e el_effect_set_debug_buffer_gain(el_effect_handle_t effect, float gain);
     EL_API el_result_e el_effect_get_debug_buffer_gain(el_effect_handle_t effect, float *outGain);
 
-    /** @brief How many offscreen buffers the renderers published in the last
-     *         @ref el_effect_render - 0 before the first.
-     *  @details The list is rebuilt by every render, as each layer draws: a
-     *           layer that is off, or drew nothing, publishes nothing. */
+    /** @brief How many offscreen buffers the renderers own - every buffer of
+     *         every layer the effect holds, listed whether or not the last
+     *         render used it (@ref el_effect_get_buffer_current); 0 before
+     *         @ref el_effect_init.
+     *  @details The list changes only when a layer is added or removed. Index
+     *           it with the calls below. */
     EL_API el_result_e el_effect_get_buffer_count(el_effect_handle_t effect, int32_t *outCount);
-    /** @brief The name of published buffer @p index, into @p outName
-     *         (@p capacity chars, NUL included) - what
-     *         @ref el_effect_set_debug_buffer_view takes.
+    /** @brief The key of buffer @p index, into @p outName (@p capacity chars,
+     *         NUL included) - what @ref el_effect_set_debug_buffer_view takes.
      *  @returns @ref EL_ERROR_INVALID_PARAMETER for an index out of range, or
-     *           a name that does not fit (then an empty string). */
+     *           a key that does not fit (then an empty string). */
     EL_API el_result_e el_effect_get_buffer_name(el_effect_handle_t effect, int32_t index, char *outName,
                                                  int32_t capacity);
-    /** @brief What published buffer @p index is: which colour attachment of
-     *         the named buffer (two records share a name when it has several),
-     *         its size in texels, its channel count (1, 2, 3 or 4; 0 if
-     *         unknown), and whether it maps onto an area of the frame - drawn
-     *         in place - rather than being a table drawn as a panel. */
+    /** @brief Whether buffer @p index is current: drawn or used by the last
+     *         @ref el_effect_render, and allocated. The buffer view draws a
+     *         buffer only on a frame it is current. */
+    EL_API el_result_e el_effect_get_buffer_current(el_effect_handle_t effect, int32_t index, el_bool_t *outCurrent);
+    /** @brief What buffer @p index is: which colour attachment of its
+     *         Framebuffer (the "[n]" its key ends in; 0 when none), its size in
+     *         texels (0 x 0 while unallocated), its channel count (1, 2, 3 or
+     *         4; 0 if unknown), and whether it maps onto an area of the frame -
+     *         drawn in place - rather than being a table drawn as a panel, as
+     *         of the last frame it was current. */
     EL_API el_result_e el_effect_get_buffer_info(el_effect_handle_t effect, int32_t index, int32_t *outAttachment,
                                                  int32_t *outWidth, int32_t *outHeight, int32_t *outChannels,
                                                  el_bool_t *outPlaced);

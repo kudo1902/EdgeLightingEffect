@@ -411,19 +411,22 @@ overlays to work.
 Colour of that line.
 
 **`debug.bufferView`** (default empty - off)
-Draws one of the offscreen buffers the layers published this frame, by its
-`Framebuffer`'s name and `debug.bufferViewAttachment` (0 but for the neon's
-gather, whose attachment 1 holds the segments' hue and coverage).
-`EdgeLightingEffect::GetBufferRegistry()` lists them (C ABI:
-`el_effect_get_buffer_count` / `el_effect_get_buffer_name`); a layer that is
-off or drew nothing publishes nothing, and a name nothing published draws
+Draws one of the offscreen buffers the layers own, by its key: the
+`Framebuffer`'s name, with `[n]` after it for colour attachment n > 0 - the
+neon's gather keeps the segments' hue and coverage in `NeonRenderer.Gather[1]`.
+`EdgeLightingEffect::GetBufferRegistry()` lists every buffer of every layer
+(C ABI: `el_effect_get_buffer_count` / `el_effect_get_buffer_name` /
+`el_effect_get_buffer_current`); a buffer is drawn only on a frame it is
+current - its layer drew or used it - and a key nothing registered draws
 nothing. Each texel is a flat block of pixels, with a 1 px magenta outline.
 A buffer that maps onto an area of the frame - the neon's reduced buffer
 (`NeonRenderer.Scaled`), its gather and field, the flare's and spotlight's
 reduced buffers - is drawn in place over that area, opaque, so it replaces
 the frame there (2 x 2 px per texel at `resolutionScale` 0.5). A table - the
 neon's emission table, glow coverage tables and the edge ring's packed field
-- is drawn as a panel in the lower-left corner.
+- is drawn as a panel in the lower-left corner, at a whole number of pixels
+per texel (or, for a table too large for that, an odd whole number of texels
+per pixel), so every texel shows as the same block.
 
 It shows what the producer stored, not the frame. The neon's reduced buffer
 has no line (the edge ring draws it at full resolution) and none of the

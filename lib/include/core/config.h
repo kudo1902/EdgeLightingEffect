@@ -763,12 +763,13 @@ namespace EdgeLighting
         /// not part of the effect.
         glm::vec4 wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
-        /// Draw one of the offscreen buffers the renderers published this frame
-        /// (@ref BufferRegistry), by its Framebuffer's name -
-        /// "NeonRenderer.Scaled", "NeonRenderer.Gather", "LensFlare.Scaled",
-        /// ... - and @c bufferViewAttachment; or nothing when empty or when
-        /// nothing of that name was published this frame.
-        /// @c EdgeLightingEffect::GetBufferRegistry lists them.
+        /// Draw one of the offscreen buffers the renderers own
+        /// (@ref BufferRegistry), by its key - the Framebuffer's name, with
+        /// "[n]" after it for colour attachment n > 0: "NeonRenderer.Scaled",
+        /// "NeonRenderer.Gather", "NeonRenderer.Gather[1]" (the segments' hue
+        /// and coverage), "LensFlare.Scaled", ... - or nothing when empty, or
+        /// on a frame that buffer is not current (its layer is off, or did not
+        /// use it). @c EdgeLightingEffect::GetBufferRegistry lists them.
         ///
         /// One flat block of pixels per texel, no filtering, with a 1 px
         /// magenta outline, drawn opaque before the other overlays:
@@ -787,11 +788,6 @@ namespace EdgeLighting
         /// range. Only a layer drawn BEFORE this one can be shown - the default
         /// order puts this one last.
         std::string bufferView;
-
-        /// Which colour attachment of @c bufferView: 0 but for a Framebuffer
-        /// with several - the neon's gather keeps the segments' hue and
-        /// coverage in attachment 1.
-        int bufferViewAttachment = 0;
 
         /// Which channels @c bufferView shows.
         DebugBufferChannel bufferViewChannel = DebugBufferChannel::RGB;
@@ -835,7 +831,6 @@ namespace EdgeLighting
                    showWireframe == o.showWireframe &&
                    wireframeColor == o.wireframeColor &&
                    bufferView == o.bufferView &&
-                   bufferViewAttachment == o.bufferViewAttachment &&
                    bufferViewChannel == o.bufferViewChannel &&
                    bufferViewGain == o.bufferViewGain &&
                    opaqueOnly == o.opaqueOnly;

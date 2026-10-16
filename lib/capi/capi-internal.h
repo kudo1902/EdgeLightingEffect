@@ -31,6 +31,9 @@
 // diverges from its el_* mirror. Keep asserts one-per-value; that way a broken
 // build tells you exactly which enumerator moved.
 // ==========================================================================
+// A buffer key the registry accepts always fits the C ABI's name buffers.
+static_assert(EdgeLighting::BUFFER_KEY_CAPACITY == EL_BUFFER_NAME_CAPACITY);
+
 static_assert(static_cast<int>(EdgeLighting::Winding::CLOCKWISE) == EL_WINDING_CLOCKWISE);
 static_assert(static_cast<int>(EdgeLighting::Winding::COUNTER_CLOCKWISE) == EL_WINDING_COUNTER_CLOCKWISE);
 

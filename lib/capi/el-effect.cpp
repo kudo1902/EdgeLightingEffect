@@ -2261,15 +2261,22 @@ namespace
         return true;
     }
 
-    /// Published buffer @p index of the last render, or nullptr.
-    const EdgeLighting::PublishedBuffer *PublishedAt(el_effect_handle_t effect, int32_t index)
+    /// Registered buffer @p index - free registry slots skipped - or nullptr.
+    const EdgeLighting::BufferRecord *RecordAt(el_effect_handle_t effect, int32_t index)
     {
         if (!effect->impl || index < 0)
         {
             return nullptr;
         }
-        const std::vector<EdgeLighting::PublishedBuffer> &buffers = effect->impl->GetBufferRegistry().GetBuffers();
-        return static_cast<size_t>(index) < buffers.size() ? &buffers[static_cast<size_t>(index)] : nullptr;
+        int32_t n = 0;
+        for (const EdgeLighting::BufferRecord &record : effect->impl->GetBufferRegistry().GetRecords())
+        {
+            if (record.IsRegistered() && n++ == index)
+            {
+                return &record;
+            }
+        }
+        return nullptr;
     }
 }
 
@@ -2281,14 +2288,32 @@ el_result_e el_effect_set_debug_buffer_view(el_effect_handle_t effect, const cha
         LOG_E("el_effect_set_debug_buffer_view: attachment %d is negative", attachment);
         return EL_ERROR_INVALID_PARAMETER;
     }
-    const std::string view(name ? name : "");
-    if (effect->config.debug.bufferView == view && effect->config.debug.bufferViewAttachment == attachment)
+    // Either form makes one key: a key given whole ("NeonRenderer.Gather[1]",
+    // attachment 0 or the one it names), or a name and its attachment.
+    std::string view;
+    if (name && name[0] != '\0')
+    {
+        const int named = EdgeLighting::GetBufferKeyAttachment(name);
+        if (named > 0 && attachment != 0 && attachment != named)
+        {
+            LOG_E("el_effect_set_debug_buffer_view: '%s' names attachment %d, not %d", name, named, attachment);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        char key[EdgeLighting::BUFFER_KEY_CAPACITY];
+        if (!EdgeLighting::MakeBufferKey(name, named > 0 ? 0 : attachment, key))
+        {
+            LOG_E("el_effect_set_debug_buffer_view: '%s' attachment %d makes a key of %d chars or more", name,
+                  attachment, EL_BUFFER_NAME_CAPACITY);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        view = key;
+    }
+    if (effect->config.debug.bufferView == view)
     {
         return EL_SUCCESS;
     }
     effect->config.debug.bufferView = view;
-    effect->config.debug.bufferViewAttachment = attachment;
-    LOG_D("effect=%p, name=%s, attachment=%d", (void *)effect, name ? name : "(none)", attachment);
+    LOG_D("effect=%p, key=%s", (void *)effect, view.empty() ? "(none)" : view.c_str());
     return EL_SUCCESS;
 }
 
@@ -2303,8 +2328,8 @@ el_result_e el_effect_get_debug_buffer_view(el_effect_handle_t effect, char *out
         LOG_E("el_effect_get_debug_buffer_view: capacity %d is too small", capacity);
         return EL_ERROR_INVALID_PARAMETER;
     }
-    *outAttachment = effect->config.debug.bufferViewAttachment;
-    LOG_D("effect=%p, name=%s, attachment=%d", (void *)effect, outName, *outAttachment);
+    *outAttachment = EdgeLighting::GetBufferKeyAttachment(effect->config.debug.bufferView);
+    LOG_D("effect=%p, key=%s, attachment=%d", (void *)effect, outName, *outAttachment);
     return EL_SUCCESS;
 }
 
@@ -2348,7 +2373,7 @@ el_result_e el_effect_get_buffer_count(el_effect_handle_t effect, int32_t *outCo
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_count");
     VALIDATE_OUT_PTR(outCount, "el_effect_get_buffer_count");
-    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetBufferRegistry().GetBuffers().size()) : 0;
+    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetBufferRegistry().GetRecordCount()) : 0;
     return EL_SUCCESS;
 }
 
@@ -2356,17 +2381,31 @@ el_result_e el_effect_get_buffer_name(el_effect_handle_t effect, int32_t index, 
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_name");
     VALIDATE_OUT_PTR(outName, "el_effect_get_buffer_name");
-    const EdgeLighting::PublishedBuffer *buffer = PublishedAt(effect, index);
+    const EdgeLighting::BufferRecord *buffer = RecordAt(effect, index);
     if (!buffer)
     {
         LOG_E("el_effect_get_buffer_name: index %d out of range", index);
         return EL_ERROR_INVALID_PARAMETER;
     }
-    if (!CopyName(buffer->GetName(), outName, capacity))
+    if (!CopyName(buffer->key, outName, capacity))
     {
-        LOG_E("el_effect_get_buffer_name: capacity %d is too small for '%s'", capacity, buffer->GetName());
+        LOG_E("el_effect_get_buffer_name: capacity %d is too small for '%s'", capacity, buffer->key);
         return EL_ERROR_INVALID_PARAMETER;
     }
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_buffer_current(el_effect_handle_t effect, int32_t index, el_bool_t *outCurrent)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_current");
+    VALIDATE_OUT_PTR(outCurrent, "el_effect_get_buffer_current");
+    const EdgeLighting::BufferRecord *buffer = RecordAt(effect, index);
+    if (!buffer)
+    {
+        LOG_E("el_effect_get_buffer_current: index %d out of range", index);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outCurrent = effect->impl->GetBufferRegistry().IsCurrent(*buffer) ? 1 : 0;
     return EL_SUCCESS;
 }
 
@@ -2380,7 +2419,7 @@ el_result_e el_effect_get_buffer_info(el_effect_handle_t effect, int32_t index, 
     VALIDATE_OUT_PTR(outHeight, "el_effect_get_buffer_info");
     VALIDATE_OUT_PTR(outChannels, "el_effect_get_buffer_info");
     VALIDATE_OUT_PTR(outPlaced, "el_effect_get_buffer_info");
-    const EdgeLighting::PublishedBuffer *buffer = PublishedAt(effect, index);
+    const EdgeLighting::BufferRecord *buffer = RecordAt(effect, index);
     if (!buffer)
     {
         LOG_E("el_effect_get_buffer_info: index %d out of range", index);

@@ -4,12 +4,18 @@
 #include "core/config.h"
 #include "core/buffer-registry.h"
 #include <memory>
-#include <utility>
+#include <vector>
 
 namespace EdgeLighting
 {
+    class Framebuffer;
     class ResourceContext;
     class ShaderProgram;
+
+    /// A renderer's own index of a buffer it registered
+    /// (@ref BaseRenderer::RegisterBuffer) - stable for the renderer's life,
+    /// whichever registry, if any, lists the buffer.
+    typedef int BufferHandle;
 
     /// Which visual layer a renderer draws - its identity in
     /// @ref EdgeLightingEffect's layer calls (@ref EdgeLightingEffect::AddRenderer
@@ -42,7 +48,12 @@ namespace EdgeLighting
     {
     public:
         BaseRenderer() = default;
-        virtual ~BaseRenderer() = default;
+        /// Unregisters every buffer this renderer registered, so no record
+        /// outlives the Framebuffer it points into.
+        virtual ~BaseRenderer();
+
+        BaseRenderer(const BaseRenderer &) = delete;
+        BaseRenderer &operator=(const BaseRenderer &) = delete;
 
         /// Called once after construction to set up shaders and geometry.
         /// @return false if initialization fails (shader compile/link errors).
@@ -93,19 +104,17 @@ namespace EdgeLighting
         /// @ref RendererLayer::CUSTOM.
         virtual RendererLayer GetLayer() const = 0;
 
-        /// Where this renderer publishes its offscreen buffers, and finds
-        /// those of the layers drawn before it - see @ref BufferRegistry.
-        /// @c EdgeLightingEffect::AddRenderer hands every renderer the
-        /// effect's own; a renderer driven without an effect has none, and
-        /// publishes and finds nothing.
-        void SetBufferRegistry(std::shared_ptr<BufferRegistry> registry) { mBufferRegistry = std::move(registry); }
-
         /// What this renderer shares with the other renderers of its effect -
         /// see @ref ResourceContext. @c EdgeLightingEffect::AddRenderer hands
         /// every renderer the effect's own, before it initialises a late one;
         /// a renderer driven without an effect has none, and builds
         /// everything for itself.
-        void SetResourceContext(std::shared_ptr<ResourceContext> context) { mResourceContext = std::move(context); }
+        ///
+        /// Moves this renderer's buffer records with it: they leave the old
+        /// context's registry and join the new one's (a key the new registry
+        /// holds already is refused there - see @ref BufferRegistry::Register).
+        /// nullptr takes them out of every registry.
+        void SetResourceContext(std::shared_ptr<ResourceContext> context);
 
     protected:
         /// A program linking the vertex stage @p vertSrc and the fragment
@@ -124,47 +133,60 @@ namespace EdgeLighting
         ShaderProgram BuildProgram(const char *vertSrc, const char *fragSrc, const char *name,
                                    const char *fragDefines = nullptr) const;
 
-        /// Publish attachment @p attachment of @p buffer as a TABLE - a buffer
-        /// that maps onto no area of the frame - if this renderer has a
-        /// registry. Call it from @ref Render, once the buffer holds what this
-        /// frame used. Listed under the Framebuffer's own name.
-        void publishBuffer(const Framebuffer &buffer, int attachment = 0)
-        {
-            PublishedBuffer record;
-            record.buffer = &buffer;
-            record.attachment = attachment;
-            publish(record);
-        }
+        /// Lists attachment @p attachment of @p buffer in the context's
+        /// registry, under the Framebuffer's name - "[n]" after it for
+        /// attachment n > 0 - for the debug view, a host UI and, when
+        /// @p visibility is @c PUBLIC, other layers. Call it once per buffer,
+        /// from the constructor, where the Framebuffer member already has its
+        /// name: the record is kept by this renderer and goes to whichever
+        /// context it is handed (@ref SetResourceContext), and is removed with
+        /// it. Registering an unallocated buffer is fine - it is listed, never
+        /// current, until it has a texture.
+        /// @returns the handle @ref MarkBufferCurrent takes.
+        BufferHandle RegisterBuffer(const Framebuffer &buffer, int attachment = 0,
+                                    BufferVisibility visibility = BufferVisibility::DEBUG);
+
+        /// Marks buffer @p handle current this frame as a TABLE - a buffer
+        /// that maps onto no area of the frame: its content describes this
+        /// frame, written by it (@p changed) or a cache checked and found to
+        /// hold. Call it from @ref Render once the buffer holds what the frame
+        /// used, and only then - a buffer a failed pass left behind is not
+        /// marked. One store; nothing without a context.
+        void MarkBufferCurrent(BufferHandle handle, bool changed);
 
         /// The same, for a buffer whose texels span the box @p origin,
         /// @p size of the caller's framebuffer (px, from its lower-left
         /// corner, y up) - the box its producer reads it over.
-        void publishBuffer(const Framebuffer &buffer, const glm::vec2 &origin, const glm::vec2 &size,
-                           int attachment = 0)
-        {
-            PublishedBuffer record;
-            record.buffer = &buffer;
-            record.attachment = attachment;
-            record.placed = true;
-            record.origin = origin;
-            record.size = size;
-            publish(record);
-        }
+        void MarkBufferCurrent(BufferHandle handle, const glm::vec2 &origin, const glm::vec2 &size, bool changed);
 
-        /// The registry, or nullptr - for a layer that reads what the layers
-        /// before it published this frame.
-        const BufferRegistry *getBufferRegistry() const { return mBufferRegistry.get(); }
+        /// The context's registry, or nullptr without one - for a layer that
+        /// reads what other layers made.
+        const BufferRegistry *GetBufferRegistry() const;
 
     private:
-        void publish(const PublishedBuffer &record)
+        /// One buffer this renderer registered: what it was registered with,
+        /// and its slot in the current context's registry
+        /// (@c BufferRegistry::INVALID_SLOT with no context, or when that
+        /// registry refused the key).
+        typedef struct OwnedBuffer
         {
-            if (mBufferRegistry)
-            {
-                mBufferRegistry->Publish(record);
-            }
-        }
+            char key[BUFFER_KEY_CAPACITY] = {}; ///< Empty when the key did not fit: never listed.
+            const Framebuffer *buffer = nullptr;
+            int attachment = 0;
+            BufferVisibility visibility = BufferVisibility::DEBUG;
+            int slot = BufferRegistry::INVALID_SLOT;
+        } OwnedBuffer;
 
-        std::shared_ptr<BufferRegistry> mBufferRegistry;
+        /// Lists @p owned in the context's registry, if there is a context.
+        void registerOwned(OwnedBuffer &owned);
+        /// Takes every record this renderer owns out of the context's
+        /// registry, if there is a context.
+        void unregisterOwned();
+
+    private:
+        /// Every buffer this renderer registered, indexed by its
+        /// @ref BufferHandle. Filled by the constructor, so no frame allocates.
+        std::vector<OwnedBuffer> mOwnedBuffers;
         std::shared_ptr<ResourceContext> mResourceContext;
     };
 

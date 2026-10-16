@@ -158,6 +158,8 @@ namespace EdgeLighting
         }
     }
 
+    LensFlareRenderer::LensFlareRenderer() { mScaledRecord = RegisterBuffer(mScaledBuffer); }
+
     bool LensFlareRenderer::Initialize()
     {
         if (!setupShaders())
@@ -339,9 +341,11 @@ namespace EdgeLighting
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
 
-            // The blit stretched it over the whole viewport.
-            publishBuffer(mScaledBuffer, glm::vec2(0.0f),
-                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
+            // The blit stretched it over the whole viewport. Redrawn every
+            // frame it is used.
+            MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
+                              glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)),
+                              true);
         }
 
         // Restore the default alpha blend state for any following renderers -

@@ -1,9 +1,33 @@
 #include "renderer/base-renderer.h"
 #include "core/resource-context.h"
+#include "gl/framebuffer.h"
+#include "util/log-util.h"
 #include <string>
+#include <utility>
 
 namespace EdgeLighting
 {
+
+    BaseRenderer::~BaseRenderer()
+    {
+        // The derived class's Framebuffers are already gone, but nothing reads
+        // a record between their destruction and this - one thread draws.
+        unregisterOwned();
+    }
+
+    void BaseRenderer::SetResourceContext(std::shared_ptr<ResourceContext> context)
+    {
+        if (context == mResourceContext)
+        {
+            return;
+        }
+        unregisterOwned();
+        mResourceContext = std::move(context);
+        for (OwnedBuffer &owned : mOwnedBuffers)
+        {
+            registerOwned(owned);
+        }
+    }
 
     ShaderProgram BaseRenderer::BuildProgram(const char *vertSrc, const char *fragSrc, const char *name,
                                              const char *fragDefines) const
@@ -31,6 +55,69 @@ namespace EdgeLighting
         const std::string source = fragDefines ? ShaderCache::WithDefines(fragSrc, fragDefines) : std::string(fragSrc);
         const ShaderObject fragment(GL_FRAGMENT_SHADER, source.c_str(), "fragment", name);
         return ShaderProgram(vertex, fragment, name);
+    }
+
+    BufferHandle BaseRenderer::RegisterBuffer(const Framebuffer &buffer, int attachment, BufferVisibility visibility)
+    {
+        OwnedBuffer owned;
+        owned.buffer = &buffer;
+        owned.attachment = attachment;
+        owned.visibility = visibility;
+        if (!MakeBufferKey(buffer.GetName(), attachment, owned.key))
+        {
+            LOG_E("BaseRenderer: buffer '%s' attachment %d has no key that fits in %d chars - never listed.",
+                  buffer.GetName(), attachment, BUFFER_KEY_CAPACITY);
+        }
+        registerOwned(owned);
+        mOwnedBuffers.push_back(owned);
+        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+    }
+
+    void BaseRenderer::MarkBufferCurrent(BufferHandle handle, bool changed)
+    {
+        if (mResourceContext && handle >= 0 && static_cast<size_t>(handle) < mOwnedBuffers.size())
+        {
+            mResourceContext->GetBufferRegistry().MarkCurrent(mOwnedBuffers[size_t(handle)].slot, changed);
+        }
+    }
+
+    void BaseRenderer::MarkBufferCurrent(BufferHandle handle, const glm::vec2 &origin, const glm::vec2 &size,
+                                         bool changed)
+    {
+        if (mResourceContext && handle >= 0 && static_cast<size_t>(handle) < mOwnedBuffers.size())
+        {
+            mResourceContext->GetBufferRegistry().MarkCurrent(mOwnedBuffers[size_t(handle)].slot, origin, size,
+                                                              changed);
+        }
+    }
+
+    const BufferRegistry *BaseRenderer::GetBufferRegistry() const
+    {
+        return mResourceContext ? &mResourceContext->GetBufferRegistry() : nullptr;
+    }
+
+    void BaseRenderer::registerOwned(OwnedBuffer &owned)
+    {
+        owned.slot = BufferRegistry::INVALID_SLOT;
+        if (mResourceContext && owned.key[0] != '\0')
+        {
+            owned.slot = mResourceContext->GetBufferRegistry().Register(this, owned.key, *owned.buffer,
+                                                                        owned.attachment, owned.visibility);
+        }
+    }
+
+    void BaseRenderer::unregisterOwned()
+    {
+        if (!mResourceContext)
+        {
+            return;
+        }
+        BufferRegistry &registry = mResourceContext->GetBufferRegistry();
+        for (OwnedBuffer &owned : mOwnedBuffers)
+        {
+            registry.Unregister(owned.slot);
+            owned.slot = BufferRegistry::INVALID_SLOT;
+        }
     }
 
 } // namespace EdgeLighting

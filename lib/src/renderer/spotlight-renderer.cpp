@@ -622,6 +622,8 @@ namespace EdgeLighting
         }
     }
 
+    SpotlightRenderer::SpotlightRenderer() { mScaledRecord = RegisterBuffer(mScaledBuffer); }
+
     bool SpotlightRenderer::Initialize()
     {
         if (!setupShaders())
@@ -871,9 +873,11 @@ namespace EdgeLighting
             mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
 
-            // The blit stretched it over the whole viewport.
-            publishBuffer(mScaledBuffer, glm::vec2(0.0f),
-                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
+            // The blit stretched it over the whole viewport. Redrawn every
+            // frame it is used.
+            MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
+                              glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)),
+                              true);
         }
 
         // Restore the blend state convention the other renderers leave behind.

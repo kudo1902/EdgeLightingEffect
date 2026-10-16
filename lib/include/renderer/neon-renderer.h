@@ -287,14 +287,18 @@ namespace EdgeLighting
     /// @c DebugConfig::opaqueOnly, which selects which of its passes run and
     /// so cannot live anywhere but in the schedule below. What it does hand
     /// that layer is the records of its offscreen buffers, through the
-    /// effect's @ref BufferRegistry (@ref publishBuffers).
+    /// effect's @ref BufferRegistry: registered by the constructor, marked
+    /// current by @ref publishBuffers.
     class NeonRenderer : public BaseRenderer
     {
     public:
         /// Creates the renderer's GL objects - its meshes' vertex arrays, its
         /// uniform buffers, its LUT textures - so a GL context must be current.
-        /// Builds no program and allocates no buffer: see @ref Initialize.
-        NeonRenderer() = default;
+        /// Builds no program and allocates no buffer: see @ref Initialize. It
+        /// does register every offscreen buffer (@c mBufferRecords), so a
+        /// registry lists them all from the moment the renderer joins an
+        /// effect, each current only on the frames that use it.
+        NeonRenderer();
         /// Releases every GL object it holds, through their RAII wrappers; the
         /// context they were created in must be current.
         virtual ~NeonRenderer() = default;
@@ -1121,6 +1125,41 @@ namespace EdgeLighting
             glm::ivec2 viewport{0};
         } OffscreenState;
 
+        /// This renderer's records in the effect's @ref BufferRegistry, one per
+        /// offscreen buffer attachment, each under its Framebuffer's name.
+        /// Registered by the constructor; marked by @ref publishBuffers. All
+        /// DEBUG: intermediates, whose contents the next optimisation is free to
+        /// change - none of them holds the glow as drawn (no filament in the
+        /// reduced buffer, no cut or cutoffs anywhere but the blit).
+        typedef struct BufferRecords
+        {
+            BufferHandle emission = -1;          ///< @c mEmission.buffer, a table.
+            BufferHandle glowCover = -1;         ///< @c mGlowCover.buffer, a table.
+            BufferHandle glowCoverSegments = -1; ///< @c mGlowCover.segBuffer, a table.
+            BufferHandle gather = -1;            ///< @c mGather.buffer, attachment 0, placed.
+            BufferHandle gatherSegments = -1;    ///< @c mGather.buffer, attachment 1 (the segments' hue and coverage), placed.
+            BufferHandle field = -1;             ///< @c mGlowField.buffer, placed where pass 1c reads it.
+            BufferHandle scaled = -1;            ///< @c mScaledBuffer, placed.
+            BufferHandle ringField = -1;         ///< @c mRingField.buffer, a table: four strips packed, no one box.
+        } BufferRecords;
+
+        /// What one frame did with each offscreen buffer, for
+        /// @ref publishBuffers: which it used - so their records are current -
+        /// and which it wrote - so their versions move. Filled by @ref Render
+        /// from its own decisions, never re-derived.
+        typedef struct BufferUse
+        {
+            bool emissionWritten = false;  ///< Pass 0 ran. (Used whenever the glow is: the table is current once baked.)
+            bool glowCoverRead = false;    ///< The shading reads the coverage table (@ref IsGlowCoverUnread false).
+            bool glowCoverWritten = false; ///< Pass 0b ran.
+            bool gatherWritten = false;    ///< Pass 1a ran rather than being skipped.
+            bool fieldRead = false;        ///< The glow's field holds this frame's: composited from, or baked - and the bake succeeded (I66).
+            bool fieldWritten = false;     ///< Pass 1f ran and succeeded.
+            bool scaledWritten = false;    ///< Pass 1b or 1c drew the reduced buffer rather than reusing it.
+            bool ringFieldRead = false;    ///< The ring's field holds this frame's, as @c fieldRead.
+            bool ringFieldWritten = false; ///< Pass 1r ran and succeeded.
+        } BufferUse;
+
         // --- Programs: built once, on first use ------------------------------
         /// Build @p program from @p fragSrc over neon.vert, with @p define
         /// spliced in (none for @c nullptr), once - every program goes through
@@ -1622,18 +1661,17 @@ namespace EdgeLighting
         void renderRingFieldCompositePass(const glm::mat4 &mvp, const UVMap &gatherUV, float gain,
                                           const Config &config);
 
-        /// After the passes, on a frame that drew the glow: publish every
-        /// offscreen buffer this frame drew or read, as it read it
-        /// (@ref BufferRegistry). Placed where the buffer maps onto the frame -
-        /// the gather (@p gatherRegion, one record per attachment), the glow's
-        /// field (where pass 1c reads it, @p fieldRead) and the reduced buffer
-        /// (@p scaledRegion); not placed for the tables - the emission table,
-        /// the glow coverage table and its segment table (when read), and the
-        /// ring's packed field (@p ringFieldRead). Each is listed under its
-        /// Framebuffer's own name. Records only: no GL call.
+        /// After the passes, on a frame that drew the glow: mark every
+        /// offscreen buffer this frame drew or read current, as it read it
+        /// (@ref BufferRegistry), as @p use says. Placed where the buffer maps
+        /// onto the frame - the gather (@p gatherRegion, one record per
+        /// attachment), the glow's field (where pass 1c reads it) and the
+        /// reduced buffer (@p scaledRegion); not placed for the tables - the
+        /// emission table, the glow coverage table and its segment table (when
+        /// read), and the ring's packed field. One store per record: no search,
+        /// no GL call.
         void publishBuffers(const glm::vec2 &centerFull, const BufferRegion &gatherRegion,
-                            const BufferRegion &scaledRegion, bool fieldRead, bool ringFieldRead,
-                            const Config &config);
+                            const BufferRegion &scaledRegion, const BufferUse &use, const Config &config);
 
     private:
         /// Bits of @c mFailedPrograms, one per program, each passed to
@@ -1775,6 +1813,10 @@ namespace EdgeLighting
         /// from, kept here because the buffer is released and cannot record
         /// it. Only ever advances.
         size_t mScaledFormat = 0;
+
+        /// Every offscreen buffer's record in the effect's registry - see
+        /// @ref BufferRecords.
+        BufferRecords mBufferRecords;
     };
 }
 

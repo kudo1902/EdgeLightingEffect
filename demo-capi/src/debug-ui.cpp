@@ -950,20 +950,14 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
         }
     }
 
-    // The buffers the renderers published in the last render: the list
-    // follows what the layers drew, so a buffer comes and goes with the
-    // config that allocates it.
-    // An attachment past the first is shown as "[n]" after its buffer's name.
+    // Every buffer the renderers own, listed by its key - the buffer's name,
+    // "[n]" after it for attachment n > 0. The ones the last render did not
+    // use are listed greyed: a buffer comes and goes with the config that
+    // allocates it, and the view draws it only on a frame it is current.
     char current[EL_BUFFER_NAME_CAPACITY] = "";
     int32_t currentAttachment = 0;
     el_effect_get_debug_buffer_view(effect, current, EL_BUFFER_NAME_CAPACITY, &currentAttachment);
-    char preview[EL_BUFFER_NAME_CAPACITY + 16] = "(none)";
-    if (current[0])
-    {
-        std::snprintf(preview, sizeof(preview), currentAttachment > 0 ? "%s [%d]" : "%s", current,
-                      currentAttachment);
-    }
-    if (ImGui::BeginCombo("Buffer View##Debug", preview))
+    if (ImGui::BeginCombo("Buffer View##Debug", current[0] ? current : "(none)"))
     {
         if (ImGui::Selectable("(none)", current[0] == '\0'))
         {
@@ -973,24 +967,33 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
         el_effect_get_buffer_count(effect, &count);
         for (int32_t i = 0; i < count; i++)
         {
-            char name[EL_BUFFER_NAME_CAPACITY] = "";
+            char key[EL_BUFFER_NAME_CAPACITY] = "";
             int32_t attachment = 0, width = 0, height = 0, channels = 0;
-            el_bool_t placed = 0;
-            if (el_effect_get_buffer_name(effect, i, name, EL_BUFFER_NAME_CAPACITY) != EL_SUCCESS ||
+            el_bool_t placed = 0, drawn = 0;
+            if (el_effect_get_buffer_name(effect, i, key, EL_BUFFER_NAME_CAPACITY) != EL_SUCCESS ||
                 el_effect_get_buffer_info(effect, i, &attachment, &width, &height, &channels, &placed) !=
-                    EL_SUCCESS)
+                    EL_SUCCESS ||
+                el_effect_get_buffer_current(effect, i, &drawn) != EL_SUCCESS)
             {
                 continue;
             }
-            char shown[EL_BUFFER_NAME_CAPACITY + 16];
-            std::snprintf(shown, sizeof(shown), attachment > 0 ? "%s [%d]" : "%s", name, attachment);
             char label[EL_BUFFER_NAME_CAPACITY + 64];
-            std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s", shown, width, height, channels,
-                          placed ? "" : ", panel");
-            const bool selected = std::strcmp(current, name) == 0 && currentAttachment == attachment;
-            if (ImGui::Selectable(label, selected))
+            std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s%s", key, width, height, channels,
+                          placed ? "" : ", panel", drawn ? "" : "  (not drawn)");
+            if (!drawn)
             {
-                el_effect_set_debug_buffer_view(effect, name, attachment);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
+            // Keys are unique, so the key is the ID too.
+            ImGui::PushID(key);
+            if (ImGui::Selectable(label, std::strcmp(current, key) == 0))
+            {
+                el_effect_set_debug_buffer_view(effect, key, 0);
+            }
+            ImGui::PopID();
+            if (!drawn)
+            {
+                ImGui::PopStyleColor();
             }
         }
         ImGui::EndCombo();

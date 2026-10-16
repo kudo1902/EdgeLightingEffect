@@ -86,15 +86,20 @@ namespace EdgeLighting
         /// @brief The active (composited) configuration - base + animation overlays.
         const Config &GetActiveConfig() const;
 
-        /// @brief The offscreen buffers the renderers published in the last
-        ///        @ref Render - names, sizes, channels, placement - for a UI
-        ///        that offers them to @c DebugConfig::bufferView.
+        /// @brief The offscreen buffers the renderers own - keys, sizes,
+        ///        channels, placement, and which are current - for a UI that
+        ///        offers them to @c DebugConfig::bufferView.
         ///
-        /// Cleared at the top of every @ref Render and filled as each layer
-        /// draws, so between frames it lists the last frame's. Read the names
-        /// and sizes there freely; a texture name may already have been
-        /// released by an @ref Update or @ref SetConfig since. See
-        /// @ref BufferRegistry.
+        /// Every buffer a registered renderer registered is listed, from the
+        /// moment the renderer is added, whether or not anything selected it;
+        /// @ref BufferRegistry::IsCurrent says which the last @ref Render drew
+        /// or used. A record READS its Framebuffer live: the texture, its size
+        /// and its format are what they are now - texture 0 and 0 x 0 for a
+        /// buffer released or never allocated, a new size after an @ref Update
+        /// or @ref SetConfig reallocated it. Only the placement describes the
+        /// frame it was last marked in. Records are owned by their renderers
+        /// and leave the list with them, so nothing listed points into a
+        /// renderer that is gone. See @ref BufferRegistry.
         const BufferRegistry &GetBufferRegistry() const;
 
         /// @brief Attach a standalone animation to be advanced and composited
@@ -142,9 +147,9 @@ namespace EdgeLighting
         /// order: @ref Update and the config notifications reach every renderer
         /// regardless, and no renderer reads another's output except through
         /// the framebuffer, which is exactly what the order decides - and
-        /// through @ref GetBufferRegistry, which is cleared at the top of every
-        /// @ref Render: a layer finds there only what the layers drawn BEFORE
-        /// it published this frame.
+        /// through @ref GetBufferRegistry, where a record is current only once
+        /// its producer has drawn this frame: a layer finds current there only
+        /// what the layers drawn BEFORE it marked.
         ///
         /// @returns false (and changes nothing) if @p order is not a
         ///          permutation of the registered renderers.
@@ -232,13 +237,11 @@ namespace EdgeLighting
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
-        /// What the renderers published this frame. Shared with every renderer
-        /// @ref AddRenderer registers, so it outlives this effect for one a
-        /// host still holds.
-        std::shared_ptr<BufferRegistry> mBufferRegistry;
-        /// What the renderers share - the compiled shader stages today (see
-        /// @ref ResourceContext). Handed to every renderer @ref AddRenderer
-        /// registers, before it initialises a late one.
+        /// What the renderers share - the compiled shader stages and the
+        /// records of their offscreen buffers (see @ref ResourceContext).
+        /// Handed to every renderer @ref AddRenderer registers, before it
+        /// initialises a late one, so it outlives this effect for one a host
+        /// still holds.
         std::shared_ptr<ResourceContext> mResourceContext;
         /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
         /// a newly registered renderer still has an Initialize coming or has

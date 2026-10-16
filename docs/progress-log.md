@@ -5,10 +5,52 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-15 - Sharing plan S0 and S1: the five-layer baseline, and one compile per shader stage
+## 2026-10-16 - Sharing plan S2: registry v2, and I64's open case and I65-I73 closed
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
-against `a213d55`. Apple M2 Pro, Debug build. Section 7 of
+against S1 (`b03a9c3`). AMD Radeon Pro 5300M, Debug build. Section 7.3 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - The `BufferRegistry` moved into the `ResourceContext`.
+  - Records are owned: registered once, from the producer's constructor
+    (`RegisterBuffer`), removed by `~BaseRenderer`, and moved by
+    `SetResourceContext`.
+  - One string key per record (`NeonRenderer.Gather[1]`), unique per
+    registry.
+  - Each record is stamped per frame (`BeginFrame`, `MarkBufferCurrent`,
+    `IsCurrent`), with a `version`.
+  - Each record is `PUBLIC` or `DEBUG`; everything today is `DEBUG`.
+  - `SetBufferRegistry` and `DebugConfig::bufferViewAttachment` are gone.
+  - The debug view, both demos, the C ABI and `layer-check` are ported. The
+    C ABI adds `el_effect_get_buffer_current`; every other export keeps its
+    arity.
+- **Closed.**
+  - I64's open case: a kept renderer's records leave with it.
+  - I65 (one key per buffer) and I66 (no mark after a failed bake).
+  - I67 (protected names) and I68 (one key).
+  - I69 (the doc) and I70 (no search per mark).
+  - I71 (keys capped at `EL_BUFFER_NAME_CAPACITY`).
+  - I72 (whole-scale panels) and I73 (more formats).
+- **Measured.**
+  - 236 of 248 frames identical to S1. The 12 that differ are three table
+    panels whose scale I72 changed.
+  - Those panels are texel-exact: 0 of 193,038 pixels off.
+  - Allocations and memory unchanged in every scene.
+  - Four lifetime paths are clean under AddressSanitizer.
+  - `neon-scale-check check` and `partition` pass.
+- **Departures from the plan.**
+  - The effect's clears are removed rather than kept as a backstop: with owned
+    records they would drop a kept renderer's.
+  - The texture kind waits for S5.
+- **Open.** Not measured on the M2 or the target device. Next is S3, the
+  two-phase frame.
+
+## 2026-10-15 - Sharing plan S0 and S1: the five-layer baseline, and one compile per shader stage
+
+Committed as `7d3e953` (docs `b03a9c3`), on
+`design_system_sharing_resources_between_renderers`, measured against
+`a213d55`. Apple M2 Pro, Debug build. Section 7 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 
 - **S0.** `tools/layer-check`, built with the other tools. `report` hashes

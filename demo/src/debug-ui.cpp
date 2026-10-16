@@ -1122,56 +1122,62 @@ void DebugUI::buildDebugSection(EdgeLighting::Config &cfg, const EdgeLighting::E
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         }
 
-        // The buffers the renderers published last frame (BufferRegistry):
-        // the list follows what the layers drew, so a buffer comes and goes
-        // with the config that allocates it.
-        // An attachment past the first is shown as "[n]" after its buffer's
-        // name, the only place the two are joined.
+        // Every buffer the renderers own (BufferRegistry), listed by its key
+        // - the Framebuffer's name, "[n]" after it for attachment n > 0. The
+        // ones the last frame did not use are listed greyed: a buffer comes
+        // and goes with the config that allocates it, and the view draws it
+        // only on a frame it is current.
         const EdgeLighting::BufferRegistry &registry = effect.GetBufferRegistry();
-        char preview[96] = "(none)";
-        if (!cfg.debug.bufferView.empty())
-        {
-            std::snprintf(preview, sizeof(preview), cfg.debug.bufferViewAttachment > 0 ? "%s [%d]" : "%s",
-                          cfg.debug.bufferView.c_str(), cfg.debug.bufferViewAttachment);
-        }
+        const char *preview = cfg.debug.bufferView.empty() ? "(none)" : cfg.debug.bufferView.c_str();
         if (ImGui::BeginCombo("Buffer View##Debug", preview))
         {
             if (ImGui::Selectable("(none)", cfg.debug.bufferView.empty()))
             {
                 cfg.debug.bufferView.clear();
-                cfg.debug.bufferViewAttachment = 0;
             }
-            for (const EdgeLighting::PublishedBuffer &buffer : registry.GetBuffers())
+            for (const EdgeLighting::BufferRecord &buffer : registry.GetRecords())
             {
-                const glm::ivec2 texels = buffer.GetTexels();
-                char name[96];
-                std::snprintf(name, sizeof(name), buffer.attachment > 0 ? "%s [%d]" : "%s", buffer.GetName(),
-                              buffer.attachment);
-                char label[160];
-                std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s", name, texels.x, texels.y,
-                              buffer.GetChannels(), buffer.placed ? "" : ", panel");
-                const bool selected =
-                    cfg.debug.bufferView == buffer.GetName() && cfg.debug.bufferViewAttachment == buffer.attachment;
-                if (ImGui::Selectable(label, selected))
+                if (!buffer.IsRegistered())
                 {
-                    cfg.debug.bufferView = buffer.GetName();
-                    cfg.debug.bufferViewAttachment = buffer.attachment;
+                    continue;
+                }
+                const glm::ivec2 texels = buffer.GetTexels();
+                const bool current = registry.IsCurrent(buffer);
+                char label[160];
+                std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s%s", buffer.key, texels.x, texels.y,
+                              buffer.GetChannels(), buffer.placed ? "" : ", panel", current ? "" : "  (not drawn)");
+                if (!current)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                }
+                // The key is unique within the registry, so it is the ID too.
+                ImGui::PushID(buffer.key);
+                if (ImGui::Selectable(label, cfg.debug.bufferView == buffer.key))
+                {
+                    cfg.debug.bufferView = buffer.key;
+                }
+                ImGui::PopID();
+                if (!current)
+                {
+                    ImGui::PopStyleColor();
                 }
             }
             ImGui::EndCombo();
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("An offscreen buffer a layer drew this frame, one block per\n"
-                              "texel, magenta outline. In place over the area it maps\n"
-                              "onto (opaque - it replaces the frame there), or as a panel\n"
-                              "in the lower-left corner for a table.");
+            ImGui::SetTooltip("An offscreen buffer a layer owns, one block per texel,\n"
+                              "magenta outline. In place over the area it maps onto\n"
+                              "(opaque - it replaces the frame there), or as a panel in\n"
+                              "the lower-left corner for a table. Drawn only on a frame\n"
+                              "its layer used it.");
         }
         if (!cfg.debug.bufferView.empty())
         {
-            if (!registry.Find(cfg.debug.bufferView, cfg.debug.bufferViewAttachment))
+            const EdgeLighting::BufferRecord *selected = registry.Find(cfg.debug.bufferView);
+            if (!selected || !registry.IsCurrent(*selected))
             {
-                ImGui::TextDisabled("Not published this frame - nothing drawn.");
+                ImGui::TextDisabled("Not drawn this frame - nothing shown.");
             }
             const char *channelItems[] = {"RGB", "Red", "Green", "Blue", "Alpha"};
             int channel = static_cast<int>(cfg.debug.bufferViewChannel);

@@ -4,6 +4,7 @@
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <cmath>
 
 namespace EdgeLighting
 {
@@ -27,8 +28,9 @@ namespace EdgeLighting
         const glm::vec4 BUFFER_VIEW_BORDER_COLOR(1.0f, 0.0f, 1.0f, 1.0f);
 
         /// A table's panel (a buffer with no box of the frame): its distance
-        /// from the viewport's lower-left corner, the share of the viewport
-        /// it may fill each way, and the least height it is stretched to.
+        /// from the viewport's lower-left corner - whole px, so texel edges
+        /// land on pixel edges - the share of the viewport it may fill each
+        /// way, and the least height it is stretched to.
         constexpr float PANEL_MARGIN = 16.0f;
         constexpr float PANEL_MAX_FRAC = 0.5f;
         constexpr float PANEL_MIN_HEIGHT = 64.0f;
@@ -139,15 +141,13 @@ namespace EdgeLighting
         const bool wantMarkers = config.debug.showColorStops && glowVisible &&
                                  !config.neon.colorStops.empty();
         const bool wantBox = config.debug.showWireframe;
-        // A buffer some layer drawn before this one published this frame. No
-        // gate of its own beyond that: a layer that is off, or drew nothing -
-        // the neon under opaqueOnly - publishes nothing.
-        const BufferRegistry *registry = getBufferRegistry();
-        const PublishedBuffer *buffer = registry && !config.debug.bufferView.empty()
-                                            ? registry->Find(config.debug.bufferView,
-                                                             config.debug.bufferViewAttachment)
-                                            : nullptr;
-        if (buffer && buffer->GetTexture() == 0)
+        // A buffer some layer drawn before this one marked current this frame.
+        // No gate of its own beyond that: a layer that is off, or drew nothing
+        // - the neon under opaqueOnly - marks nothing.
+        const BufferRegistry *registry = GetBufferRegistry();
+        const BufferRecord *buffer =
+            registry && !config.debug.bufferView.empty() ? registry->Find(config.debug.bufferView) : nullptr;
+        if (buffer && !registry->IsCurrent(*buffer))
         {
             buffer = nullptr;
         }
@@ -356,7 +356,7 @@ namespace EdgeLighting
     }
 
     void DebugRenderer::renderBufferView(const glm::mat4 &proj, int viewportWidth, int viewportHeight,
-                                         const PublishedBuffer &buffer, const Config &config)
+                                         const BufferRecord &buffer, const Config &config)
     {
         // In place: the box the producer reads it over, in the caller's
         // framebuffer px, y up - the space @p proj maps. A table maps onto no
@@ -364,6 +364,15 @@ namespace EdgeLighting
         // in PANEL_MAX_FRAC of the viewport each way at one scale for both
         // axes, then stretched to PANEL_MIN_HEIGHT so a table a few rows tall
         // (the emission table's 2) still reads.
+        //
+        // The panel's scale is WHOLE (I72): an integer number of px per texel,
+        // or for a table too large for that, an odd integer number of texels
+        // per px. A fractional scale gave texel columns of two widths and put
+        // pixel centres exactly on texel edges, where the texel shown flipped
+        // with the interpolated vPos (947 px, up to 5 levels, on a 128-wide
+        // table at 2.8125x). Whole px per texel puts every centre half a px
+        // inside a texel; k texels per px puts it at (i + 0.5) k, inside a
+        // texel only when k is odd - an even k lands on an edge again.
         glm::vec2 origin = buffer.origin;
         glm::vec2 size = buffer.size;
         if (!buffer.placed)
@@ -372,8 +381,23 @@ namespace EdgeLighting
             const glm::vec2 room = glm::max(viewport * PANEL_MAX_FRAC, glm::vec2(1.0f));
             const glm::vec2 texels = glm::max(glm::vec2(buffer.GetTexels()), glm::vec2(1.0f));
             const float fit = std::min(room.x / texels.x, room.y / texels.y);
-            size = texels * fit;
-            size.y = std::max(size.y, std::min(PANEL_MIN_HEIGHT, room.y));
+            float scale = std::floor(fit);
+            if (fit < 1.0f)
+            {
+                float texelsPerPx = std::ceil(1.0f / fit);
+                if (std::fmod(texelsPerPx, 2.0f) == 0.0f)
+                {
+                    texelsPerPx += 1.0f;
+                }
+                scale = 1.0f / texelsPerPx;
+            }
+            size = texels * scale;
+            // A few rows stretched on their own, still whole px per row.
+            const float rowPx = std::floor(std::min(PANEL_MIN_HEIGHT, room.y) / texels.y);
+            if (rowPx > scale)
+            {
+                size.y = texels.y * rowPx;
+            }
             origin = glm::vec2(PANEL_MARGIN);
         }
         const glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(origin + size * 0.5f, 0.0f)) *

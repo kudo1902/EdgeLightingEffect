@@ -699,6 +699,20 @@ namespace
         std::vector<std::string> published;
     } SceneResult;
 
+    /// A record as the reports name it: its Framebuffer's name, "#", its
+    /// attachment - "NeonRenderer.Gather#1" for the key
+    /// "NeonRenderer.Gather[1]". The form S0's reports used, kept so reports
+    /// from before and after the registry's string keys stay comparable.
+    std::string RecordId(const BufferRecord &record)
+    {
+        std::string id(record.key);
+        if (record.attachment > 0)
+        {
+            id.erase(id.rfind('['));
+        }
+        return id + "#" + std::to_string(record.attachment);
+    }
+
     SceneResult RunScene(const LayerScene &scene)
     {
         SceneResult result;
@@ -718,12 +732,17 @@ namespace
 
         result.textureBytes = LiveTextureBytes();
         result.bufferBytes = LiveBufferBytes();
-        for (const PublishedBuffer &record : effect.GetBufferRegistry().GetBuffers())
+        const BufferRegistry &registry = effect.GetBufferRegistry();
+        for (const BufferRecord &record : registry.GetRecords())
         {
+            if (!registry.IsCurrent(record))
+            {
+                continue;
+            }
             const glm::ivec2 texels = record.GetTexels();
             char line[160];
-            std::snprintf(line, sizeof(line), "%s#%d %dx%d ch%d", record.GetName(), record.attachment, texels.x,
-                          texels.y, record.GetChannels());
+            std::snprintf(line, sizeof(line), "%s %dx%d ch%d", RecordId(record).c_str(), texels.x, texels.y,
+                          record.GetChannels());
             result.published.push_back(line);
         }
 
@@ -780,13 +799,17 @@ namespace
                 effect.Update(DT);
                 RenderFrame(effect);
             }
-            for (const PublishedBuffer &record : effect.GetBufferRegistry().GetBuffers())
+            const BufferRegistry &registry = effect.GetBufferRegistry();
+            for (const BufferRecord &record : registry.GetRecords())
             {
+                if (!registry.IsCurrent(record))
+                {
+                    continue;
+                }
                 LayerScene s;
-                s.id = std::string("view/") + record.GetName() + "#" + std::to_string(record.attachment);
+                s.id = "view/" + RecordId(record);
                 s.config = all;
-                s.config.debug.bufferView = record.GetName();
-                s.config.debug.bufferViewAttachment = record.attachment;
+                s.config.debug.bufferView = record.key;
                 s.motion = Motion::HUE;
                 scenes.push_back(s);
             }

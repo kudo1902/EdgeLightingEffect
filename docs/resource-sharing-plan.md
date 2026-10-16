@@ -6,8 +6,8 @@ The owner settled every decision
 the same day, each one as recommended (section 5). The steps start with the
 shared shader cache.
 
-**Built so far (2026-10-15, uncommitted): S0 and S1.** Section 7 has what each
-measured.
+**Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), and S2
+(2026-10-16, uncommitted).** Section 7 has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -625,3 +625,66 @@ the cache as `ShaderCache::WithDefines`.
   object into several programs is standard GL and GLES 3.0 behaviour, but a
   driver that mishandled it would show here first. A renderer can always be
   driven without a context, which compiles privately as before.
+
+### 7.3 S2 - registry v2
+
+`core/buffer-registry.h` (`BufferRecord`, `BufferRegistry`, `MakeBufferKey`),
+held by the `ResourceContext`; `BaseRenderer::RegisterBuffer`,
+`MarkBufferCurrent` and `GetBufferRegistry`. Every buffer published at S1 is
+registered, as `DEBUG`. Measured on an AMD Radeon Pro 5300M, Debug build,
+against S1 (`b03a9c3`).
+
+- **Frames**: 236 of 248 identical. The 12 that differ are the debug view's
+  panels on the three tables whose panel scale I72 changed: `GlowCover`
+  (1.67 -> 1 px per texel), `GlowCoverSegments` (2.8125 -> 2) and `RingField`
+  (0.967 -> 1/3). The emission table's panel was already whole (5 px, 32 per
+  row) and is identical, as is every in-place view and every frame without
+  the view.
+- **Debug view**: texel-exact. A probe reads each table back and checks every
+  pixel inside its panel against the texel the scale puts under it: 0 of
+  193,038 off. The in-place views did not move, and S0's review found them
+  exact.
+- **Allocations and memory**: every scene's counts identical to S1.
+- **ASan**: the I64 probes, extended to a kept neon drawn alone and then
+  dropped while a kept debug layer draws, to one renderer in two effects, and
+  to a renderer that fails `Initialize` - clean under AddressSanitizer with
+  the library instrumented and `MallocScribble=1`. See I64 in the review
+  findings.
+- **Two neons** (I65): the second's keys are refused and logged; 8 records,
+  each naming the first neon's buffer.
+- **The C ABI**, through the shared library: 10 buffers listed after
+  `el_effect_init`, before any render; the view's setter takes either form and
+  refuses a contradicting attachment or a key of 64 chars; after a render,
+  `el_effect_get_buffer_current` reports the neon's buffers the frame used and
+  not the flare's or the spotlight's at 1.0.
+- `neon-scale-check check` and `partition` pass.
+
+Where the build departs from 3.2, and why:
+
+- **Registered in the constructor**, not in `Initialize` or on the first
+  allocation. A `Framebuffer` member has its name from construction, so the
+  list is complete from the moment a renderer joins an effect, and
+  `Initialize`, which may run twice, registers nothing twice. A buffer not yet
+  allocated is listed and never current.
+- **The renderer keeps its own list.** A `BufferHandle` indexes it, and each
+  entry holds its slot in the current registry. The slot changes with the
+  context; the handle does not. That is what lets `SetResourceContext` move
+  the records.
+- **The effect's clears are removed, not kept as a backstop.** With owned
+  records a clear would drop the records of a renderer the host kept, which is
+  alive and may go on drawing into the same context.
+- **No texture kind yet.** `Texture2D` knows neither its size nor its format
+  (`BaseLUT` does). The kind comes with its first user, the gradient ring, in
+  S5.
+- **One C export added**, `el_effect_get_buffer_current`. The listing is now
+  every registered record, and the arity rule keeps `el_effect_get_buffer_info`
+  as it is. Every other export keeps its signature;
+  `el_effect_set_debug_buffer_view(name, attachment)` takes either form.
+- **A panel too large for 1 px per texel shrinks by an ODD whole factor.**
+  With k texels per px the pixel centre falls at (i + 0.5) k, a texel edge
+  when k is even.
+
+Not measured: the M2 and the target device. Nothing here is a GPU path - the
+registry is CPU records - but the panel sizing changes what the debug view
+draws.
+

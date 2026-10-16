@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, I13, I18, I65 to I73 |
+| open | V9, V16, V18, I13, I18 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-second pass |
 
@@ -5398,8 +5398,11 @@ each layer's publishing (`NeonRenderer::publishBuffers`, the lens flare's and
 the spotlight's scaled paths), the debug layer's buffer view
 (`DebugConfig::bufferView`, `DebugRenderer::renderBufferView`,
 [`debug-buffer-view.frag`](../lib/shaders/debug-buffer-view.frag)) and its C ABI.
-Ten items, I64 to I73. I64 is fixed; the other nine are open. I64, I65 and I68 are reproduced offscreen,
-I72 is measured, the rest are read from the source and say so.
+Ten items, I64 to I73. I64 was fixed first; its open case and the other nine
+were closed by the sharing plan's S2 (registry v2, 2026-10-16 - see
+[`resource-sharing-plan.md`](resource-sharing-plan.md) section 7.3). I64, I65
+and I68 are reproduced offscreen, I72 is measured, the rest are read from the
+source and say so.
 
 What the pass found holding, so a fix can be checked against it: every one of
 the ten published buffers, viewed, matches the texel under each pixel exactly,
@@ -5460,7 +5463,23 @@ renderer from the registry in the destructor would close this. But it would
 also detach a renderer that a second effect has registered since, so it was
 left out.
 
-### I65. Two buffers with one name are both listed, and only the first can be viewed - OPEN
+**Closed (2026-10-16, S2).** Records are owned: a renderer registers each
+buffer once, `~BaseRenderer` unregisters them, and `SetResourceContext` moves
+them to another context - so detaching a renderer from one effect's registry
+and joining a second effect are one operation, which is what the fix above had
+to leave alone. The effect's two clears are gone: with owned records they
+would drop the records of a renderer the host kept, which is alive and may go
+on drawing. Probe built under AddressSanitizer, library included, run with
+`MallocScribble=1` on the AMD 5300M, all clean:
+
+| path | records |
+| ---- | ------- |
+| effect destroyed, kept debug layer drawn alone | 8 -> 0 |
+| kept neon drawn alone, then dropped while a kept debug layer draws | 8 kept, then 0 |
+| one neon added to effect A, then B; A drawn after B is gone; A freed | A 8 -> 0, B 8; neon freed last |
+| a host renderer that fails `Initialize`, added before it / after it | 1 -> 0 / never listed |
+
+### I65. Two buffers with one name are both listed, and only the first can be viewed - FIXED
 
 `BufferRegistry::Publish` tells records apart by Framebuffer pointer and
 attachment; `BufferRegistry::Find` - and so the view, which stores a name - by
@@ -5478,7 +5497,14 @@ same buffer, and the two `ImGui::Selectable` items share one ImGui ID.
 `Publish`; or make the key unique - the UI appends "#n" to the n-th record of a
 name and `Find` accepts it.
 
-### I66. The glow field and the ring field are published after a failed bake - OPEN
+**Fixed (2026-10-16, S2).** One string key per record, unique per registry:
+a second registration of a key is refused and logged. Two neons in one effect
+list 8 records, not 16, and every key names the first neon's buffer; both
+demos use the key as the row's ImGui ID. The second neon's buffers are not
+listed at all - listing both would take a name per instance, which nothing
+asks for yet.
+
+### I66. The glow field and the ring field are published after a failed bake - FIXED
 
 `NeonRenderer::Render` hands `publishBuffers` `field.use || field.bake`. On a
 failed bake `bakeFieldPass` clears `field.use` but leaves `field.bake` set -
@@ -5496,7 +5522,13 @@ texels as the current field.
 **Fix.** Carry the bake's result out: publish on
 `field.use || (field.bake && baked)`, and likewise for the ring.
 
-### I67. The new protected methods are named like private ones - OPEN
+**Fixed (2026-10-16, S2).** `Render` carries each bake's result out
+(`BufferUse::fieldWritten`, `ringFieldWritten`), and a field is marked current
+only when the composite read it or a bake just succeeded; its placement is
+stamped with the mark, never without it. Still read from the source: a bake
+forced to fail after its buffer allocated was not built.
+
+### I67. The new protected methods are named like private ones - FIXED
 
 `BaseRenderer::publishBuffer` (both overloads) and
 `BaseRenderer::getBufferRegistry` are protected and camelCase. `AGENTS.md`,
@@ -5507,7 +5539,11 @@ means - called by four subclasses.
 **Fix.** `PublishBuffer` / `GetBufferRegistry`; the private helper `publish`
 keeps its name.
 
-### I68. Changing `bufferView` alone keeps a stale `bufferViewAttachment` - OPEN
+**Fixed (2026-10-16, S2).** The protected API is `RegisterBuffer`,
+`MarkBufferCurrent` and `GetBufferRegistry`; the private helpers
+`registerOwned` / `unregisterOwned` keep camelCase.
+
+### I68. Changing `bufferView` alone keeps a stale `bufferViewAttachment` - FIXED
 
 The selection is two fields. A host that changes the name and not the
 attachment looks up a pair nothing published, and the view goes blank without
@@ -5523,7 +5559,15 @@ both demos set both, so only a C++ host writing the config meets it.
 which also serves I65; or, when the pair misses and the name alone hits, log
 once and show attachment 0.
 
-### I69. `GetBufferRegistry`'s doc describes the records the commit replaced - OPEN
+**Fixed (2026-10-16, S2)** by the one-key decision: `bufferViewAttachment` is
+gone, and `bufferView` holds `NeonRenderer.Gather[1]`. The C ABI's
+`el_effect_set_debug_buffer_view(name, attachment)` keeps its arity and takes
+either form. Checked through the shared library: `("NeonRenderer.Gather", 1)`,
+`("NeonRenderer.Gather[1]", 0)` and `("NeonRenderer.Gather[1]", 1)` all read
+back as `NeonRenderer.Gather[1]`, attachment 1; `("NeonRenderer.Gather[1]", 2)`
+is refused.
+
+### I69. `GetBufferRegistry`'s doc describes the records the commit replaced - FIXED
 
 `EdgeLightingEffect::GetBufferRegistry` says names and sizes are safe to read
 between frames and that a texture name "may already have been released". That
@@ -5534,7 +5578,9 @@ last frame. Nor does it mention I64. Read from the source.
 
 **Fix.** Rewrite it for live reads, and point at I64's fix.
 
-### I70. Every glow frame publishes, whether or not anything reads the registry - OPEN
+**Fixed (2026-10-16, S2).** Rewritten for live reads and owned records.
+
+### I70. Every glow frame publishes, whether or not anything reads the registry - FIXED
 
 `NeonRenderer::publishBuffers` runs for every host - debug layer registered or
 not - and re-evaluates `IsGlowCoverUnread`, which `Render` already evaluated for
@@ -5548,7 +5594,15 @@ asked would need a "wanted" flag the debug view sets - weigh that against
 I64/I65 first, since the list would then be empty for a UI that has not
 selected anything.
 
-### I71. The C ABI accepts a buffer name it can never hand back - OPEN
+**Fixed (2026-10-16, S2).** A mark is one store through the record's slot -
+no search - and `IsGlowCoverUnread` is evaluated once a frame, by `Render`,
+which hands the result to `publishBuffers` (`BufferUse::glowCoverRead`). The
+marks still run whether or not anything reads the registry. With the list made
+of registered records a UI is complete before anything is selected - the case
+a "wanted" flag alone would have broken - and skipping the marks for a buffer
+nobody reads is the plan's S4 (read declarations).
+
+### I71. The C ABI accepts a buffer name it can never hand back - FIXED
 
 `el_effect_set_debug_buffer_view` stores a name of any length;
 `el_effect_get_debug_buffer_view` returns `EL_ERROR_INVALID_PARAMETER` and an
@@ -5560,7 +5614,15 @@ while the config still holds it. Read from the source.
 **Fix.** Refuse a name of `EL_BUFFER_NAME_CAPACITY` or more at the setter, or
 have the getters report the length they need.
 
-### I72. A table's panel is stretched by a fractional factor - OPEN
+**Fixed (2026-10-16, S2).** A key of `BUFFER_KEY_CAPACITY` chars or more
+(64 with the NUL, static_asserted equal to `EL_BUFFER_NAME_CAPACITY`) is
+refused at registration, and `el_effect_set_debug_buffer_view` refuses a name
+- with its attachment - that makes one, with `EL_ERROR_INVALID_PARAMETER`. So
+every key either getter hands back fits. Checked through the shared library: a
+63-char name is accepted and read back, the same name with attachment 1 and a
+64-char name are refused.
+
+### I72. A table's panel is stretched by a fractional factor - FIXED
 
 `DebugRenderer::renderBufferView` fits a panel at
 `min(room.x / texels.x, room.y / texels.y)`, any float, so texel columns
@@ -5576,7 +5638,18 @@ reading texels shows them uneven.
 **Fix.** Floor the fit to a whole number of pixels per texel when it is at
 least 1 (a whole fraction below 1).
 
-### I73. `ChannelCount` knows twelve formats; any other reads as four channels - OPEN
+**Fixed (2026-10-16, S2).** The panel's scale is whole: an integer number of
+px per texel or, for a table too large for that, an ODD integer number of
+texels per px - an even one puts the pixel centre (i + 0.5) k on a texel edge
+again. A table a few rows tall is stretched in whole px per row. Probe at
+1280 x 720 on the AMD 5300M: every pixel inside every table panel shows the
+texel the scale puts under it - `Emission` 128 x 2 at 5 px (32 per row),
+`GlowCover` 384 x 128 at 1 (was 1.67), `GlowCoverSegments` 192 x 128 at 2
+(was 2.8125), `RingField` 662 x 120 at 1/3 (was 0.967) - 0 of 193,038 pixels
+off. Those three panels are the only frames `layer-check diff` reports
+against S1.
+
+### I73. `ChannelCount` knows twelve formats; any other reads as four channels - FIXED
 
 `ChannelCount` in `buffer-registry.cpp` covers R / RG / RGB / RGBA at 8 bits,
 16F and 32F. Every buffer the library publishes is one of those, but a host
@@ -5588,6 +5661,14 @@ black. Read from the source.
 
 **Fix.** Extend the switch; GL ES 3.0 has no `glGetTexLevelParameteriv` to ask
 the driver instead.
+
+**Fixed (2026-10-16, S2).** `ChannelCount` also knows the 8-bit SNORM
+formats, `GL_RGB565`, `GL_RGBA4`, `GL_RGB5_A1`, `GL_RGB10_A2`, `GL_SRGB8`,
+`GL_SRGB8_ALPHA8`, `GL_R11F_G11F_B10F`, `GL_RGB9_E5`, and the 16-bit normalised
+ones where the GL header has them (`EXT_texture_norm16` on ES). Integer formats
+stay unknown: a float sampler cannot read them, so no channel count would make
+the view right. Read from the source - no renderer in the tree uses any of
+these.
 
 ---
 
@@ -5665,16 +5746,16 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
-| I64 | open | a registry record holds a raw `Framebuffer *` into its producer and nothing clears it when the producer dies (effect destructor, `Initialize`'s erase); reproduced as a SIGSEGV under `MallocScribble` |
-| I65 | open | `Publish` keys by pointer, `Find` by name: two Framebuffers with one name are both listed and only the first can be viewed (two neons: textures 13 and 17, `Find` always 13) |
-| I66 | open | the glow field and the ring field are published on a frame whose bake failed (`field.bake` stays set), as if current |
-| I67 | open | protected `publishBuffer` / `getBufferRegistry` are camelCase; `AGENTS.md` makes protected methods PascalCase |
-| I68 | open | `bufferView` and `bufferViewAttachment` are two fields, so a host changing the name alone looks up a pair nothing published and the view goes blank silently |
-| I69 | open | `GetBufferRegistry`'s doc still describes snapshot records; texture and size are now read live, only the placement is last frame's |
-| I70 | open | `publishBuffers` runs every glow frame for every host and re-evaluates `IsGlowCoverUnread`; records only, unmeasured, expected under the noise |
-| I71 | open | the C ABI setter takes a name of any length, the getter cannot return one past `EL_BUFFER_NAME_CAPACITY` |
-| I72 | open | a table's panel is stretched by a fractional factor: uneven texel widths, and 947 boundary pixels showing the neighbouring texel (up to 5 levels) on one panel |
-| I73 | open | `ChannelCount` covers twelve formats; any other reads "0 ch" and is shown as four channels, so a missing alpha reads white |
+| I64 | fixed | a registry record held a raw `Framebuffer *` into its producer and nothing cleared it when the producer died; the effect cleared it on its two exits, and S2 made records owned - removed by `~BaseRenderer`, moved by `SetResourceContext` - closing the kept-renderer case; ASan clean on four lifetime paths |
+| I65 | fixed | two Framebuffers with one name were both listed and only the first could be viewed; one string key per record, unique per registry - a second is refused and logged |
+| I66 | fixed | the fields were published after a failed bake; marked current only when read or baked successfully |
+| I67 | fixed | protected registry methods were camelCase; now `RegisterBuffer` / `MarkBufferCurrent` / `GetBufferRegistry` |
+| I68 | fixed | the view selection was two fields; one key (`NeonRenderer.Gather[1]`), `bufferViewAttachment` removed, the C ABI takes either form |
+| I69 | fixed | `GetBufferRegistry`'s doc described snapshot records; rewritten for live reads and owned records |
+| I70 | fixed | `publishBuffers` searched per record and re-evaluated `IsGlowCoverUnread`; one store per record through its slot, the predicate passed in; skipping unread marks is S4 |
+| I71 | fixed | the C ABI accepted a name it could not hand back; keys of `EL_BUFFER_NAME_CAPACITY` or more refused at registration and at the setter |
+| I72 | fixed | table panels used a fractional scale; whole px per texel (odd texels per px when too large) - 0 of 193,038 panel pixels off |
+| I73 | fixed | `ChannelCount` knew twelve formats; now the SNORM, packed, sRGB, shared-exponent and 16-bit normalised ones too |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

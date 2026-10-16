@@ -333,10 +333,12 @@ extern "C"
         EL_DEBUG_BUFFER_ALPHA = 4  /**< Likewise - the neon's coverages live here, encoded c / (1 + c). */
     } el_debug_buffer_channel_e;
 
-    /** @brief Characters, NUL included, that hold the name of any buffer the
-     *         library's own renderers publish - the capacity to hand
-     *         @ref el_effect_get_buffer_name and
-     *         @ref el_effect_get_debug_buffer_view. */
+    /** @brief Characters, NUL included, that hold any buffer key - the
+     *         capacity to hand @ref el_effect_get_buffer_name and
+     *         @ref el_effect_get_debug_buffer_view. A key that would not fit
+     *         is never registered, and never accepted by
+     *         @ref el_effect_set_debug_buffer_view, so every key either hands
+     *         back fits. */
 #define EL_BUFFER_NAME_CAPACITY 64
 
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers

@@ -32,7 +32,9 @@ namespace EdgeLighting
     class LensFlareRenderer : public BaseRenderer
     {
     public:
-        LensFlareRenderer() = default;
+        /// Registers @c mScaledBuffer with the effect's buffer registry
+        /// (current only on frames the scaled path draws).
+        LensFlareRenderer();
         virtual ~LensFlareRenderer() = default;
 
         virtual bool Initialize() override;
@@ -65,6 +67,9 @@ namespace EdgeLighting
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
+        /// @c mScaledBuffer's record in the effect's registry, placed over the
+        /// whole viewport the blit stretches it across. DEBUG.
+        BufferHandle mScaledRecord = -1;
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref Render.

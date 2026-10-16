@@ -114,7 +114,9 @@ namespace EdgeLighting
     class SpotlightRenderer : public BaseRenderer
     {
     public:
-        SpotlightRenderer() = default;
+        /// Registers @c mScaledBuffer with the effect's buffer registry
+        /// (current only on frames the scaled path draws).
+        SpotlightRenderer();
         virtual ~SpotlightRenderer() = default;
 
         virtual bool Initialize() override;
@@ -220,6 +222,9 @@ namespace EdgeLighting
         /// a config stops asking for it. Half float where the driver renders
         /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer.
         Framebuffer mScaledBuffer{"Spotlight.Scaled"};
+        /// @c mScaledBuffer's record in the effect's registry, placed over the
+        /// whole viewport the blit stretches it across. DEBUG.
+        BufferHandle mScaledRecord = -1;
         /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
         /// has not refused for @c mScaledBuffer, where the walk resumes. Kept
         /// beside the buffer rather than in it because the buffer is released

@@ -2038,6 +2038,20 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
     // -------------------------------------------------------------------------
 
+    NeonRenderer::NeonRenderer()
+    {
+        // In pass order, which is the order a UI lists them in. Each
+        // Framebuffer member already carries its name, the key's base.
+        mBufferRecords.emission = RegisterBuffer(mEmission.buffer);
+        mBufferRecords.glowCover = RegisterBuffer(mGlowCover.buffer);
+        mBufferRecords.glowCoverSegments = RegisterBuffer(mGlowCover.segBuffer);
+        mBufferRecords.gather = RegisterBuffer(mGather.buffer);
+        mBufferRecords.gatherSegments = RegisterBuffer(mGather.buffer, 1);
+        mBufferRecords.field = RegisterBuffer(mGlowField.buffer);
+        mBufferRecords.scaled = RegisterBuffer(mScaledBuffer);
+        mBufferRecords.ringField = RegisterBuffer(mRingField.buffer);
+    }
+
     bool NeonRenderer::Initialize()
     {
         // The one program every frame uses, so built here rather than on
@@ -2276,9 +2290,9 @@ namespace EdgeLighting
         // and nothing else writes the buffer. Nor on a ring lit uniformly,
         // which never reads it: the flag stays set, so the first change that
         // breaks the uniformity bakes it.
+        const bool glowCoverRead = glowReady && !IsGlowCoverUnread(mEffectiveSegments, config);
         const bool glowCoverStale =
-            glowReady && (mGlowCover.dirtyArcPieces | mGlowCover.dirtySegmentPieces) != 0 &&
-            !IsGlowCoverUnread(mEffectiveSegments, config);
+            glowCoverRead && (mGlowCover.dirtyArcPieces | mGlowCover.dirtySegmentPieces) != 0;
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
@@ -2328,6 +2342,13 @@ namespace EdgeLighting
         {
             prevTarget = RenderTargetState::Capture();
         }
+        // What the frame does with each offscreen buffer, for publishBuffers:
+        // the decisions above, and below what each pass returned.
+        BufferUse bufferUse;
+        bufferUse.emissionWritten = emissionStale;
+        bufferUse.glowCoverRead = glowCoverRead;
+        bufferUse.glowCoverWritten = glowCoverStale;
+        bufferUse.scaledWritten = !reuseOffscreen;
 
         // ===== Offscreen phase ===============================================
         if (glowReady)
@@ -2362,6 +2383,7 @@ namespace EdgeLighting
                 const bool baked =
                     renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, time, config);
                 field.use = field.use && baked;
+                bufferUse.fieldWritten = baked;
                 mGlowField.schedule.OnBaked(baked, config.neon.intensity);
                 mGlowField.origin = region.origin * scale;
                 mGlowField.texelScale = glm::vec2(region.texels) / (region.size * scale);
@@ -2398,6 +2420,7 @@ namespace EdgeLighting
             // on the caller's framebuffer read through them.
             if (!reuseOffscreen && !gatherCurrent)
             {
+                bufferUse.gatherWritten = true;
                 glDisable(GL_BLEND);
                 glowReady =
                     renderGatherPass(GetRegionProjection(gatherRegion, scale), gatherRegion.texels, scale, config);
@@ -2453,6 +2476,7 @@ namespace EdgeLighting
                 const bool baked = renderRingFieldPass(gatherUVFull, time, config);
                 mRingField.schedule.OnBaked(baked, config.neon.intensity);
                 ringField.use = ringField.use && baked;
+                bufferUse.ringFieldWritten = baked;
             }
 
             if (!reuseOffscreen || field.bake || ringField.bake)
@@ -2515,8 +2539,11 @@ namespace EdgeLighting
             {
                 renderRingPass(fullResMvp, gatherUVFull, time, config);
             }
-            publishBuffers(centerFull, gatherRegion, scaledRegion, field.use || field.bake,
-                           ringField.use || ringField.bake, config);
+            // A field is this frame's when the composite read it or a bake
+            // just wrote it - never after a bake that failed (I66).
+            bufferUse.fieldRead = field.use || bufferUse.fieldWritten;
+            bufferUse.ringFieldRead = ringField.use || bufferUse.ringFieldWritten;
+            publishBuffers(centerFull, gatherRegion, scaledRegion, bufferUse, config);
         }
 
         // Restore a known blend state for following renderers.
@@ -4831,44 +4858,45 @@ namespace EdgeLighting
     }
 
     void NeonRenderer::publishBuffers(const glm::vec2 &centerFull, const BufferRegion &gatherRegion,
-                                      const BufferRegion &scaledRegion, bool fieldRead, bool ringFieldRead,
-                                      const Config &config)
+                                      const BufferRegion &scaledRegion, const BufferUse &use, const Config &config)
     {
         // In pass order. A buffer this frame did not allocate has texture 0,
-        // which the registry drops, so nothing here has to test for one.
+        // which the registry never reports current, so nothing here has to
+        // test for one.
         if (mEmission.bake.baked)
         {
-            publishBuffer(mEmission.buffer);
+            MarkBufferCurrent(mBufferRecords.emission, use.emissionWritten);
         }
         // The coverage table only where the shading reads it - a ring lit
         // uniformly keeps the last one it baked, unread, until Update
         // releases it.
-        if (!IsGlowCoverUnread(mEffectiveSegments, config))
+        if (use.glowCoverRead)
         {
-            publishBuffer(mGlowCover.buffer);
-            publishBuffer(mGlowCover.segBuffer);
+            MarkBufferCurrent(mBufferRecords.glowCover, use.glowCoverWritten);
+            MarkBufferCurrent(mBufferRecords.glowCoverSegments, use.glowCoverWritten);
         }
         // Region origins are rect-local full-res px: from the rect's centre.
         // The gather's second attachment holds the segments' hue and coverage.
         const glm::vec2 gatherOrigin = centerFull + gatherRegion.origin;
-        publishBuffer(mGather.buffer, gatherOrigin, gatherRegion.size);
-        publishBuffer(mGather.buffer, gatherOrigin, gatherRegion.size, 1);
-        if (fieldRead)
+        MarkBufferCurrent(mBufferRecords.gather, gatherOrigin, gatherRegion.size, use.gatherWritten);
+        MarkBufferCurrent(mBufferRecords.gatherSegments, gatherOrigin, gatherRegion.size, use.gatherWritten);
+        if (use.fieldRead)
         {
             // Where pass 1c reads it: the region its bake recorded, in scaled
             // px. A bake at another scale or centre is never read, since
             // either change re-bakes before the composite runs again.
             const float scale = GetClampedResolutionScale(config);
             const glm::vec2 texels(mGlowField.buffer.GetWidth(), mGlowField.buffer.GetHeight());
-            publishBuffer(mGlowField.buffer, centerFull + mGlowField.origin / scale,
-                          texels / (mGlowField.texelScale * scale));
+            MarkBufferCurrent(mBufferRecords.field, centerFull + mGlowField.origin / scale,
+                              texels / (mGlowField.texelScale * scale), use.fieldWritten);
         }
-        publishBuffer(mScaledBuffer, centerFull + scaledRegion.origin, scaledRegion.size);
+        MarkBufferCurrent(mBufferRecords.scaled, centerFull + scaledRegion.origin, scaledRegion.size,
+                          use.scaledWritten);
         // Four strips packed into an atlas (RingFieldLayout), so no one box
         // of the frame - a table.
-        if (ringFieldRead)
+        if (use.ringFieldRead)
         {
-            publishBuffer(mRingField.buffer);
+            MarkBufferCurrent(mBufferRecords.ringField, use.ringFieldWritten);
         }
     }
 

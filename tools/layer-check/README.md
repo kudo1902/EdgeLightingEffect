@@ -26,7 +26,7 @@ line per fact:
 | `hash SCENE FRAME HEX` | FNV-1a 64 of the frame's RGBA, for each of the 4 frames after the config is set (dt 1/60) |
 | `mem SCENE TEX BUF` | bytes of GL textures and buffers alive after those frames, from `glTexImage2D` / `glBufferData` |
 | `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) in each of 8 more frames - the GL driver's included (below) |
-| `published NAME#N WxH chC` | what the all-layers frame published to the buffer registry |
+| `published NAME#N WxH chC` | each buffer the all-layers frame left current in the buffer registry - key `NAME[N]`, or `NAME` for N = 0; the `#N` form is S0's, kept so reports from either side of the string keys compare |
 
 The scenes:
 
@@ -38,7 +38,7 @@ The scenes:
 - Droplets.
 - The debug overlays, still and during a colour-stop cross-fade.
 - All five layers at once below 1.0.
-- The debug view on every buffer that frame publishes.
+- The debug view on every buffer current in that frame.
 
 **The allocation counts are not the library's alone.** The tool replaces the
 global `operator new`, and on macOS that also catches Apple's GL stack, which

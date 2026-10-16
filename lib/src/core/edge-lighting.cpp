@@ -16,17 +16,14 @@ namespace EdgeLighting
 
     EdgeLightingEffect::EdgeLightingEffect()
         : mAnimationManager(std::make_unique<AnimationManager>()),
-          mBufferRegistry(std::make_shared<BufferRegistry>()),
           mResourceContext(std::make_shared<ResourceContext>())
     {
     }
 
-    EdgeLightingEffect::~EdgeLightingEffect()
-    {
-        // A renderer the host kept holds the registry past this point, and its
-        // records point into the renderers this destructor is about to free.
-        mBufferRegistry->Clear();
-    }
+    // Nothing to clear in the registry: each renderer freed here takes its own
+    // records out of it (~BaseRenderer), and one the host kept still owns
+    // live buffers, which it may go on drawing into the same context.
+    EdgeLightingEffect::~EdgeLightingEffect() = default;
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -47,13 +44,9 @@ namespace EdgeLighting
                 ++it;
             }
         }
-        // A second call can drop a renderer that published last frame, and the
-        // erase may have freed it. The next Render clears the registry anyway,
-        // but between frames a record must not point into a dead renderer.
-        if (!allOk)
-        {
-            mBufferRegistry->Clear();
-        }
+        // A renderer the erase above freed has taken its buffer records with
+        // it (~BaseRenderer); one the host still holds keeps them, and they
+        // point into a renderer that is alive.
         // From here on AddRenderer has to initialise what it is handed - this
         // loop is not coming round again for it.
         mInitialized = true;
@@ -74,8 +67,9 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        // Only this frame's buffers: a layer that draws nothing lists nothing.
-        mBufferRegistry->Clear();
+        // A new frame: no buffer is current until its producer marks it, so a
+        // layer that draws nothing has nothing current.
+        mResourceContext->GetBufferRegistry().BeginFrame();
         float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
@@ -94,7 +88,10 @@ namespace EdgeLighting
     }
 
     const Config &EdgeLightingEffect::GetConfig() const { return mBaseConfig; }
-    const BufferRegistry &EdgeLightingEffect::GetBufferRegistry() const { return *mBufferRegistry; }
+    const BufferRegistry &EdgeLightingEffect::GetBufferRegistry() const
+    {
+        return mResourceContext->GetBufferRegistry();
+    }
     const Config &EdgeLightingEffect::GetActiveConfig() const { return mActiveConfig; }
 
     void EdgeLightingEffect::Attach(const AnimationPtr &a) { mAnimationManager->Attach(a); }
@@ -116,7 +113,8 @@ namespace EdgeLighting
         // - the same contract Initialize applies to the batch.
         //
         // The context goes first, so a renderer initialised here builds its
-        // programs from the stages the others compiled, like the rest.
+        // programs from the stages the others compiled, like the rest, and
+        // its buffers are listed from the moment it joins.
         renderer->SetResourceContext(mResourceContext);
         if (mInitialized && !renderer->Initialize())
         {
@@ -126,7 +124,6 @@ namespace EdgeLighting
             return;
         }
 
-        renderer->SetBufferRegistry(mBufferRegistry);
         mRenderers.push_back(renderer);
         // Hand over the current composited config, not the base: a renderer
         // joining mid-animation should see what every other renderer sees.
