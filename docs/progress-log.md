@@ -5,9 +5,32 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S5b: the debug strip reads the neon's live ring
+## 2026-10-16 - Sharing plan S6a: one copy of the glow's edge mask
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S5b (`02bfedc`). AMD Radeon Pro 5300M, Debug build. Section 7.8 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - `lib/shaders/neon-mask.glsl` holds the one-sided cut and the cutoffs as
+    coverage. Three copies used to carry them by hand: the blit, the edge
+    ring in `neon.frag`, and the ring field's composite.
+  - It is injected into all three after `neon-sdf.glsl`.
+  - The blit is one `neonEdgeMask` call. The ring and the field composite
+    multiply its three factors one at a time, as before, so no float product
+    reassociates.
+  - It is the mask a reader of the glow product (S6b) will apply.
+- **Measured.**
+  - All 252 `layer-check` frames identical to S5b.
+  - `check` and `partition` pass.
+  - No "uniform not found" line from any program; memory and allocations
+    unchanged.
+- **Next.** S6b, `NeonRenderer.Glow` as a PUBLIC product with its contract.
+  Then S6c, droplets lit by the glow.
+
+## 2026-10-16 - Sharing plan S5b: the debug strip reads the neon's live ring
+
+Committed as `02bfedc`, on `design_system_sharing_resources_between_renderers`, measured
 against S5a (`186bc48`). AMD Radeon Pro 5300M, Debug build. Section 7.7 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

@@ -64,12 +64,9 @@ precision highp float;
 // also why the neon's tuning header is injected into this shader (see
 // shaders.h.in) and not into that one.
 //
-// These three values are the ordinals of EdgeLighting::GlowSide, which
-// neon-renderer.cpp casts straight to an int. The two numberings are one
-// numbering, kept in step by hand: renumber the enum and these follow.
-#define GLOW_SIDE_BOTH    0
-#define GLOW_SIDE_INSIDE  1
-#define GLOW_SIDE_OUTSIDE 2
+// GLOW_SIDE_* and the mask itself are neon-mask.glsl's, injected ahead of
+// this file - the one copy neon.frag's edge ring and the ring field's
+// composite apply too.
 
 in vec2 vPos;
 out vec4 fragColor;
@@ -110,11 +107,12 @@ void main() {
     vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
     vec4 src = texture(uSource, uv); // premultiplied colour + coverage alpha
 
-    // GlowSide::BOTH pays nothing, and the branch that arranges that is safe
-    // BECAUSE uGlowSide IS A UNIFORM: every invocation in the draw takes the
-    // same side, helper invocations included, which is the "uniform control
-    // flow" a derivative is allowed to sit inside. The rule it must not break
-    // is a derivative under control flow that varies BETWEEN fragments.
+    // GlowSide::BOTH pays nothing, and the branch that arranges that
+    // (neonEdgeMaskLive, inside neonEdgeMask) is safe BECAUSE uGlowSide IS A
+    // UNIFORM: every invocation in the draw takes the same side, helper
+    // invocations included, which is the "uniform control flow" a derivative
+    // is allowed to sit inside. The rule it must not break is a derivative
+    // under control flow that varies BETWEEN fragments.
     //
     // Not the same shape as the early returns black-rect.frag's main() warns
     // about at length, and measured not to behave like them. Those sat ABOVE
@@ -128,52 +126,12 @@ void main() {
     // The cutoffs join the same branch, on the same terms: whether a side is
     // live is a function of uniforms alone, so control flow stays uniform and
     // a config with neither a cut nor a cutoff - the default - still pays only
-    // the texture read. A side is live when it is enabled AND glowSide does not
-    // already cull it; neon.frag neutralises exactly that side (its band
-    // distance block), because the cut subsumes it.
-    bool cutIn  = uGlowSide != GLOW_SIDE_OUTSIDE && uInsideCutoff  < 0.5 * CUTOFF_NEUTRALISED;
-    bool cutOut = uGlowSide != GLOW_SIDE_INSIDE  && uOutsideCutoff < 0.5 * CUTOFF_NEUTRALISED;
-    float cut = 1.0;
-    if (uGlowSide != GLOW_SIDE_BOTH || cutIn || cutOut)
-    {
-        vec2  p        = gl_FragCoord.xy - uRectCenter;
-        vec2  halfSize = uRectSize * 0.5;
-        float d        = sdRoundBox(p, halfSize, uCornerRadius);
-        float aa       = max(sdRoundBoxFwidth(p, halfSize, uCornerRadius), 1e-6);
-        float soft     = max(uGlowSideSoftness, aa);
-        float back     = 0.5 * aa;
-
-        // Same anchor, same floor, same curve as neon.frag's post-grade cut -
-        // see the derivation there. Keep the two in step; they are one edge,
-        // written twice because only one of them ever runs.
-        if (uGlowSide == GLOW_SIDE_INSIDE)
-        {
-            cut = 1.0 - smoothstep(back - soft, back, d);
-        }
-        else if (uGlowSide == GLOW_SIDE_OUTSIDE)
-        {
-            cut = smoothstep(-back, soft - back, d);
-        }
-
-        // Same again for the cutoffs: neon.frag's masks after the grade, with
-        // its direct-path floor - one destination pixel, which is what aa is
-        // here. Midpoints softness/2 past each cutoff, ramps centred on them
-        // and spanning the floored softness, so each starts at its cutoff and
-        // ends softness past it. A dead side gets the neutral distance and its
-        // smoothstep saturates to exactly 1.
-        if (cutIn || cutOut)
-        {
-            float inHalf  = 0.5 * max(uInsideCutoffSoftness,  aa);
-            float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
-            float inMid   = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
-            float outMid  = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
-            float dIn     = cutIn  ? d + inMid : CUTOFF_NEUTRALISED;
-            float dOut    = cutOut ? bandOuterDistance(p, d, halfSize, uCornerRadius, outMid)
-                                   : -CUTOFF_NEUTRALISED;
-            cut *= smoothstep(-inHalf, inHalf, dIn);
-            cut *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
-        }
-    }
+    // the texture read. A cutoff on the side the cut already culls is
+    // neutralised (neonEdge), as neon.frag neutralises it, because the cut
+    // subsumes it; a disabled one saturates its ramp to exactly 1.
+    float cut = neonEdgeMask(gl_FragCoord.xy - uRectCenter, uRectSize * 0.5, uCornerRadius, uGlowSide,
+                             uGlowSideSoftness, uInsideCutoff, uInsideCutoffSoftness, uOutsideCutoff,
+                             uOutsideCutoffSoftness);
 
     // Applied to the premultiplied sample, so colour and coverage scale
     // together and the layer thins out as a whole rather than dimming while it

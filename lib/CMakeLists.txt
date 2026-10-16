@@ -39,6 +39,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-mask.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
@@ -114,6 +115,12 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
 # @NEON_TUNING@. One copy each; neither is a shader on its own.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl" NEON_SDF)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl" NEON_GRADE)
+
+# The glow's edge mask - the one-sided cut and the cutoffs, as coverage after
+# the tone map - via @NEON_MASK@ into the three programs that apply it
+# (neon.frag's edge ring, neon-blit.frag, neon-field.frag's ring composite),
+# after @NEON_SDF@, whose distances it reads. One copy; not a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-mask.glsl" NEON_MASK)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).

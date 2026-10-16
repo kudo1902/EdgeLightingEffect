@@ -8,8 +8,9 @@ shared shader cache.
 
 **Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
 (2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`), S4 (2026-10-16,
-`7584bdb`), S5a, the shared quad (2026-10-16, `186bc48`), and S5b, the
-gradient ring (2026-10-16, uncommitted).** Section 7 has what each measured.
+`7584bdb`), S5a, the shared quad (2026-10-16, `186bc48`), S5b, the
+gradient ring (2026-10-16, `02bfedc`), and S6a, the mask chunk (2026-10-16,
+uncommitted).** Section 7 has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -868,4 +869,47 @@ Measured on an AMD Radeon Pro 5300M against S5a (`186bc48`).
 
   The strip visible throughout is byte-identical between S5a and S5b.
 - `neon-scale-check check` and `partition` pass.
+
+### 7.8 S6a - the mask chunk
+
+`lib/shaders/neon-mask.glsl` is the glow's edge mask: the one-sided cut and
+the cutoffs, as coverage after the tone map. It holds:
+
+- `GLOW_SIDE_*`;
+- `NeonEdge`, with `neonEdge` - the edge distance, the cut's feather and
+  anchor, each cutoff's ramp half-width and midpoint, and the two band
+  distances, neutralised on a side the cut culls;
+- the three factors, `neonSideCut`, `neonInsideCutoff` and
+  `neonOutsideCutoff`;
+- `neonEdgeMaskLive` - whether any factor can be other than 1, a function of
+  uniforms, so the branch on it stays uniform control flow;
+- `neonEdgeMask`, the whole mask at a pixel.
+
+`shaders.h.in` injects it after `neon-sdf.glsl` into `neon.frag`,
+`neon-blit.frag` and `neon-field.frag`, the three programs that carried the
+mask by hand. Each now calls the chunk:
+
+- `neon-blit.frag` is one `neonEdgeMask` call.
+- The ring field's composite multiplies the three factors in one at a time.
+- `neon.frag` builds a `NeonEdge` at the top of `main`. Its discards (the
+  cut's cull, pass 1b's guard bands) and its bloom and quad fades read it,
+  and after the grade the ring multiplies the factors in one at a time.
+
+The factors stay separate functions rather than one product: the ring and the
+field composite multiply them into their colour one at a time, the blit as one
+product, and a float product is not associative.
+
+Measured on an AMD Radeon Pro 5300M against S5b (`02bfedc`):
+
+- **Frames**: all 252 identical to S5b, Debug build - the one-sided and
+  cutoff scenes, and the debug view of the reduced buffer, among them.
+- `neon-scale-check check` and `partition` pass: 1,000 configs, 0 px
+  overlapping, 0 px of seam.
+- **Memory and allocations**: unchanged.
+- **Uniforms**: no "uniform not found" line from any program. The field bake
+  reads `uGlowSideSoftness` only into a struct field nothing reads past its
+  return, as before (I63).
+
+`black-rect.frag` keeps its own band logic: the fill's cutoffs are the fill's
+own config, and its edge is the fill's silhouette, not the glow's coverage.
 

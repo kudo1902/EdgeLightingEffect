@@ -6,9 +6,8 @@
 // Tuning constants
 // ---------------------------------------------------------------------------
 
-#define GLOW_SIDE_BOTH    0
-#define GLOW_SIDE_INSIDE  1
-#define GLOW_SIDE_OUTSIDE 2
+// GLOW_SIDE_BOTH / _INSIDE / _OUTSIDE are neon-mask.glsl's, injected ahead
+// of this file with the mask they number.
 
 // All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
 // are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
@@ -650,96 +649,47 @@ void main() {
     // top if a second one is ever needed.
     float sideAA = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius) * uResolutionScale, 1e-6);
 
-    // TOTAL feather width of the one-sided cut, floored at that pixel - the
-    // floor is what antialiases the cut, and only because the ramp is applied
-    // BELOW the tone map, as coverage.
-    float sideSoft = max(uGlowSideSoftness, sideAA);
+    // The mask's edges - the one-sided cut's feather and anchor, and each
+    // cutoff's ramp, midpoint and distance - from neon-mask.glsl, the one copy
+    // the blit and the ring field's composite share: one edge, whichever
+    // program draws it. Every width is floored at sideAA, one DESTINATION
+    // pixel: without it a cut or a cutoff is a binary edge, a staircase
+    // wherever the boundary curves. Below 1.0 the masks are the blit's, and
+    // here these only place the discards, which have to agree with its ramps.
+    NeonEdge edge = neonEdge(vPos, d, halfSize, uCornerRadius, sideAA, uGlowSide, uGlowSideSoftness,
+                             uInsideCutoff, uInsideCutoffSoftness, uOutsideCutoff, uOutsideCutoffSoftness);
+    float inHalf  = edge.inHalf;
+    float outHalf = edge.outHalf;
+    float inMid   = edge.inMid;
+    float outMid  = edge.outMid;
 
-    // How far the ramp reaches back across the line: half a pixel, exactly as
-    // far as the fill's own box filter reaches (black-rect.frag), so the two
-    // share one ramp. The cut is ANCHORED at the line and feathers INTO the lit
-    // side, never back past the fill.
-    //
-    // THE RING ONLY. A buffer texel lit at its centre is smeared over 1/scale
-    // destination pixels both ways by the blit, so for pass 1b neon-blit.frag
-    // applies the cut from ITS pixel width, and what is left here is the CULL,
-    // BLIT_SIDE_GUARD_PX past the cut so the blit has lit texels to rebuild
-    // the boundary from (neon-tuning.h).
+    // The CUT: THE RING ONLY. A buffer texel lit at its centre is smeared
+    // over 1/scale destination pixels both ways by the blit, so for pass 1b
+    // neon-blit.frag applies the cut from ITS pixel width, and what is left
+    // here is the CULL, BLIT_SIDE_GUARD_PX past the cut so the blit has lit
+    // texels to rebuild the boundary from (neon-tuning.h).
     bool  blitOwnsCut = (uBlitOwnsCut != 0);
-    float sideBack = 0.5 * sideAA;
-    float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
+    float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : edge.sideBack;
     // Deliberately NOT mirrored in neon-gather.frag - see the note at its top.
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
 
-    // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff];
-    // each side's feather STARTS at that boundary and runs its softness beyond
+    // Hard geometric CUTOFFS. The band is [-uInsideCutoff, +uOutsideCutoff];
+    // each side's feather starts at that boundary and runs its softness beyond
     // it, and anything past the feather is culled, so the glow cannot leak past
     // the stated reach whatever uGlowRadius says. Softness is per side and
-    // decoupled from uGlowSideSoftness. Disabled sides arrive as a huge
-    // sentinel, so these no-op.
+    // decoupled from uGlowSideSoftness. A disabled side arrives as a huge
+    // sentinel, and one the cut culls is neutralised (neonEdge), so neither
+    // discards.
     //
-    // The floor is an ANTIALIASING floor, one DESTINATION pixel (sideAA - no
-    // second derivative) on both paths: without it a cutoff is a binary edge, a
-    // staircase wherever the boundary curves. Below 1.0 the masks are the
-    // blit's; here the floor only places the discards, which have to agree with
-    // the blit's ramp.
-    float softFloor = sideAA;
-    float inSoft  = max(uInsideCutoffSoftness,  softFloor);
-    float outSoft = max(uOutsideCutoffSoftness, softFloor);
-
-    // TOTAL widths, halved because each ramp is centred on the midpoint of its
-    // fade (inMid / outMid): smoothstep(-w, w, x) spans 2w, and the unhalved
-    // form feathered over twice the stated softness, off from an OpaqueMode
-    // fill sharing the boundary.
-    float inHalf  = 0.5 * inSoft;
-    float outHalf = 0.5 * outSoft;
-
-    // WHERE each fade sits: it starts at the cutoff and runs the requested
-    // softness beyond it, so its MIDPOINT is softness/2 past the cutoff, and
-    // the ramps are built symmetrically about it over the floored width. Below
-    // the floor the ramp stays centred on the requested fade, so at softness 0
-    // the edge's 50% point is the cutoff itself at every resolution scale.
-    // Disabled and neutralised sides need no branch here.
-    float inMid  = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
-    float outMid = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
-
-    // Band boundaries measured against the offset rect, so a cornerRadius-0
-    // band keeps square corners.
-    //
-    // A CUTOFF ON THE SIDE glowSide ALREADY CULLS IS NEUTRALISED - handed the
-    // same huge distance a disabled one gets - so every use below no-ops
-    // through the arithmetic. It never binds the silhouette there, but it was
-    // not harmless: on the scaled path it ate the blit's guard band (a dark
-    // seam), and at full res it squared the shared boundary.
-    // NeonRenderer::setupGeometry mirrors this: the same redundant cutoff must
-    // not shrink the quad's hole into the guard band either.
-    float dOut;
-    float dIn;
-    if (uGlowSide == GLOW_SIDE_INSIDE)
-    {
-        dOut = -CUTOFF_NEUTRALISED;
-    }
-    else
-    {
-        dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, outMid);
-    }
-    if (uGlowSide == GLOW_SIDE_OUTSIDE)
-    {
-        dIn = CUTOFF_NEUTRALISED;
-    }
-    else
-    {
-        dIn = bandInnerDistance(d, inMid);
-    }
     // For pass 1b the blit owns the masks as well as the cut, and rebuilds
     // each boundary from the buffer texels around it - so the cull runs
     // BLIT_CUTOFF_GUARD_PX past the end of the ramp rather than at it, for the
     // reason sideCull does. The guard is an exact 0 for the ring, which keeps
     // culling exactly where its own masks end.
     float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
-    if (dOut >  outHalf + cutGuard ) discard;
-    if (dIn  < -(inHalf + cutGuard)) discard;
+    if (edge.dOut >  outHalf + cutGuard ) discard;
+    if (edge.dIn  < -(inHalf + cutGuard)) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile: core(ad) = exp(-ln(2) * (ad / sigma)^N),
@@ -1203,7 +1153,7 @@ void main() {
 
     // --- One-sided cut: mask the WHOLE layer at the line --------------
     // Anchored at the opaque fill's own edge and feathered INTO the lit side
-    // (sideAA / sideSoft / sideBack at the top of main()).
+    // (neonSideCut, neon-mask.glsl, from the edge built at the top of main()).
     //
     // BELOW THE GRADE: the cut is COVERAGE, so it scales what reaches the
     // framebuffer. Above the tone map it was nearly annihilated - a
@@ -1211,17 +1161,13 @@ void main() {
     // channel) occluded at 0.94 instead of 0.5. Below it, the cut is the 1 px
     // box filter and tracks the fill it has to register with.
     //
-    // Written as `1.0 - smoothstep(lo, hi, d)` for the INSIDE arm rather than
-    // smoothstep(hi, lo, d): edge0 > edge1 is UNDEFINED in GLSL. Same curve,
-    // portably.
-    //
-    // THE RING ONLY: for pass 1b neon-blit.frag applies this exact expression
-    // against ITS own pixel width, and the ring field's composite (neon-field.frag)
-    // applies it for the ring's field. Keep the three in step - one edge.
+    // THE RING ONLY: for pass 1b neon-blit.frag applies the same mask
+    // against ITS own pixel width, and the ring field's composite
+    // (neon-field.frag) applies it for the ring's field - all three from
+    // neon-mask.glsl, one edge. Exactly 1 for GLOW_SIDE_BOTH.
     if (!blitOwnsCut)
     {
-        if (uGlowSide == GLOW_SIDE_INSIDE)       result *= 1.0 - smoothstep(sideBack - sideSoft, sideBack, d);
-        else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-sideBack, sideSoft - sideBack, d);
+        result *= neonSideCut(edge, uGlowSide);
     }
 
     // --- Hard cutoff masks: close the band at its two boundaries ------
@@ -1235,11 +1181,11 @@ void main() {
     // THE RING ONLY: for pass 1b neon-blit.frag applies these same two ramps at
     // destination resolution, from BLIT_CUTOFF_GUARD_PX of lit texels the
     // discards leave it, and the ring field's composite applies them for the
-    // ring's field. Keep the three in step - one edge.
+    // ring's field - all from neon-mask.glsl.
     if (!blitOwnsCut)
     {
-        result *= smoothstep(-inHalf, inHalf, dIn);
-        result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+        result *= neonInsideCutoff(edge);
+        result *= neonOutsideCutoff(edge);
     }
 
     // Premultiplied-alpha output so the effect composites over arbitrary

@@ -65,10 +65,7 @@ uniform vec2      uRingRows;    ///< First atlas row of the left strip and of th
 
 // The one-sided cut and the cutoffs, as the ring's own shading takes them
 // (uploadNeonUniforms at scale 1.0): full-res px, a disabled cutoff at
-// CUTOFF_NEUTRALISED.
-#define GLOW_SIDE_BOTH    0
-#define GLOW_SIDE_INSIDE  1
-#define GLOW_SIDE_OUTSIDE 2
+// CUTOFF_NEUTRALISED. GLOW_SIDE_* and the mask are neon-mask.glsl's.
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform int   uGlowSide;
@@ -136,53 +133,23 @@ void main() {
 #ifdef NEON_FIELD_RING
     // The one-sided cut and the cutoffs, which the ring's own shading applies
     // after its tone map as coverage (neon.frag at scale 1.0, where
-    // blitOwnsCut is false): the same expressions, term for term - keep them
-    // in step with neon.frag's, and with neon-blit.frag's below 1.0. The field
+    // blitOwnsCut is false): the same functions, from neon-mask.glsl. The field
     // holds Fa from before them (NEON_FIELD_BAKE returns at the grade), and
     // what neon.frag discarded ahead of them is a 0 texel, which composites to
     // nothing. Skipped on a uniform when neither is set: every factor is then
     // exactly 1 (a disabled side's sentinel saturates its smoothstep). The
     // derivative is in uniform control flow, so defined.
-    if (uGlowSide != GLOW_SIDE_BOTH || uInsideCutoff < 0.5 * CUTOFF_NEUTRALISED ||
-        uOutsideCutoff < 0.5 * CUTOFF_NEUTRALISED)
+    if (neonEdgeMaskLive(uGlowSide, uInsideCutoff, uOutsideCutoff))
     {
         vec2  halfSize = uRectSize * 0.5;
         float d        = sdRoundBox(vPos, halfSize, uCornerRadius);
         float sideAA   = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius), 1e-6);
-        float sideSoft = max(uGlowSideSoftness, sideAA);
-        float sideBack = 0.5 * sideAA;
-        float inHalf   = 0.5 * max(uInsideCutoffSoftness,  sideAA);
-        float outHalf  = 0.5 * max(uOutsideCutoffSoftness, sideAA);
-        float inMid    = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
-        float outMid   = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
-        float dOut;
-        float dIn;
-        if (uGlowSide == GLOW_SIDE_INSIDE)
-        {
-            dOut = -CUTOFF_NEUTRALISED;
-        }
-        else
-        {
-            dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, outMid);
-        }
-        if (uGlowSide == GLOW_SIDE_OUTSIDE)
-        {
-            dIn = CUTOFF_NEUTRALISED;
-        }
-        else
-        {
-            dIn = bandInnerDistance(d, inMid);
-        }
-        if (uGlowSide == GLOW_SIDE_INSIDE)
-        {
-            result *= 1.0 - smoothstep(sideBack - sideSoft, sideBack, d);
-        }
-        else if (uGlowSide == GLOW_SIDE_OUTSIDE)
-        {
-            result *= smoothstep(-sideBack, sideSoft - sideBack, d);
-        }
-        result *= smoothstep(-inHalf, inHalf, dIn);
-        result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+        NeonEdge edge  = neonEdge(vPos, d, halfSize, uCornerRadius, sideAA, uGlowSide, uGlowSideSoftness,
+                                  uInsideCutoff, uInsideCutoffSoftness, uOutsideCutoff, uOutsideCutoffSoftness);
+        // One factor at a time, as the ring's own shading multiplies them.
+        result *= neonSideCut(edge, uGlowSide);
+        result *= neonInsideCutoff(edge);
+        result *= neonOutsideCutoff(edge);
     }
 #endif
 
