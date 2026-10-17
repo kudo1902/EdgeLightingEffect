@@ -509,9 +509,8 @@ shaded a second time, at this scale, so the line keeps its sampling floor there
 - a layer's declared read, the debug buffer view, or a C++ host's
 `EdgeLightingEffect::AddHostRead(NeonRenderer::COMPOSITE_KEY)` - and then only
 on frames the neon's offscreen passes run; reused while nothing moves, released
-at 0 or once unread for 5 s. At 1 the frame
-on screen becomes one copy of it - the layer drawn once, not twice - within 1
-level of drawing directly. Turning it on does not move the main frame. Memory at
+at 0 or once unread for 5 s. The frame on screen is never drawn from it, at any
+scale: turning it on does not move the main frame. Memory at
 1920 x 1080: 4.1 MB at 0.5, 16.6 MB at 1 (RGBA16F). Not yet in the C ABI.
 
 **`neon.numSamples`** (default 128)

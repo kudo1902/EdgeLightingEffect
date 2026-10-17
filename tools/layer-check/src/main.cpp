@@ -463,7 +463,6 @@ namespace
         ARC_WIPE,       ///< arcs[0].length sweeping, one SetConfig per frame.
         SEGMENT_TRAVEL, ///< segmentBoosts[0] moving round the ring, one SetConfig per frame.
         STOP_CHANGE,    ///< the colour stops replaced on the second frame, with a 0.5 s cross-fade.
-        OPAQUE_ONLY,    ///< debug.opaqueOnly switched on from the third frame on.
         SHARED_STEP,    ///< compositeScale stepped to 1 on every fourth frame from the second, else as configured.
     } Motion;
 
@@ -650,12 +649,16 @@ namespace
             // it - lists none; the main frame as neon/default@0.5's.
             add("shared/default@0.5+host-read", c, Motion::STILL);
             scenes.back().hostReads.push_back("NeonRenderer.Composite");
-            // At 1 the main frame is the copy (pass 2s): still, and redrawn
-            // every frame under a rotating hue.
+            // At 1: the buffer at full resolution, still and redrawn every
+            // frame under a rotating hue. Unread (no +view) it is not drawn,
+            // and the main frame must hash as neon/default@0.5's either way:
+            // the main frame is never drawn from it.
             c.neon.compositeScale = 1.0f;
             addShared("shared/default@1", c, Motion::STILL);
             c.neon.hueRotationRate = 0.5f;
-            add("shared/default@1+hue", c, Motion::HUE);
+            Config hue = c;
+            hue.debug.bufferView = "NeonRenderer.Composite";
+            add("shared/default@1+hue+view", hue, Motion::HUE);
         }
         {
             // The shared scale CHANGING, alone, under a reader: 0.5, then 1
@@ -671,18 +674,6 @@ namespace
             c.neon.compositeScale = 0.5f;
             c.debug.bufferView = "NeonRenderer.Composite";
             add("shared/default@0.5+step-to-1+view", c, Motion::SHARED_STEP);
-        }
-        {
-            // The copy under debug.opaqueOnly: once the flag is on, frames 2
-            // and 3 must equal shared/default@1+fill-only's - the fill alone,
-            // never the previous frame's whole layer.
-            Config c = NeonScene("default");
-            c.neon.resolutionScale = 0.5f;
-            c.neon.compositeScale = 1.0f;
-            c.neon.opaqueMode = OpaqueMode::INSIDE;
-            add("shared/default@1+opaque-only", c, Motion::OPAQUE_ONLY);
-            c.debug.opaqueOnly = true;
-            add("shared/default@1+fill-only", c, Motion::STILL);
         }
         {
             // A one-sided glow over a shaped fill at the floor scale: the cut's
@@ -731,11 +722,6 @@ namespace
         case Motion::SHARED_STEP:
         {
             c.neon.compositeScale = (frame % 4 == 1) ? 1.0f : start.neon.compositeScale;
-            break;
-        }
-        case Motion::OPAQUE_ONLY:
-        {
-            c.debug.opaqueOnly = frame >= 2;
             break;
         }
         case Motion::STOP_CHANGE:

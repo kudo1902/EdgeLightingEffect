@@ -272,9 +272,7 @@ namespace EdgeLightingDemo
         // debug panel's "Drawn at" line shows it.
         const float sharedAt = EdgeLighting::NeonRenderer::GetCompositeScale(config);
         std::cout << "Shared buffer " << std::setprecision(3) << sharedAt
-                  << (sharedAt <= 0.0f   ? " (off)"
-                      : sharedAt >= 1.0f ? " (NeonRenderer.Composite; the frame is a copy of it)"
-                                         : " (NeonRenderer.Composite, drawn while read)")
+                  << (sharedAt <= 0.0f ? " (off)" : " (NeonRenderer.Composite, drawn while read)")
                   << "\n";
 
         // -------------------------------------------------------------------

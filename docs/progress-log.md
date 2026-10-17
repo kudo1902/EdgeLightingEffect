@@ -5,6 +5,52 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - The shared buffer's scale-1 copy: timed, and removed
+
+At `compositeScale` 1 the main frame used to be one copy of the shared buffer
+(pass 2s) instead of being drawn directly - "the layer drawn once, not twice".
+It had grown a dozen special cases (its own program and mesh, pass 1r skipped
+and its field released, the RGBA8 exclusion, a first-draw stall on the way
+out) and had never been timed. Timed now, on an Apple M2 Pro, Release, 1920 x
+1080, `resolutionScale` 0.5, the twelve `neon-scale-check` scenes, medians of
+three rounds of `neon-scale-check time` (5 runs of 40 frames, best run):
+
+- V0: no shared buffer.
+- V1: `compositeScale` 1, the main frame the copy.
+- V2: `compositeScale` 1 read by the host, the main frame drawn directly (the
+  copy disabled in a scratch build) - what the product costs without the copy.
+
+| mode | V0 median | V1 / V0 | V1 / V2 (copy vs direct) |
+| ---- | --------- | ------- | ------------------------ |
+| still | 0.062 ms | 0.78 (0.55-0.98) | 0.74 (0.49-1.01) |
+| hue | 0.146 ms | 1.96 (1.28-2.64) | 1.15 (0.95-1.33) |
+| intensity | 0.086 ms | 2.56 (1.51-3.67) | 1.18 (0.92-1.42) |
+| arc-wipe | 0.376 ms | 1.26 (1.07-1.45) | 0.91 (0.68-1.07) |
+| segment-travel | 0.459 ms | 1.22 (1.05-1.40) | 0.93 (0.73-1.08) |
+
+Geomeans over the scenes, range in brackets. The copy wins where the direct
+ring is shaded from scratch every frame (still frames reuse the buffer and
+skip the ring; config-animated frames shade the ring once instead of twice)
+and loses where the direct ring keeps its field (hue, intensity) - the copy
+reads a full-resolution half-float buffer over the band. Mixed, and small in
+absolute terms (-0.02 ms still, +0.05 ms hue at 1080p), against a dozen
+special cases and a 16.6 MB buffer held whether anything read it or not.
+
+**Decided: removed.** The main frame is drawn directly at every scale; the
+shared buffer is a product only, made while something reads it, at 1 as at
+any other scale. Gone: `mFramePlan.mainFromComposite`, `copyPlanned`,
+`renderCompositeCopyPass`, `mCopyShader` and `NEON_BLIT_COPY`, the copy mesh
+and its boxes, the ring field's release while copying. The main frame is now
+byte-identical with the buffer on at every scale, 1 included.
+
+- `layer-check`: every frame identical to the report before, but
+  `shared/default@1`, which drew the copy and now hashes as
+  `neon/default@0.5`. The copy-only scenes (`+opaque-only`, `+fill-only`) are
+  gone; the scale-1 hue scene now reads the buffer (`+hue+view`). 300 frames
+  over 75 scenes. `partition` passes.
+- Not measured on the AMD Radeon Pro 5300M; on this evidence the decision
+  would need the AMD to show a clear win to be revisited.
+
 ## 2026-10-16 - The shared neon buffer (`NeonRenderer.Composite`): built, in progress
 
 On `design_system_sharing_resources_between_renderers`, uncommitted, on top of

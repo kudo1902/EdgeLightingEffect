@@ -273,9 +273,10 @@ object of its own:
 
 So only the ring band is shaded twice. It is undithered (a reader dithers when
 it writes 8 bits), reused on frames where nothing moved, and released at 0 or
-once unread for 5 s. At
-`s` = 1 the main frame becomes one copy of it, so the layer is drawn once
-instead of twice. Turning it on leaves the main frame byte-identical: its meshes
+once unread for 5 s. The main frame is never drawn from it - not even at `s` =
+1, where a copy of it once stood in for the main frame and was measured and
+removed (progress log, 2026-10-17). Turning it on leaves the main frame
+byte-identical: its meshes
 are clamped to the main frame's area, so the main frame's buffers do not grow.
 
 ### 4.6 One quad

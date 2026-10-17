@@ -58,14 +58,13 @@ The scenes:
     `published-in` line for `NeonRenderer.Composite#0`, and its main frame
     must hash as `neon/default@0.5`'s - drawing the buffer moves no
     main-frame pixel.
-  - `shared/default@1`, still and `+hue`: the main frame as the copy (pass 2s).
+  - `shared/default@1`, still, and `+hue+view`: the buffer at full
+    resolution. Unread, `shared/default@1` must hash as `neon/default@0.5`:
+    the main frame is never drawn from the buffer.
   - `shared/default@0.5+step-to-1+view`: the shared scale alone changing
     under a reader - 0.5, 1, 0.5, 0.5. Frame 0 must hash as
     `shared/default@0.5+view`'s frame 0, frame 1 as `shared/default@1+view`'s,
     frames 2 and 3 as `shared/default@0.5+view`'s.
-  - `shared/default@1+opaque-only`: `debug.opaqueOnly` switched on from the
-    third frame. Frames 2 and 3 must hash as `shared/default@1+fill-only`'s -
-    the fill alone, never the previous frame's copy.
   - `shared/outside@0.4` and `@0.25`: a one-sided glow over a shaped fill at
     the floor scale (`NeonConfig::COMPOSITE_MIN_SCALE`). 0.25 is drawn at the
     floor, so every frame of the pair must hash alike.

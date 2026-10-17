@@ -453,12 +453,8 @@ namespace EdgeLighting
         /// Drawn only while something reads it - a layer's declared read, or a
         /// host's @c EdgeLightingEffect::AddHostRead - and then only on a
         /// frame the neon's own offscreen passes run; a frame where nothing
-        /// moved reuses it.
-        ///
-        /// At 1 the neon's main frame becomes one copy of it, read or not -
-        /// the main frame is then its reader: the layer is drawn once, into
-        /// this buffer, instead of twice (half float only; in the RGBA8
-        /// fallback the main frame is drawn directly).
+        /// moved reuses it. The main frame is never drawn from it, at any
+        /// scale: setting this moves no pixel of the neon's own output.
         ///
         /// Memory: an RGBA16F buffer (RGBA8 where the driver will not render
         /// half float) covering the viewport at this scale: 4.1 MB at 0.5 at

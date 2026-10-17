@@ -269,9 +269,8 @@ namespace EdgeLighting
         constexpr float GLOW_COVER_RELEASE_SECONDS = 5.0f;
 
         /// How long, in seconds of frame time, the shared buffer
-        /// (COMPOSITE_KEY) may go unwanted - no reader, scale below 1 - before
-        /// Update releases it, and how long the edge ring's field may go
-        /// unread while the main frame is the shared buffer's copy. Its own
+        /// (COMPOSITE_KEY) may go unwanted - no reader - before Update
+        /// releases it. Its own
         /// constant, not the coverage table's, which is calibrated against an
         /// arc animation's loop: long enough that a reader toggled on and off
         /// (a debug view, a host polling) does not reallocate 4-17 MB each
@@ -2322,7 +2321,6 @@ namespace EdgeLighting
         mRingField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mComposite.ringMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mComposite.blitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-        mComposite.copyMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         // The atlas bakes and the glow quad's interior hole read the merged
         // transient+preserved view, which OnConfigChanged normally keeps
@@ -2384,7 +2382,7 @@ namespace EdgeLighting
         }
 
         // The shared buffer likewise, once nothing has read it for as long:
-        // pass 1s runs only while it is wanted (a reader, or scale 1), so a
+        // pass 1s runs only while a reader declares it, so a
         // buffer no reader binds any more holds 4-17 MB for nothing. The same
         // delay, so a reader that comes and goes does not reallocate it each
         // time. Released, a later reader gets it redrawn on its first frame.
@@ -2402,38 +2400,12 @@ namespace EdgeLighting
                 mComposite.unwantedSeconds = 0.0f;
             }
         }
-
-        // The edge ring's field, while the main frame is the copy (pass 2s):
-        // the ring is not drawn on the caller's framebuffer then, so nothing
-        // reads the field (RenderOffscreen does not even decide it). Given
-        // back after the same delay, with its schedule, so a frame back on
-        // the direct path bakes it afresh rather than trusting a bake from
-        // before.
-        if (!mRingField.buffer.IsValid() || !mFramePlan.mainFromComposite)
-        {
-            mComposite.copySeconds = 0.0f;
-        }
-        else
-        {
-            mComposite.copySeconds += std::max(deltaTime, 0.0f);
-            if (mComposite.copySeconds >= COMPOSITE_RELEASE_SECONDS)
-            {
-                mRingField.buffer.Release();
-                mRingField.schedule.current = false;
-                mComposite.copySeconds = 0.0f;
-            }
-        }
     }
 
     void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
-        // Nothing for Render to composite until the glow's passes below say so
-        // - the shared buffer's copy included: the returns just below (layer
-        // off, debug.opaqueOnly) leave the plan as they find it, and a copy
-        // left on from the frame before drew that frame's whole layer, glow
-        // and all, over a fill-only frame.
+        // Nothing for Render to composite until the glow's passes below say so.
         mFramePlan.glowReady = false;
-        mFramePlan.mainFromComposite = false;
         // And nothing wants the shared buffer until the decision below says
         // so: a frame that returns early (layer off, fill only) reads it no
         // more than one that draws, so Update's idle release must count it.
@@ -2587,8 +2559,9 @@ namespace EdgeLighting
         }
         // The shared buffer (pass 1s, COMPOSITE_KEY), while its scale is
         // above 0 AND something reads it - a layer's CollectReads or the
-        // host's AddHostRead (IsBufferWanted) - or the scale is 1, where the
-        // main frame itself is its reader (pass 2s). Drawn on a frame the
+        // host's AddHostRead (IsBufferWanted). Never the main frame: that is
+        // always drawn directly (the copy it once was at scale 1 was measured
+        // and removed - docs/progress-log.md, 2026-10-17). Drawn on a frame the
         // offscreen passes run, and REUSED on one where nothing moved - it is
         // drawn from exactly what they hold, at its own scale over this
         // viewport, so the same buffers and the same viewport give the same
@@ -2596,42 +2569,23 @@ namespace EdgeLighting
         const float compositeScale = mComposite.scale;
         const glm::ivec2 compositeTexels = GetCompositeTexels(viewportWidth, viewportHeight, compositeScale);
         const bool compositeOn = glowReady && compositeScale > 0.0f && compositeScale == GetCompositeScale(config);
-        const bool compositeWanted = compositeOn &&
-                                     (compositeScale == 1.0f || IsBufferWanted(mBufferRecords.composite)) &&
-                                     ensureCompositePrograms();
+        const bool compositeWanted =
+            compositeOn && IsBufferWanted(mBufferRecords.composite) && ensureCompositePrograms();
         const bool compositeReused = compositeWanted && reuseOffscreen && mComposite.cache.drawn &&
                                      mComposite.cache.scale == compositeScale &&
                                      mComposite.cache.viewport == viewport &&
                                      mComposite.cache.texels == compositeTexels;
         const bool compositeDraw = compositeWanted && !compositeReused;
         bool compositeReady = compositeReused;
-        // Whether phase 2 is going to be the copy (pass 2s) - so the ring is
-        // not going to be drawn on the caller's framebuffer, and its field
-        // would be baked for nothing. Only from half float (mComposite.format
-        // 0, see mainFromComposite below) and with the copy built; a pass 1s
-        // that then fails draws the ring directly, which needs no field.
-        //
-        // KNOWN COST, accepted: while the copy stands in, the direct path's
-        // programs (mBlitShader, mRingShader, the ring field's) are built but
-        // never drawn, and this driver finishes a program's compile on its
-        // first draw in its real target and blend state (~125 ms on the AMD,
-        // see the field's first-frame rule). So the first frame back on the
-        // direct path - the shared scale lowered below 1, or the buffer
-        // fallen back to RGBA8 - pays that stall. Warming them here would
-        // mean drawing onto the caller's framebuffer, which the copy frame
-        // must not touch outside the copy; the transition is a host's
-        // configuration change, not an animation frame.
-        const bool copyPlanned =
-            compositeWanted && compositeScale == 1.0f && mComposite.format == 0 && ensureCopyProgram();
         mComposite.wanted = compositeWanted;
 
         // The edge ring factored the same way (pass 1r bakes its field, pass
         // 2r composites it in pass 2c's place), on a schedule of its own - it
         // serves configs the shading's field does not (a hue that is not
         // rotating) - and on still frames too, since the ring is re-shaded on
-        // every frame. Not on a frame phase 2 copies the shared buffer.
+        // every frame.
         LazyBake::Decision ringField;
-        if (glowReady && !copyPlanned && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
+        if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
             IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
         {
             const RingFieldLayout layout =
@@ -2825,14 +2779,6 @@ namespace EdgeLighting
         mFramePlan.gatherUVFull = gatherUVFull;
         mFramePlan.scaledUV = scaledUV;
         mFramePlan.ringField = ringField;
-        // At scale 1 the shared buffer is the main frame: phase 2 copies it.
-        // Only from half float (SCALED_FORMATS' first tier): in the RGBA8
-        // fallback the buffer's slow gradients are 8-bit plateaus before the
-        // copy dithers them, and noise on an exact level rounds back to it -
-        // R7's contour rings, round a ring the direct passes dither from
-        // float. There the main frame is drawn directly and the shared buffer
-        // is a product only.
-        mFramePlan.mainFromComposite = glowReady && compositeReady && copyPlanned && mComposite.format == 0;
         // What the shared buffer holds from here on - the one place its cache
         // key is written: this frame's, drawn or reused, or nothing usable.
         // Cleared on a frame it was neither, so a buffer left unread while
@@ -2874,33 +2820,12 @@ namespace EdgeLighting
         // Full-res on the caller's framebuffer, under the glow: before the
         // blit and the ring. Alone under DebugConfig::opaqueOnly, which leaves
         // the plan's glowReady off.
-        if (config.neon.opaqueMode != OpaqueMode::NONE && !mFramePlan.mainFromComposite)
+        if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
             renderFillPass(viewportWidth, viewportHeight, config);
         }
 
-        // --- Pass 2s: at scale 1 the shared buffer holds this whole layer -
-        // the fill, the blit and the ring, drawn once in phase 1 - so the
-        // main frame is one copy of it.
-        //
-        // ONE full-res transform for every pass from here on, built once.
-        // The blit and the ring's partition holds only if the edges they
-        // share land on bit-identical pixel positions, which takes the same
-        // vertex floats (setupRingGeometry), the same vertex stage (neon.vert's
-        // invariant gl_Position) and the same uMVP. Two copies of one
-        // expression gave the same bits too, until someone edited one of
-        // them; a single matrix cannot drift. tools/neon-scale-check
-        // `partition` tests the result. The copy draws the same two meshes
-        // through it.
-        const glm::mat4 fullResMvp =
-            glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f,
-                       1.0f) *
-            glm::translate(glm::mat4(1.0f), glm::vec3(mFramePlan.centerFull, 0.0f));
-        if (mFramePlan.mainFromComposite)
-        {
-            renderCompositeCopyPass(fullResMvp, viewportWidth, viewportHeight, config);
-        }
-        else if (mFramePlan.glowReady)
+        if (mFramePlan.glowReady)
         {
             // The ring reads the segment and arc blocks, bound by
             // packLightBlocks in the offscreen phase - and every other layer's
@@ -2913,6 +2838,20 @@ namespace EdgeLighting
             // --- Pass 2b / 2c: the blit and the edge ring. They cover
             // disjoint areas (setupRingGeometry), so their order between
             // themselves does not matter for the result.
+            //
+            // ONE full-res transform, built here and handed to both. Their
+            // partition holds only if the edges they share land on
+            // bit-identical pixel positions, which takes the same vertex
+            // floats (setupRingGeometry), the same vertex stage (neon.vert's
+            // invariant gl_Position) and the same uMVP. Two copies of one
+            // expression gave the same bits too, until someone edited one
+            // of them; a single matrix cannot drift. tools/neon-scale-check
+            // `partition` tests the result.
+            const glm::vec2 centerFull = mFramePlan.centerFull;
+            const glm::mat4 fullResMvp =
+                glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
+                           -1.0f, 1.0f) *
+                glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
             renderBlitPass(fullResMvp, GetEdgeMask(config, viewportHeight), mFramePlan.scaledUV);
             if (mFramePlan.ringField.use)
             {
@@ -3525,15 +3464,6 @@ namespace EdgeLighting
                              PROGRAM_COMPOSITE_RING, BLOCK_SEGMENT | BLOCK_ARC, noShared);
     }
 
-    bool NeonRenderer::ensureCopyProgram()
-    {
-        // The copy at scale 1 (pass 2s): neon-blit.frag without its mask. Its
-        // own object, for the AB rule, and a compile of its own (the define).
-        // A failure only means the main frame is drawn directly.
-        return ensureProgram(mCopyShader, ShaderSource::NEON_BLIT_FRAG_SRC, "NEON_BLIT_COPY", "NeonRenderer.Copy",
-                             PROGRAM_COPY, 0, "the main frame is drawn directly, not copied");
-    }
-
     bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
     {
         // A live buffer is kept while it can hold this config: this runs every
@@ -4012,8 +3942,6 @@ namespace EdgeLighting
         if (mode == OpaqueMode::NONE || FillsWholeViewport(config.neon))
         {
             mFillMesh.count = 0;
-            mComposite.fillOuter = glm::vec2(0.0f);
-            setupCopyGeometry();
             return;
         }
 
@@ -4152,8 +4080,6 @@ namespace EdgeLighting
         // day a cutoff or the geometry becomes animatable is not the day
         // anyone will think to come back and look at a usage flag.
         mFillMesh.Upload(verts, sizeof(verts) / sizeof(float));
-        mComposite.fillOuter = glm::vec2(ow, oh);
-        setupCopyGeometry();
     }
 
     void NeonRenderer::setupRingGeometry(const Config &config)
@@ -4167,7 +4093,6 @@ namespace EdgeLighting
         const glm::vec2 blitOuter = pair.blitOuter;
         const glm::vec2 blitHole = pair.blitHole;
         mRingBounds = Annulus{ringOuter, ringHole};
-        mComposite.blitOuter = blitOuter;
 
         // What the blit reads of the reduced buffer: its own outer box plus
         // its bilinear footprint and a pixel. The reduced buffer is sized to
@@ -4220,25 +4145,8 @@ namespace EdgeLighting
         mRingMesh.Upload(ringVerts.data(), ringVerts.size());
         mBlitMesh.Upload(blitVerts.data(), blitVerts.size());
 
-        // The shared buffer's pair, from the same construction, and the
-        // copy's box, which the blit's outer box bounds.
+        // The shared buffer's pair, from the same construction.
         setupCompositeGeometry(config);
-        setupCopyGeometry();
-    }
-
-    void NeonRenderer::setupCopyGeometry()
-    {
-        // One solid box (a hole of 0 draws the whole box, PushAnnulus): the
-        // fill's band and everything the blit and the ring cover lie inside
-        // it, and the shared buffer is 0 everywhere else. Covering the fill's
-        // hole too costs a few fragments of exact 0 and keeps it one quad.
-        //
-        // Into a member that keeps its capacity: this runs with
-        // setupRingGeometry, which an intensity animation runs every frame,
-        // and a local vector would be one more heap allocation per frame.
-        mComposite.copyVerts.clear();
-        PushAnnulus(mComposite.copyVerts, glm::max(mComposite.fillOuter, mComposite.blitOuter), glm::vec2(0.0f));
-        mComposite.copyMesh.Upload(mComposite.copyVerts.data(), mComposite.copyVerts.size());
     }
 
     void NeonRenderer::setupCompositeGeometry(const Config &config)
@@ -5270,61 +5178,6 @@ namespace EdgeLighting
             GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         }
         program.Unuse();
-    }
-
-    void NeonRenderer::renderCompositeCopyPass(const glm::mat4 &mvp, int viewportWidth, int viewportHeight,
-                                               const Config &config)
-    {
-        // The shared buffer, texel for pixel - it is viewport-sized at scale
-        // 1 - onto the caller's framebuffer, premultiplied over, as the three
-        // passes it stands in for. No mask (NEON_BLIT_COPY): the buffer holds
-        // the masks already. The dither on, the three passes' own, applied
-        // once to their composite.
-        //
-        // Only where the buffer can be non-zero. With no fill that is the
-        // blit's and the ring's meshes - at scale 1 the shared pair IS the
-        // main pair (setupCompositeGeometry), and the buffer is cleared to 0
-        // everywhere else - which tile without overlapping, so no pixel is
-        // copied twice. With a shaped fill, one box round the fill's band and
-        // the blit (mComposite.copyMesh). Both through the full-res
-        // transform, rect-local full-res px onto the buffer's uv:
-        // (p + centre) / viewport. A fill that covers the viewport (a clear,
-        // FillsWholeViewport) puts the copy over all of it, through the
-        // fullscreen quad, NDC -> uv 0.5 v + 0.5.
-        const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-        mCopyShader.Use();
-        mCopyShader.SetUniform("uDither", 1);
-        mComposite.buffer.BindTexture(0);
-        mCopyShader.SetUniform("uSource", 0);
-        if (config.neon.opaqueMode != OpaqueMode::NONE && FillsWholeViewport(config.neon))
-        {
-            mCopyShader.SetUniform("uMVP", glm::mat4(1.0f));
-            mCopyShader.SetUniform("uUVScale", glm::vec2(0.5f));
-            mCopyShader.SetUniform("uUVOffset", glm::vec2(0.5f));
-            GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
-        }
-        else
-        {
-            mCopyShader.SetUniform("uMVP", mvp);
-            mCopyShader.SetUniform("uUVScale", glm::vec2(1.0f) / viewport);
-            mCopyShader.SetUniform("uUVOffset", mFramePlan.centerFull / viewport);
-            if (config.neon.opaqueMode != OpaqueMode::NONE)
-            {
-                mComposite.copyMesh.Draw();
-            }
-            else
-            {
-                if (mBlitMesh.count > 0)
-                {
-                    mBlitMesh.Draw();
-                }
-                if (mRingMesh.count > 0)
-                {
-                    mRingMesh.Draw();
-                }
-            }
-        }
-        mCopyShader.Unuse();
     }
 
     void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV)

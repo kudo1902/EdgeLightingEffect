@@ -355,8 +355,7 @@ namespace EdgeLighting
         /// drawn a second time at @c NeonConfig::compositeScale, for any layer
         /// or the host to read. Made only while that scale is above 0 AND
         /// something reads it - a layer's @c CollectReads, or the host's
-        /// @c EdgeLightingEffect::AddHostRead - or the scale is 1, where the
-        /// main frame is its reader.
+        /// @c EdgeLightingEffect::AddHostRead.
         ///
         /// @par What its texels mean
         /// Premultiplied RGBA, the neon layer exactly as it composites onto
@@ -392,9 +391,9 @@ namespace EdgeLighting
         /// their own program objects. A change to what the main frame looks
         /// like changes it the same way; a change that makes the two differ
         /// beyond resolution (a pass the main frame draws and this does not)
-        /// breaks every reader. At scale 1, from a half-float buffer, the main
-        /// frame IS one copy of it; in the RGBA8 fallback the main frame is
-        /// drawn directly, within a level of it.
+        /// breaks every reader. The main frame is never drawn FROM it: at
+        /// every scale, 1 included, the neon draws its own frame directly and
+        /// the main frame is byte-identical whether the buffer is made or not.
         static constexpr const char *COMPOSITE_KEY = "NeonRenderer.Composite";
 
         /// The glow's edge mask - the one-sided cut and the inside / outside
@@ -1258,16 +1257,6 @@ namespace EdgeLighting
             Mesh ringMesh{"NeonRenderer.CompositeRing"};
             Mesh blitMesh{"NeonRenderer.CompositeBlit"};
 
-            /// Where pass 2s copies with a shaped fill: one solid box, the
-            /// larger of the fill's outer box and the main blit's - every
-            /// pixel the shared buffer can be non-zero at, in rect-local
-            /// full-res px. Both inputs kept, since the fill's and the ring's
-            /// geometry are rebuilt under different gates (@ref setupCopyGeometry).
-            Mesh copyMesh{"NeonRenderer.CompositeCopy"};
-            glm::vec2 fillOuter{0.0f};    ///< setupFillGeometry's outer box; 0 with no band ring.
-            glm::vec2 blitOuter{0.0f};    ///< setupRingGeometry's main blit outer box.
-            std::vector<float> copyVerts; ///< Scratch for copyMesh's six vertices, capacity kept.
-
             /// The ring's limits at the shared scale (@c uQuadMargin,
             /// @c uCornerSkip), as @c mRingLimits are at 1.0.
             ShadeLimits limits;
@@ -1281,17 +1270,13 @@ namespace EdgeLighting
             /// that neither draws nor reuses it clears @c drawn.
             CompositeCache cache;
 
-            /// Whether the last frame wanted it (a reader, or scale 1), and for
+            /// Whether the last frame wanted it (a reader declared it), and for
             /// how long, in frame time, it has gone unwanted while allocated -
             /// @ref Update releases it after COMPOSITE_RELEASE_SECONDS, as it
             /// does the coverage table, since @ref RenderOffscreen must not
             /// delete a framebuffer.
             bool wanted = false;
             float unwantedSeconds = 0.0f;
-            /// How long the main frame has been the copy (pass 2s) while the
-            /// ring's field is allocated - unread all that time; @ref Update
-            /// releases it after COMPOSITE_RELEASE_SECONDS.
-            float copySeconds = 0.0f;
         } CompositeTarget;
 
         /// Whether the offscreen phase can be skipped on this frame, and the
@@ -1394,10 +1379,6 @@ namespace EdgeLighting
             UVMap gatherUVFull;           ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
             UVMap scaledUV;               ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
             LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) rather than shading (P2c), and the gain.
-            /// The shared buffer is at scale 1 and holds this frame's: the main
-            /// frame is one copy of it (P2s) in place of the fill, the blit and
-            /// the ring.
-            bool mainFromComposite = false;
         } FramePlan;
 
         // --- Programs: built once, on first use ------------------------------
@@ -1466,12 +1447,6 @@ namespace EdgeLighting
         /// come from the shader cache, so each costs a link. A failure is
         /// recorded in @c mFailedPrograms; the shared buffer is then not made.
         bool ensureCompositePrograms();
-
-        /// Make sure @c mCopyShader, pass 2s's program (neon-blit.frag with
-        /// NEON_BLIT_COPY), is built - only at shared scale 1. A failure is
-        /// recorded in @c mFailedPrograms; the main frame is then drawn
-        /// directly.
-        bool ensureCopyProgram();
 
         // --- Buffers: allocated in the best format the driver gives ----------
         /// Make sure @c mGlowCover.buffer is allocated, allocating it if not, at
@@ -1617,11 +1592,6 @@ namespace EdgeLighting
         /// @ref setupRingGeometry, after the main pair, and alone by
         /// @ref OnConfigChanged when only the shared scale moved.
         void setupCompositeGeometry(const Config &config);
-
-        /// @c mComposite.copyMesh from @c mComposite.fillOuter and
-        /// @c mComposite.blitOuter: run by @ref setupFillGeometry and
-        /// @ref setupRingGeometry after either moves.
-        void setupCopyGeometry();
 
         /// The packing for the ring @p ring centred at @p centerFull in
         /// a viewport of @p viewportWidth x @p viewportHeight. The hole is
@@ -1916,22 +1886,6 @@ namespace EdgeLighting
         void drawFill(int targetWidth, int targetHeight, const glm::vec2 &center, float scale, ShaderProgram &program,
                       bool (NeonRenderer::*ensure)(), const Config &config);
 
-        /// Pass 2s: the main frame as one copy of the shared buffer, when it
-        /// is at scale 1, half float and holds this frame's - in place of the
-        /// fill, the blit and the ring, which drew into it in phase 1. Copied
-        /// with @c mCopyShader (neon-blit.frag compiled with NEON_BLIT_COPY:
-        /// no mask) through @p mvp, the full-res transform: over the blit's
-        /// and the ring's meshes alone when there is no fill - the buffer is
-        /// 0 everywhere else - over one box round the fill's band and the
-        /// blit (@c mComposite.copyMesh) with a shaped fill, and over the
-        /// viewport only for a fill that covers it. Dithered
-        /// here, on the way to 8 bits, the dither the three passes would have
-        /// applied.
-        /// @pre Premultiplied-over blending; the caller's framebuffer and
-        ///      viewport are restored.
-        void renderCompositeCopyPass(const glm::mat4 &mvp, int viewportWidth, int viewportHeight,
-                                     const Config &config);
-
         /// Pass 2b: bilinear composite of the reduced buffer onto the caller's
         /// framebuffer, AND the one-sided glow cut and the inside/outside
         /// cutoffs, at full resolution, for what pass 1b drew (the ring applies
@@ -2011,7 +1965,6 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_COMPOSITE_FILL = 1u << 11;      ///< @c mCompositeFillShader, P1s.
         static constexpr unsigned int PROGRAM_COMPOSITE_BLIT = 1u << 12;      ///< @c mCompositeBlitShader, P1s.
         static constexpr unsigned int PROGRAM_COMPOSITE_RING = 1u << 13;      ///< @c mCompositeRingShader, P1s.
-        static constexpr unsigned int PROGRAM_COPY = 1u << 14;                ///< @c mCopyShader, P2s.
 
         /// Uniform blocks a program declares, for @ref ensureProgram.
         static constexpr unsigned int BLOCK_SEGMENT = 1u << 0; ///< SegmentBlock
@@ -2056,7 +2009,6 @@ namespace EdgeLighting
         ShaderProgram mCompositeFillShader;      ///< P1s, black-rect.frag, into the shared buffer. Built on the first frame it is wanted.
         ShaderProgram mCompositeBlitShader;      ///< P1s, neon-blit.frag, into the shared buffer. Built with it.
         ShaderProgram mCompositeRingShader;      ///< P1s, neon.frag, into the shared buffer. Built with it.
-        ShaderProgram mCopyShader;               ///< P2s, neon-blit.frag + NEON_BLIT_COPY, the shared buffer onto the caller's. Built with the shared programs at scale 1.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.

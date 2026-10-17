@@ -933,14 +933,13 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
                               "NeonRenderer.Composite, a buffer any layer or the host\n"
                               "can read - drawn only while one does (Debug > Buffer View\n"
                               "on NeonRenderer.Composite is one). 0 = off.\n"
-                              "Clamped to [max(Res Scale, 0.4), 1]; at 1 the frame on\n"
-                              "screen is one copy of it. Reused while nothing moves.");
+                              "Clamped to [max(Res Scale, 0.4), 1]. Reused while nothing\n"
+                              "moves; the frame on screen never changes with it.");
         }
         if (cfg.neon.compositeScale > 0.0f)
         {
             const float drawnAt = EdgeLighting::NeonRenderer::GetCompositeScale(cfg);
-            ImGui::TextDisabled("Drawn at %.3f%s", drawnAt,
-                                (drawnAt >= 1.0f) ? " - the frame is a copy of it" : "");
+            ImGui::TextDisabled("Drawn at %.3f while read", drawnAt);
         }
         SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
         SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
