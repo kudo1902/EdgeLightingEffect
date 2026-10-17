@@ -39,6 +39,7 @@ namespace NeonTools
         P1F,      ///< Field bake (neon.frag + NEON_FIELD_BAKE, offscreen): the glow's field, then the ring's (P1r).
         P1C,      ///< Field composite (neon-field.frag, into the reduced buffer in P1B's place).
         P1T,      ///< The edge ring into the ring atlas (neon.frag with uBlitOwnsCut 0, or the ring field's composite, offscreen).
+        P1S,      ///< The shared buffer: its fill (black-rect.frag, offscreen) and its light (neon-assemble.frag).
         P2A,      ///< Opaque fill (black-rect.frag).
         P2B,      ///< Blit (neon-blit.frag).
         P2C       ///< Edge ring onto the target: the ring atlas's copy, or (without the atlas) neon.frag or its field's composite (P2r).

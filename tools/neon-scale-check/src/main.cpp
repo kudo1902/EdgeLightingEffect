@@ -987,6 +987,10 @@ int main(int argc, char **argv)
     {
         return Parts(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "shared") == 0)
+    {
+        return Shared(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -996,6 +1000,7 @@ int main(int argc, char **argv)
                  "                        [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] [--passes] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
                  "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n"
-                 "  neon-scale-check parts [--max N] [--within1 PCT] [--verbose]\n");
+                 "  neon-scale-check parts [--max N] [--within1 PCT] [--verbose]\n"
+                 "  neon-scale-check shared [--max N] [--within1 PCT] [--verbose]\n");
     return 2;
 }

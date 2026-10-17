@@ -197,7 +197,7 @@ attachment n > 0, or a key of its own for a product. Today's keys are:
 
 | Owner | Keys |
 | ----- | ---- |
-| `NeonRenderer` | `Emission`, `GlowCover`, `GlowCoverSegments`, `Gather`, `Gather[1]`, `Field`, `Scaled`, `RingField`, `GradientRing` (a LUT), `Glow`, and `Composite` (only while `compositeScale` > 0), all prefixed `NeonRenderer.` |
+| `NeonRenderer` | `Emission`, `GlowCover`, `GlowCoverSegments`, `Gather`, `Gather[1]`, `Field`, `Scaled`, `RingField`, `Ring` (the ring atlas, PUBLIC), `GradientRing` (a LUT), `Glow`, and `Composite` (only while `compositeScale` > 0 and read), all prefixed `NeonRenderer.` |
 | `LensFlareRenderer` | `LensFlare.Scaled` |
 | `SpotlightRenderer` | `Spotlight.Scaled` |
 
@@ -263,22 +263,22 @@ progress log, and [`neon-shared-buffer.md`](neon-shared-buffer.md) for a
 plain-language guide) is the whole neon layer - fill, glow, line, cut and cutoffs - at
 `NeonConfig::compositeScale` `s`, made only while that is above 0 and
 something reads it - a layer's declared read or the host's
-`EdgeLightingEffect::AddHostRead` - or `s` is 1. Pass 1s
-draws it in phase 1 with the main frame's three passes, each with a program
-object of its own:
+`EdgeLightingEffect::AddHostRead`. It is ASSEMBLED from the neon's two shared
+parts, the textures the screen itself is drawn from ([`neon-shared-layer-plan.md`](neon-shared-layer-plan.md)):
 
-- the **fill**, at `s`;
-- the **blit**, a copy of the reduced buffer masked in the shared buffer's
-  pixels;
-- the **ring**, shaded again at `s` from the gather.
+- the **glow**, `NeonRenderer.Glow` (pass 1b's reduced buffer, PUBLIC since S6b);
+- the **ring atlas**, `NeonRenderer.Ring` (pass 1t, PUBLIC): the edge ring's
+  final colours, packed into four strips, which pass 2c copies to the screen.
 
-So only the ring band is shaded twice. It is undithered (a reader dithers when
-it writes 8 bits), reused on frames where nothing moved, and released at 0 or
-once unread for 5 s. The main frame is never drawn from it - not even at `s` =
-1, where a copy of it once stood in for the main frame and was measured and
-removed (progress log, 2026-10-17). Turning it on leaves the main frame
-byte-identical: its meshes
-are clamped to the main frame's area, so the main frame's buffers do not grow.
+A reader that can run the neon's GLSL reads the two parts directly
+(`neon-light.glsl`, `NeonRenderer::GetSharedLight` / `UploadSharedLight`) and
+costs nothing but the ring going through its atlas on moving frames. One that
+needs a single texture reads `Composite`: pass 1s draws the fill at `s` and
+then, over the light's area, each texel the screen's light averaged over its
+square (`neon-assemble.frag`) - nothing is shaded again. It covers only the
+region the light and the fill can reach, is undithered, reused on frames where
+nothing moved, and released at 0 or once unread for 5 s. The screen is never
+drawn from it.
 
 ### 4.6 One quad
 

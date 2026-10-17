@@ -9,8 +9,10 @@
 #include "renderer/neon-renderer.h"
 #include "shaders.h"
 #include "util/capture-util.h"
+#include "core/buffer-registry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -80,6 +82,158 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
             }
             return nullptr;
         }
+    }
+
+    int Shared(int argc, char **argv)
+    {
+        int maxAllowed = 2;
+        double within1Min = 99.9;
+        for (int i = 2; i < argc; ++i)
+        {
+            if (std::strcmp(argv[i], "--max") == 0 && i + 1 < argc)
+            {
+                maxAllowed = std::atoi(argv[++i]);
+            }
+            else if (std::strcmp(argv[i], "--within1") == 0 && i + 1 < argc)
+            {
+                within1Min = std::atof(argv[++i]);
+            }
+        }
+
+        const GLSession gl;
+        int failing = 0;
+        int worst = 0;
+        {
+            EdgeLightingEffect effect;
+            CreateEffect(effect);
+            effect.AddHostRead(NeonRenderer::COMPOSITE_KEY);
+
+            // (shared scale, opaque fill): the fill only at 1, where the
+            // shared buffer's fill IS the screen's; below 1 it is drawn at s,
+            // not averaged, so only the light is compared there.
+            typedef struct Case
+            {
+                float scale;
+                OpaqueMode fill;
+                const char *name;
+            } Case;
+            static const Case CASES[] = {{1.0f, OpaqueMode::NONE, "1"},
+                                         {1.0f, OpaqueMode::INSIDE, "1+fill"},
+                                         {1.0f, OpaqueMode::ALL, "1+all"},
+                                         {0.5f, OpaqueMode::NONE, "0.5"}};
+            static const char *const MOTIONS[] = {"still", "hue"};
+            std::printf("%-15s %-7s %-6s %5s %9s %10s\n", "scene", "shared", "motion", "max", "lit px", "within 1");
+            for (const Scene &scene : SCENES)
+            {
+                for (const Case &cs : CASES)
+                {
+                    for (const char *motion : MOTIONS)
+                    {
+                        const bool hue = std::strcmp(motion, "hue") == 0;
+                        Config config = BaseConfig();
+                        scene.apply(config);
+                        config.neon.resolutionScale = 0.5f;
+                        config.neon.compositeScale = cs.scale;
+                        config.neon.opaqueMode = cs.fill;
+                        config.neon.hueRotationRate = hue ? 0.5f : 0.0f;
+                        effect.SetConfig(config);
+                        effect.Update(0.0f);
+
+                        OffscreenCapture screen;
+                        screen.Begin(FRAME_WIDTH, FRAME_HEIGHT);
+                        for (int f = 0; f < 3; ++f)
+                        {
+                            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                            glClear(GL_COLOR_BUFFER_BIT);
+                            if (hue)
+                            {
+                                effect.Update(1.0f / 60.0f);
+                            }
+                            effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+                        }
+                        CaptureUtil::Image a;
+                        screen.Read(a);
+                        screen.End();
+
+                        const BufferRegistry &registry = effect.GetBufferRegistry();
+                        const BufferRecord *record = registry.Find(NeonRenderer::COMPOSITE_KEY);
+                        if (!record || !registry.IsCurrent(*record))
+                        {
+                            std::printf("%-15s %-7s %-6s  the shared buffer was not current\n", scene.id, cs.name,
+                                        motion);
+                            ++failing;
+                            continue;
+                        }
+                        const glm::ivec2 texels = record->GetTexels();
+                        CaptureUtil::Image b;
+                        CaptureUtil::ReadTexture2D(record->GetTexture(), texels.x, texels.y, b);
+
+                        // Each texel against the screen averaged over its
+                        // square: texel (x, t) - t from the bottom - covers
+                        // caller px origin + (x, t) / s, 1 / s wide.
+                        const float sc = cs.scale;
+                        const int span = static_cast<int>(1.0f / sc + 0.5f);
+                        const glm::ivec2 org = glm::ivec2(glm::round(record->origin * sc));
+                        Compare c;
+                        for (int t = 0; t < texels.y; ++t)
+                        {
+                            for (int x = 0; x < texels.x; ++x)
+                            {
+                                const int px0 = (org.x + x) * span;
+                                const int py0 = (org.y + t) * span;
+                                if (px0 + span > FRAME_WIDTH || py0 + span > FRAME_HEIGHT)
+                                {
+                                    continue;
+                                }
+                                int sum[4] = {0, 0, 0, 0};
+                                for (int dy = 0; dy < span; ++dy)
+                                {
+                                    for (int dx = 0; dx < span; ++dx)
+                                    {
+                                        const int row = FRAME_HEIGHT - 1 - (py0 + dy);
+                                        const unsigned char *pa = &a.pixels[4 * (size_t(row) * FRAME_WIDTH + (px0 + dx))];
+                                        for (int k = 0; k < 4; ++k)
+                                        {
+                                            sum[k] += pa[k];
+                                        }
+                                    }
+                                }
+                                const unsigned char *pb =
+                                    &b.pixels[4 * (size_t(texels.y - 1 - t) * texels.x + x)];
+                                int d = 0;
+                                bool lit = false;
+                                for (int k = 0; k < 4; ++k)
+                                {
+                                    const float expect = float(sum[k]) / float(span * span);
+                                    d = std::max(d, static_cast<int>(std::lround(std::fabs(expect - float(pb[k])))));
+                                    lit = lit || (k < 3 && (expect >= 1.0f || pb[k] > 0));
+                                }
+                                c.maxDelta = std::max(c.maxDelta, d);
+                                if (lit)
+                                {
+                                    ++c.lit;
+                                    c.within1 += (d <= 1) ? 1 : 0;
+                                }
+                            }
+                        }
+                        const double share = c.lit ? 100.0 * double(c.within1) / double(c.lit) : 100.0;
+                        const bool fail = c.maxDelta > maxAllowed || share < within1Min;
+                        worst = std::max(worst, c.maxDelta);
+                        failing += fail ? 1 : 0;
+                        std::printf("%-15s %-7s %-6s %5d %9ld %9.3f%%%s\n", scene.id, cs.name, motion, c.maxDelta,
+                                    c.lit, share, fail ? "  !" : "");
+                    }
+                }
+            }
+        }
+        std::printf("worst max %d\n", worst);
+        if (failing)
+        {
+            std::printf("FAIL: %d frame(s) outside max %d / %.2f%% within 1\n", failing, maxAllowed, within1Min);
+            return 1;
+        }
+        std::printf("PASS (max %d, %.2f%% within 1)\n", maxAllowed, within1Min);
+        return 0;
     }
 
     int Parts(int argc, char **argv)

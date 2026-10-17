@@ -154,7 +154,7 @@ layout; add `neon-layer.glsl` and `NeonRenderer::GetLayer` / `UploadLayer`.
   screen within the dither (1 level) everywhere - the same check the glow
   product passed (S6b).
 
-**Step 3 - assemble the flat texture from the parts.**
+**Step 3 - assemble the flat texture from the parts.** DONE 2026-10-17: `neon-assemble.frag`, a box filter of the screen's light from the parts; `neon-scale-check shared` within 1 level. The 0.4 floor stays, for the fill alone.
 Replace pass 1s's re-shading with an assemble pass; remove the shared ring
 program, `uDestScale` and the shared ring mesh; size the texture to the lit
 area.

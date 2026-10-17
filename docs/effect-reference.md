@@ -498,14 +498,15 @@ at 0.5, for 0.84 MB more on that rect - which narrows the gap without closing
 it, since the blit and the ring are full-resolution costs it does not touch.
 
 **`neon.compositeScale`** (default 0 - off)
-Draws the whole neon layer a second time, at this scale, into a buffer any
-layer or the host can read: `NeonRenderer.Composite` in the effect's buffer
-registry (`NeonRenderer::COMPOSITE_KEY`, contract in `neon-renderer.h`). The
-fill, the glow, the line, the one-sided cut and the cutoffs, premultiplied and
-NOT dithered, over the whole viewport. Clamped to [max(`resolutionScale`, 0.4), 1]: its
-glow is the reduced buffer copied, and only the thin ring round the edge is
-shaded a second time, at this scale, so the line keeps its sampling floor there
-(a 1 px line comes out 2 px wide at 0.5). Drawn only while something reads it
+Makes the whole neon layer available as one texture at this scale:
+`NeonRenderer.Composite` in the effect's buffer registry
+(`NeonRenderer::COMPOSITE_KEY`, contract in `neon-renderer.h`). The fill, and
+over it the glow, the line, the one-sided cut and the cutoffs, premultiplied
+and NOT dithered, over the area they can reach. Clamped to
+[max(`resolutionScale`, 0.4), 1]. Assembled from the textures the screen is
+drawn from (the glow and the ring atlas): each texel is the screen's light
+averaged over its square, so at 1 it is the screen's pixels and below 1 the
+screen shrunk - nothing is shaded again. Drawn only while something reads it
 - a layer's declared read, the debug buffer view, or a C++ host's
 `EdgeLightingEffect::AddHostRead(NeonRenderer::COMPOSITE_KEY)` - and then only
 on frames the neon's offscreen passes run; reused while nothing moves, released

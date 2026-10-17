@@ -43,9 +43,15 @@ void main() { fragColor = uColor; }
             {
                 return PassKind::P2B;
             }
+            // The shared buffer's assemble pass reads the two parts; its fill
+            // is the screen's fill drawn offscreen.
+            if (HasUniform(program, "uLightRing"))
+            {
+                return PassKind::P1S;
+            }
             if (HasUniform(program, "uOpaqueMode"))
             {
-                return PassKind::P2A;
+                return ontoCaller ? PassKind::P2A : PassKind::P1S;
             }
             // Before uGather: the field's composite reads the gather too. The
             // edge ring's composite (NEON_FIELD_RING) draws the ring's pixels
@@ -268,6 +274,10 @@ void main() { fragColor = uColor; }
         case PassKind::P1T:
         {
             return "P1t";
+        }
+        case PassKind::P1S:
+        {
+            return "P1s";
         }
         case PassKind::P2A:
         {

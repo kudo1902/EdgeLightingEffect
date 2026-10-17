@@ -929,8 +929,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         SliderWithInput("Shared Scale##Neon", cfg.neon.compositeScale, 0.0f, 1.0f, "%.3f");
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Draws the whole layer a second time at this scale into\n"
-                              "NeonRenderer.Composite, a buffer any layer or the host\n"
+            ImGui::SetTooltip("Assembles the whole layer, at this scale, into\n"
+                              "NeonRenderer.Composite, a texture any layer or the host\n"
                               "can read - drawn only while one does (Debug > Buffer View\n"
                               "on NeonRenderer.Composite is one). 0 = off.\n"
                               "Clamped to [max(Res Scale, 0.4), 1]. Reused while nothing\n"

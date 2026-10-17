@@ -5,6 +5,27 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Step 3 of the shared-layer plan: the shared buffer assembled
+
+- **Pass 1s no longer draws the neon a second time.** It draws the fill at the
+  shared scale, then the light ASSEMBLED from the two parts
+  (`neon-assemble.frag`): each texel the screen's light, read through
+  `neonLight`, averaged over the texel's square of caller pixels. Gone: the
+  shared ring and blit programs and meshes, `uDestScale` in `neon.frag`,
+  `uDither` in `neon-blit.frag`, `drawBlit`, the destination-scale variants of
+  `GetRingWidth` / `GetRingExtent` / `GetLitExtent` / `GetRingBlitPair`. The
+  buffer covers only the region the light and the fill reach
+  (`CompositeRegion`), not the whole viewport.
+- **Verified** by the new `neon-scale-check shared`: twelve scenes, still and
+  hue, at shared scale 1 without a fill, with one and with a whole-viewport
+  fill, and at 0.5 against the screen averaged 2 x 2 - max 1 level everywhere,
+  100% of lit pixels within 1. The old re-shaded buffer was up to 82 levels
+  off on `hairline` at 0.5. `layer-check`: only the `shared/` scenes moved
+  (their buffer views, and `+host-read`'s first frame, whose ring now goes
+  through the atlas - within 1 level); every other frame identical. `check`,
+  `partition` and `parts` pass.
+- `PassRecorder` files the assemble pass and the shared buffer's fill as `P1S`.
+
 ## 2026-10-17 - Step 2 of the shared-layer plan: the parts, shared
 
 - **`NeonRenderer.Ring` is PUBLIC** (`RING_KEY`, contract beside it): the ring

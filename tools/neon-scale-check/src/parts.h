@@ -13,6 +13,14 @@ namespace NeonScaleCheck
     /// screen's output dither) or with fewer than PCT percent of lit pixels
     /// within 1. Returns the process exit code.
     int Parts(int argc, char **argv);
+
+    /// `neon-scale-check shared [--max N] [--within1 PCT]`: the shared buffer
+    /// (NeonRenderer.Composite), assembled from the parts, must be the
+    /// screen's own frame - at shared scale 1 texel for pixel, with and
+    /// without a fill; at 0.5 the screen's light averaged over each texel's
+    /// 2 x 2 square. Every scene, still and under a rotating hue. The screen
+    /// is dithered and the shared buffer is not, so 1-2 levels is the floor.
+    int Shared(int argc, char **argv);
 }
 
 #endif

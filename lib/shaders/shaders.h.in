@@ -98,6 +98,15 @@ namespace EdgeLighting
 @NEON_FIELD_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const NEON_ASSEMBLE_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_SDF@
+@NEON_MASK@
+@NEON_RING@
+@NEON_LIGHT@
+@NEON_ASSEMBLE_FRAG_CONTENT@
+)shadersrc";
+
                 // The neon's light from its two shared parts, as one chunk for
                 // a host's own fragment shader: put it after the version line
                 // and call neonLight (see neon-light.glsl). Not a shader.

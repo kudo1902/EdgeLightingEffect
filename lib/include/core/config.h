@@ -438,39 +438,38 @@ namespace EdgeLighting
         /// 900 x 540 one. Released when the layer is disabled.
         float resolutionScale = 0.5f;
 
-        /// The neon as a SHARED buffer: the whole layer - the opaque fill,
-        /// the glow, the line, the one-sided cut and the cutoffs - drawn a
-        /// second time, at this scale, into an offscreen buffer any layer or
-        /// the host can read: @c NeonRenderer::COMPOSITE_KEY in the effect's
-        /// buffer registry, with its contract in neon-renderer.h.
+        /// The neon as one SHARED texture: the whole layer - the opaque fill,
+        /// and over it the glow, the line, the one-sided cut and the cutoffs
+        /// - at this scale, for a reader that cannot sample the neon's two
+        /// parts (NeonRenderer::GLOW_KEY, RING_KEY) itself:
+        /// @c NeonRenderer::COMPOSITE_KEY in the effect's buffer registry,
+        /// with its contract in neon-renderer.h. Assembled from those parts,
+        /// each texel the screen's light averaged over its square - nothing
+        /// is shaded again.
         ///
         /// 0, the default, makes none. Otherwise clamped to
-        /// [max(resolutionScale, @ref COMPOSITE_MIN_SCALE), 1]: never coarser
-        /// than the reduced buffer it is drawn from, whose glow it copies
-        /// rather than shades again - only the thin band round the edge is
-        /// shaded a second time, at this scale - and never so coarse that
-        /// its masks' one-pixel ramps outgrow the main frame's bounds.
-        /// Drawn only while something reads it - a layer's declared read, or a
-        /// host's @c EdgeLightingEffect::AddHostRead - and then only on a
-        /// frame the neon's own offscreen passes run; a frame where nothing
-        /// moved reuses it. The main frame is never drawn from it, at any
-        /// scale: setting this moves no pixel of the neon's own output.
+        /// [max(resolutionScale, @ref COMPOSITE_MIN_SCALE), 1]. Drawn only
+        /// while something reads it - a layer's declared read, or a host's
+        /// @c EdgeLightingEffect::AddHostRead - and then only on a frame the
+        /// neon's own offscreen passes run; a frame where nothing moved reuses
+        /// it. The screen is never drawn from it.
         ///
         /// Memory: an RGBA16F buffer (RGBA8 where the driver will not render
-        /// half float) covering the viewport at this scale: 4.1 MB at 0.5 at
-        /// 1920 x 1080, 16.6 MB at 1. Released when it is set back to 0, when
-        /// the layer is disabled, or once nothing has read it for 5 s of frame
-        /// time.
+        /// half float) at this scale over the area the light and the fill can
+        /// reach - the whole viewport only for a fill that covers it (4.1 MB
+        /// at 0.5 at 1920 x 1080, 16.6 MB at 1). Released when it is set back
+        /// to 0, when the layer is disabled, or once nothing has read it for
+        /// 5 s of frame time.
         float compositeScale = 0.0f;
 
-        /// The coarsest scale @ref compositeScale is drawn at. The shared
-        /// buffer is drawn inside the main frame's ring and blit bounds, which
-        /// leave LIT_EDGE_SAFETY (2 full-res px) past the masks' ends and the
-        /// fill's mesh FILL_EDGE_SAFETY (3 px) past its own; the shared
-        /// buffer's ramps reach half a pixel of ITS grid further, up to 0.71
-        /// of one on a corner's diagonal - 0.71 / s full-res px. The one-sided
-        /// cut's back ramp is the tightest: 0.71 / s <= 2 needs s >= 0.355.
-        /// 0.4 leaves 0.24 px.
+        /// The coarsest scale @ref compositeScale is drawn at - for its FILL,
+        /// which is drawn at the scale through the screen fill's band ring:
+        /// that ring leaves FILL_EDGE_SAFETY (3 full-res px) past the fill's
+        /// edge, and the fill's antialiasing ramp at scale s reaches half a
+        /// texel of s past it, up to a whole texel on a sharp corner's vertex
+        /// pixel (fwidth reads 2 there) - 1 / s px, which 3 px holds down to
+        /// s 0.33. The light is a box filter of the screen's and needs no
+        /// floor. 0.4 leaves a margin.
         static constexpr float COMPOSITE_MIN_SCALE = 0.4f;
 
         /// Number of perimeter gather samples per fragment. Capped at

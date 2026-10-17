@@ -148,6 +148,19 @@ two. The screen dithers and the reader does not, so 1 level is the floor.
 Exits 1 when a frame exceeds `--max` or has fewer than `--within1` percent of
 its lit pixels within 1.
 
+## `shared`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check shared [--max 2] [--within1 99.9]
+```
+
+Checks the shared buffer (`NeonRenderer.Composite`), assembled from the parts,
+against the screen it came from: every scene, still and under a rotating hue,
+at shared scale 1 with no fill, an inside fill and a fill over the whole
+viewport (texel for pixel), and at 0.5 with no fill (each texel against the
+screen's 2 x 2 average; the fill is drawn at the scale, not averaged, so it is
+left out there). The screen is dithered and the buffer is not.
+
 ## `generate`
 
 ```bash

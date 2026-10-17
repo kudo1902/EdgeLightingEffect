@@ -73,11 +73,6 @@ out vec4 fragColor;
 
 uniform sampler2D uSource;
 
-// 1 on the caller's framebuffer, where the output dither belongs; 0 when this
-// blit writes the shared buffer (NeonRenderer::COMPOSITE_KEY), which others
-// read back filtered and so must carry no noise (R7).
-uniform int uDither;
-
 // vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
 // NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
 // transform, so vPos is no longer NDC: the CPU uploads the reduced buffer's
@@ -147,9 +142,6 @@ void main() {
 
     // The output dither (neon-grade.glsl): this is the write to the caller's
     // framebuffer, so the place the reduced buffer's half-float precision
-    // finally meets 8 bits. Not into the shared buffer (uDither 0).
-    if (uDither != 0)
-    {
-        fragColor.rgb = neonDither(fragColor.rgb);
-    }
+    // finally meets 8 bits.
+    fragColor.rgb = neonDither(fragColor.rgb);
 }
