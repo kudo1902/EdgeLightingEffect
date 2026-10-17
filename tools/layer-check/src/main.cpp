@@ -464,6 +464,7 @@ namespace
         SEGMENT_TRAVEL, ///< segmentBoosts[0] moving round the ring, one SetConfig per frame.
         STOP_CHANGE,    ///< the colour stops replaced on the second frame, with a 0.5 s cross-fade.
         OPAQUE_ONLY,    ///< debug.opaqueOnly switched on from the third frame on.
+        SHARED_STEP,    ///< compositeScale stepped to 1 on every fourth frame from the second, else as configured.
     } Motion;
 
     typedef struct LayerScene
@@ -657,6 +658,21 @@ namespace
             add("shared/default@1+hue", c, Motion::HUE);
         }
         {
+            // The shared scale CHANGING, alone, under a reader: 0.5, then 1
+            // (the main frame becomes the copy), then 0.5 twice - the change
+            // that leaves the main frame's buffers and fields as they were
+            // (OnlyCompositeScaleMoved) and rebuilds only the shared meshes,
+            // with the reuse key's scale forcing the redraw. Frame 0 must
+            // hash as shared/default@0.5+view's frame 0, frame 1 as
+            // shared/default@1+view's, frames 2 and 3 as
+            // shared/default@0.5+view's steady frames.
+            Config c = NeonScene("default");
+            c.neon.resolutionScale = 0.5f;
+            c.neon.compositeScale = 0.5f;
+            c.debug.bufferView = "NeonRenderer.Composite";
+            add("shared/default@0.5+step-to-1+view", c, Motion::SHARED_STEP);
+        }
+        {
             // The copy under debug.opaqueOnly: once the flag is on, frames 2
             // and 3 must equal shared/default@1+fill-only's - the fill alone,
             // never the previous frame's whole layer.
@@ -710,6 +726,11 @@ namespace
             {
                 c.neon.segmentBoosts[0].position = std::fmod(start.neon.segmentBoosts[0].position + 0.003f * f, 1.0f);
             }
+            break;
+        }
+        case Motion::SHARED_STEP:
+        {
+            c.neon.compositeScale = (frame % 4 == 1) ? 1.0f : start.neon.compositeScale;
             break;
         }
         case Motion::OPAQUE_ONLY:

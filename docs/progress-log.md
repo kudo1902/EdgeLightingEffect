@@ -83,7 +83,7 @@ scale `s` into an offscreen buffer any layer or the host can read.
     (`IsBufferWanted`) or the scale is 1. A C++ host declares its read with
     the new `EdgeLightingEffect::AddHostRead` / `RemoveHostRead` (a read with
     no reader, RENDER phase). An unread buffer is released by `Update` after
-    `GLOW_COVER_RELEASE_SECONDS`, and never reused across a frame it was not
+    `COMPOSITE_RELEASE_SECONDS`, and never reused across a frame it was not
     made (`mComposite.cache`, its one reuse key, now with the scale in it).
   - Scale 1: pass 1r is no longer decided or baked on a frame the main frame
     is the copy; the copy is its own program (`mCopyShader`, `neon-blit.frag`
@@ -103,6 +103,29 @@ scale `s` into an offscreen buffer any layer or the host can read.
     `drawFill` takes its program's builder rather than testing which program
     it was handed; pass 1s is declared and defined after pass 1r, 2s before
     2b; pass 1s hands blending back off; the demo prints the drawn scale.
+- **Third review (`a6edc2c`, `de82aaf`), all eight findings applied.**
+  - A host's read of a `DEBUG` buffer is logged like a layer's ("the host
+    reads ..."); it used to pass silently, since host reads have no reader.
+  - `NeonRenderer::GetCompositeScale(config)` is public, the one copy of the
+    drawn-scale rule; both demos ask it instead of their own clamps.
+  - `mComposite.wanted` is cleared at the top of `RenderOffscreen`, so a
+    fill-only or disabled frame counts toward the idle release; the ring's
+    field is released after `COMPOSITE_RELEASE_SECONDS` of copy frames, with
+    its schedule. The shared buffer's delay is its own constant now.
+  - The copy with a shaped fill draws one box round the fill's band and the
+    blit (`mComposite.copyMesh`, from a scratch vector so an intensity
+    animation allocates nothing more); the viewport only for a fill that
+    covers it.
+  - The contract no longer says the main frame IS the copy at 1 on every
+    driver.
+  - Not fixed, documented instead (beside `copyPlanned`): the direct path's
+    programs are not drawn while the copy stands in, so the first frame
+    back on it pays their first-draw stall (~125 ms on the AMD). Warming
+    them would mean drawing on the caller's framebuffer on a copy frame.
+  - New scene `shared/default@0.5+step-to-1+view` (0.5, 1, 0.5, 0.5 under a
+    reader): every frame hashes as the matching still scene's. All 304
+    earlier frames identical, allocation and memory lines unchanged but the
+    copy mesh's 48 bytes; `partition` passes.
 - **Not done.**
   - The C ABI: skipped by request. No `el_*` call sets the scale or exports
     the texture yet.

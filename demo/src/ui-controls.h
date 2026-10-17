@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_DEMO_UI_CONTROLS_H_
 
 #include "core/edge-lighting.h"
+#include "renderer/neon-renderer.h" // GetCompositeScale, the shared buffer's drawn scale
 #include "renderer/spotlight-tuning.h" // SPOT_MAX_LAMPS + SPOT_BLOOM_WINDOW_OUTER
 #include "util/geometry-utils.h"       // sun placement, shared with the renderer
 #include <iostream>
@@ -267,14 +268,9 @@ namespace EdgeLightingDemo
                   << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)" : " (full res, direct)")
                   << "   numSamples " << n.numSamples
                   << ", gradientLutSize " << n.gradientLutSize << "\n";
-        // The scale the library draws it at (clamped to
-        // [max(resolutionScale, COMPOSITE_MIN_SCALE), 1]), not the one asked
-        // for - as the debug panel's "Drawn at" line shows it.
-        const float sharedAt =
-            n.compositeScale > 0.0f
-                ? std::clamp(n.compositeScale,
-                             std::max(n.resolutionScale, EdgeLighting::NeonConfig::COMPOSITE_MIN_SCALE), 1.0f)
-                : 0.0f;
+        // The scale the library draws it at, not the one asked for - as the
+        // debug panel's "Drawn at" line shows it.
+        const float sharedAt = EdgeLighting::NeonRenderer::GetCompositeScale(config);
         std::cout << "Shared buffer " << std::setprecision(3) << sharedAt
                   << (sharedAt <= 0.0f   ? " (off)"
                       : sharedAt >= 1.0f ? " (NeonRenderer.Composite; the frame is a copy of it)"

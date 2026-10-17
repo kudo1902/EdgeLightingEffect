@@ -383,7 +383,7 @@ namespace EdgeLighting
         /// frame where nothing moved, which reuses it. A reader that
         /// declares its read only on some frames gets it redrawn on the first
         /// frame back - it is never reused across a frame it was not made.
-        /// Released once unread for GLOW_COVER_RELEASE_SECONDS. Under an intensity
+        /// Released once unread for COMPOSITE_RELEASE_SECONDS (5 s). Under an intensity
         /// animation its glow may be the field's composite, as @ref GLOW_KEY's.
         ///
         /// @par What it constrains
@@ -392,7 +392,9 @@ namespace EdgeLighting
         /// their own program objects. A change to what the main frame looks
         /// like changes it the same way; a change that makes the two differ
         /// beyond resolution (a pass the main frame draws and this does not)
-        /// breaks every reader. At scale 1 the main frame IS one copy of it.
+        /// breaks every reader. At scale 1, from a half-float buffer, the main
+        /// frame IS one copy of it; in the RGBA8 fallback the main frame is
+        /// drawn directly, within a level of it.
         static constexpr const char *COMPOSITE_KEY = "NeonRenderer.Composite";
 
         /// The glow's edge mask - the one-sided cut and the inside / outside
@@ -418,6 +420,12 @@ namespace EdgeLighting
         /// y-up). A function of the config alone, so a reader computes it from
         /// the config it is handed rather than asking the neon.
         static EdgeMask GetEdgeMask(const Config &config, int viewportHeight);
+
+        /// The scale @ref COMPOSITE_KEY is drawn at for @p config: 0 for none,
+        /// else @c NeonConfig::compositeScale clamped to
+        /// [max(resolutionScale, NeonConfig::COMPOSITE_MIN_SCALE), 1]. The one
+        /// copy of that rule - a UI showing the drawn scale asks here.
+        static float GetCompositeScale(const Config &config);
 
         /// Sets @p mask on @p shader, in use, under the names neon-blit.frag
         /// declares: @c uRectCenter, @c uRectSize, @c uCornerRadius,
@@ -1223,10 +1231,10 @@ namespace EdgeLighting
         /// What the shared buffer holds, for its reuse (@ref CompositeTarget).
         typedef struct CompositeCache
         {
-            bool drawn = false;      ///< It holds a frame: drawn or reused on the last frame.
-            float scale = 0.0f;      ///< The shared scale it was drawn at - a change to it alone keeps the main frame's buffers, not this.
-            glm::ivec2 viewport{0};  ///< The viewport that frame was drawn for.
-            glm::ivec2 texels{0};    ///< Its size, texels (GetCompositeTexels).
+            bool drawn = false;     ///< It holds a frame: drawn or reused on the last frame.
+            float scale = 0.0f;     ///< The shared scale it was drawn at - a change to it alone keeps the main frame's buffers, not this.
+            glm::ivec2 viewport{0}; ///< The viewport that frame was drawn for.
+            glm::ivec2 texels{0};   ///< Its size, texels (GetCompositeTexels).
         } CompositeCache;
 
         /// The shared buffer (pass 1s, @ref COMPOSITE_KEY): the whole neon at
@@ -1250,6 +1258,16 @@ namespace EdgeLighting
             Mesh ringMesh{"NeonRenderer.CompositeRing"};
             Mesh blitMesh{"NeonRenderer.CompositeBlit"};
 
+            /// Where pass 2s copies with a shaped fill: one solid box, the
+            /// larger of the fill's outer box and the main blit's - every
+            /// pixel the shared buffer can be non-zero at, in rect-local
+            /// full-res px. Both inputs kept, since the fill's and the ring's
+            /// geometry are rebuilt under different gates (@ref setupCopyGeometry).
+            Mesh copyMesh{"NeonRenderer.CompositeCopy"};
+            glm::vec2 fillOuter{0.0f};    ///< setupFillGeometry's outer box; 0 with no band ring.
+            glm::vec2 blitOuter{0.0f};    ///< setupRingGeometry's main blit outer box.
+            std::vector<float> copyVerts; ///< Scratch for copyMesh's six vertices, capacity kept.
+
             /// The ring's limits at the shared scale (@c uQuadMargin,
             /// @c uCornerSkip), as @c mRingLimits are at 1.0.
             ShadeLimits limits;
@@ -1265,11 +1283,15 @@ namespace EdgeLighting
 
             /// Whether the last frame wanted it (a reader, or scale 1), and for
             /// how long, in frame time, it has gone unwanted while allocated -
-            /// @ref Update releases it after GLOW_COVER_RELEASE_SECONDS, as it
+            /// @ref Update releases it after COMPOSITE_RELEASE_SECONDS, as it
             /// does the coverage table, since @ref RenderOffscreen must not
             /// delete a framebuffer.
             bool wanted = false;
             float unwantedSeconds = 0.0f;
+            /// How long the main frame has been the copy (pass 2s) while the
+            /// ring's field is allocated - unread all that time; @ref Update
+            /// releases it after COMPOSITE_RELEASE_SECONDS.
+            float copySeconds = 0.0f;
         } CompositeTarget;
 
         /// Whether the offscreen phase can be skipped on this frame, and the
@@ -1596,6 +1618,11 @@ namespace EdgeLighting
         /// @ref OnConfigChanged when only the shared scale moved.
         void setupCompositeGeometry(const Config &config);
 
+        /// @c mComposite.copyMesh from @c mComposite.fillOuter and
+        /// @c mComposite.blitOuter: run by @ref setupFillGeometry and
+        /// @ref setupRingGeometry after either moves.
+        void setupCopyGeometry();
+
         /// The packing for the ring @p ring centred at @p centerFull in
         /// a viewport of @p viewportWidth x @p viewportHeight. The hole is
         /// CONSERVATIVE - only pixels whose centre lies more than a pixel
@@ -1895,7 +1922,9 @@ namespace EdgeLighting
         /// with @c mCopyShader (neon-blit.frag compiled with NEON_BLIT_COPY:
         /// no mask) through @p mvp, the full-res transform: over the blit's
         /// and the ring's meshes alone when there is no fill - the buffer is
-        /// 0 everywhere else - and over the viewport when there is. Dithered
+        /// 0 everywhere else - over one box round the fill's band and the
+        /// blit (@c mComposite.copyMesh) with a shaped fill, and over the
+        /// viewport only for a fill that covers it. Dithered
         /// here, on the way to 8 bits, the dither the three passes would have
         /// applied.
         /// @pre Premultiplied-over blending; the caller's framebuffer and

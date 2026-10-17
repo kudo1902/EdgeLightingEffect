@@ -4,6 +4,7 @@
 #include "core/config.h"
 #include "core/edge-lighting.h"
 #include "renderer/neon-tuning.h"
+#include "renderer/neon-renderer.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 
@@ -937,9 +938,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         }
         if (cfg.neon.compositeScale > 0.0f)
         {
-            const float floorScale =
-                std::max(cfg.neon.resolutionScale, EdgeLighting::NeonConfig::COMPOSITE_MIN_SCALE);
-            const float drawnAt = std::clamp(cfg.neon.compositeScale, floorScale, 1.0f);
+            const float drawnAt = EdgeLighting::NeonRenderer::GetCompositeScale(cfg);
             ImGui::TextDisabled("Drawn at %.3f%s", drawnAt,
                                 (drawnAt >= 1.0f) ? " - the frame is a copy of it" : "");
         }

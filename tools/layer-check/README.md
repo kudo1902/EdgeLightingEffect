@@ -51,13 +51,18 @@ The scenes:
 - The neon's shared buffer (`compositeScale`, `NeonRenderer.Composite`), each
   scene twice - the main frame, and `+view`, the debug view of the buffer over
   it, so the buffer's own texels are hashed:
-  - `shared/default@0.5`: the buffer at 0.5. Its main frame must hash as
-    `neon/default@0.5`'s - turning the buffer on moves no main-frame pixel.
-  - `shared/default@0.5+host-read`: the same, read by the host
+  - `shared/default@0.5`: the scale set, but nothing reading the buffer, so
+    it is not drawn (no `published-in` line). `+view` reads it.
+  - `shared/default@0.5+host-read`: the same scene read by the host
     (`EdgeLightingEffect::AddHostRead`) rather than a layer. It has a
-    `published-in` line for `NeonRenderer.Composite#0`; `shared/default@0.5`,
-    with nothing reading the buffer, has none - it is drawn only while read.
+    `published-in` line for `NeonRenderer.Composite#0`, and its main frame
+    must hash as `neon/default@0.5`'s - drawing the buffer moves no
+    main-frame pixel.
   - `shared/default@1`, still and `+hue`: the main frame as the copy (pass 2s).
+  - `shared/default@0.5+step-to-1+view`: the shared scale alone changing
+    under a reader - 0.5, 1, 0.5, 0.5. Frame 0 must hash as
+    `shared/default@0.5+view`'s frame 0, frame 1 as `shared/default@1+view`'s,
+    frames 2 and 3 as `shared/default@0.5+view`'s.
   - `shared/default@1+opaque-only`: `debug.opaqueOnly` switched on from the
     third frame. Frames 2 and 3 must hash as `shared/default@1+fill-only`'s -
     the fill alone, never the previous frame's copy.

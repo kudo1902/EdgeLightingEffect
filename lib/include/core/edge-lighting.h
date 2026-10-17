@@ -124,8 +124,10 @@ namespace EdgeLighting
         /// declaration: added to every frame's reads, in the RENDER phase,
         /// with no reader (the schedule orders no @c Prepare after it), until
         /// @ref RemoveHostRead. Read the record through @ref GetBufferRegistry
-        /// once @ref Render returns. A key that names no buffer is logged by
-        /// the read diagnostics, as a renderer's would be.
+        /// once @ref Render returns. The read diagnostics log a key that names
+        /// no buffer, and a read of a @c DEBUG buffer - an intermediate its
+        /// producer may change with any optimisation - as a renderer's would
+        /// be: read a @c PUBLIC product.
         ///
         /// @returns false for an empty key, one longer than any buffer's
         ///          (@c BUFFER_KEY_CAPACITY), or one already declared.

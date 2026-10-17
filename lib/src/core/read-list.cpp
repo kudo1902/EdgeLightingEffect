@@ -203,12 +203,24 @@ namespace EdgeLighting
                       layer, read.key);
                 continue;
             }
-            if (!readerRepeated && record->visibility == BufferVisibility::DEBUG && read.reader &&
-                read.reader->GetLayer() != RendererLayer::DEBUG)
+            // The host's reads (EdgeLightingEffect::AddHostRead) have no
+            // reader, and are held to the same rule: a host is never the
+            // debug layer.
+            if (!readerRepeated && record->visibility == BufferVisibility::DEBUG &&
+                (!read.reader || read.reader->GetLayer() != RendererLayer::DEBUG))
             {
-                LOG_W("ReadList: layer 0x%x reads '%s', a DEBUG buffer - an intermediate its producer may "
-                      "change with any optimisation. Read a PUBLIC product instead.",
-                      layer, read.key);
+                if (read.reader)
+                {
+                    LOG_W("ReadList: layer 0x%x reads '%s', a DEBUG buffer - an intermediate its producer may "
+                          "change with any optimisation. Read a PUBLIC product instead.",
+                          layer, read.key);
+                }
+                else
+                {
+                    LOG_W("ReadList: the host reads '%s', a DEBUG buffer - an intermediate its producer may "
+                          "change with any optimisation. Read a PUBLIC product instead.",
+                          read.key);
+                }
             }
         }
     }
