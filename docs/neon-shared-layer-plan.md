@@ -1,8 +1,8 @@
 # Plan: the shared buffer as a core part of the neon
 
-Status: proposal, 2026-10-17. Nothing here is built yet. It replaces the
-design described in [`neon-shared-buffer.md`](neon-shared-buffer.md) once its
-steps land.
+Status: BUILT, 2026-10-17 (steps 1-4), with the change to step 1 its own gate
+forced. [`neon-shared-buffer.md`](neon-shared-buffer.md) describes the result;
+this page keeps the reasoning and the proposal as it was.
 
 ---
 
@@ -164,7 +164,7 @@ area.
 - Measure: the cost of a reader asking for the flat texture - expected to be
   one cheap pass over the lit area, against 1.3-2.2x today.
 
-**Step 4 - tools and docs.**
+**Step 4 - tools and docs.** DONE 2026-10-17: `PassRecorder` files `P1T` and `P1S`; `partition` copies the ring from its atlas on every other config; `neon-shared-buffer.md` rewritten around what was built (`current.svg`).
 Teach `PassRecorder` the new passes, extend `partition` to the copy and the
 assemble pass, rewrite `neon-shared-buffer.md`.
 

@@ -195,7 +195,54 @@ def proposed():
 
 
 # -----------------------------------------------------------------------------
-# 3. What runs, per kind of frame
+# 3. Now: what was built (steps 1-3 of the plan)
+# -----------------------------------------------------------------------------
+def current():
+    s = Svg(1240, 720, "The neon's shared light now: two parts, read or assembled")
+    s.text(30, 34, "Now - the screen is drawn from the shared parts; a flat texture is assembled from them",
+           size=16, weight="bold")
+    rows = [
+        ("Pass 0 / 0b - tables", ["~emission, glow coverage"], "Emission, GlowCover", "DEBUG", "plain", False),
+        ("Pass 1a - gather", ["~colour arriving at each point"], "Gather", "DEBUG", "plain", False),
+        ("Pass 1b / 1c - shading", ["~halo + bloom at resolutionScale"], "Scaled = Glow", "PUBLIC", "public", False),
+        ("Pass 1r - ring field bake", ["~a cache, on moving frames"], "RingField", "DEBUG", "plain", False),
+        ("Pass 1t - the edge ring", ["into the ring atlas: on a still frame's", "first, or while something reads it"],
+         "Ring", "PUBLIC", "public", False),
+        ("Pass 1s - flat texture", ["only while read; fill at s, then the", "light AVERAGED from Glow + Ring"],
+         "Composite", "PUBLIC", "plain", False),
+    ]
+    centres, bottom = phase1_frame(s, rows)
+    passes = [
+        ("Pass 2a - fill", ["~the opaque fill, full res"], "plain"),
+        ("Pass 2b - blit", ["~Glow scaled up, edge mask"], "plain"),
+        ("Pass 2c - edge ring", ["~atlas COPY, or shaded (moving, unread)"], "public"),
+    ]
+    ys, px, pw, _ = phase2_frame(s, passes)
+    s.arrow([(BUF_X + BUF_W, centres[2]), (655, centres[2]), (655, ys[1] + 28), (px, ys[1] + 28)])
+    s.arrow([(BUF_X + BUF_W, centres[4] - 6), (668, centres[4] - 6), (668, ys[2] + 28), (px, ys[2] + 28)])
+
+    rx, rw = 690, 250
+    s.text(rx, 418, "Readers", size=14, weight="bold")
+    parts_y, flat_y, view_y = 430, 544, 640
+    s.box(rx, parts_y, rw, 76, "a parts reader", ["~neon-light.glsl: Glow + Ring", "~cost: the ring via its atlas"],
+          "renderer")
+    s.box(rx, flat_y, rw, 76, "a flat-texture reader", ["~a host, a compositor", "~cost: + one assemble pass"], "host")
+    s.box(rx, view_y, rw, 60, "debug buffer view", ["~any record"], "renderer")
+    s.arrow([(655, centres[2]), (655, parts_y + 24), (rx, parts_y + 24)])
+    s.arrow([(668, centres[4] - 6), (668, parts_y + 44), (rx, parts_y + 44)])
+    s.arrow([(BUF_X + BUF_W, centres[5]), (678, centres[5]), (678, flat_y + 38), (rx, flat_y + 38)])
+
+    s.note(980, 440, "no pass shades the neon\ntwice: readers get the\ntextures the screen uses", size=12.5,
+           italic=False)
+    s.legend(980, 510, [("public", "PUBLIC: shared, screen uses it"), ("debug", "DEBUG: internal caches")])
+    s.box(PASS_X, bottom + 18, 570, 60, "", ["~still frame: the ring is copied from its atlas",
+                                             "~moving frame, nobody reading: the ring is shaded on screen, as before"],
+          "plain", center=True)
+    s.write("current.svg")
+
+
+# -----------------------------------------------------------------------------
+# 4. What runs, per kind of frame
 # -----------------------------------------------------------------------------
 def per_frame():
     cols = ["still frame", "something moved", "+ a parts reader", "+ a flat-texture reader"]
@@ -212,6 +259,12 @@ def per_frame():
             ["nothing extra"],
             ["+ one copy pass:", "fill + Glow + Ring at s"],
         ], ["public", "plain", "public", "public"]),
+        ("Built", [
+            ["ring COPIED from atlas", "1.04-1.07x (M2)"],
+            ["as before: ring shaded", "on the screen, 1.00x"],
+            ["ring into atlas, copied", "+0.01-0.03 ms"],
+            ["+ one assemble pass:", "fill + averaged light"],
+        ], ["public", "plain", "plain", "public"]),
     ]
     x0, y0, cw, rh, lw = 150, 70, 250, 84, 120
     s = Svg(x0 + cw * len(cols) + 30, y0 + 44 + rh * len(rows) + 60, "What the neon does on each kind of frame")
@@ -236,5 +289,6 @@ def per_frame():
 if __name__ == "__main__":
     today()
     proposed()
+    current()
     per_frame()
-    print("wrote 3 diagrams to", OUT)
+    print("wrote 4 diagrams to", OUT)

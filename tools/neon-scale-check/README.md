@@ -95,6 +95,11 @@ and a pixel drawn by neither shows the background (a dark crack). `check` sees
 that only on its twelve scenes; this tests it across N random configs, 1000 by
 default.
 
+Every other config declares a host read of the ring atlas
+(`NeonRenderer.Ring`), so its pass 2c is the atlas's COPY (the same mesh and
+transform, another program) rather than the ring's own shading; the summary
+says how many rings were copied, and it fails if none was.
+
 Each config draws at a random frame size (an odd one included), with a random
 rect size, fractional position (partly off screen too), corner radius and
 winding, line, glow reach, glow side, both cutoffs and resolution scale. The

@@ -5,6 +5,16 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Step 4 of the shared-layer plan: tools and docs
+
+- `partition` declares a host read of the ring atlas on every other config, so
+  pass 2c is the atlas's copy there: 1000 configs, the ring copied in 477, no
+  overlap, no gap. It fails if no ring was copied.
+- `docs/neon-shared-buffer.md` rewritten around what was built, with
+  `current.svg`; `per-frame.svg` gains the measured row.
+- Not regenerated: `neon-guide-figures` (still frames moved by up to 1 level
+  with the ring atlas; the guide's figures would churn for no visible change).
+
 ## 2026-10-17 - Step 3 of the shared-layer plan: the shared buffer assembled
 
 - **Pass 1s no longer draws the neon a second time.** It draws the fill at the

@@ -4,6 +4,7 @@
 #include "pass-recorder.h"
 
 #include "gl/gl-header.h"
+#include "renderer/neon-renderer.h"
 #include "util/capture-util.h"
 
 #include <algorithm>
@@ -222,6 +223,7 @@ namespace NeonScaleCheck
         PassRecorder::SetReadback(false);
 
         long ringDrawn = 0;
+        long ringCopied = 0;
         long covered = 0;
         long overlap = 0;
         long seamGap = 0;
@@ -235,6 +237,18 @@ namespace NeonScaleCheck
                 int width = 0;
                 int height = 0;
                 const Config config = RandomConfig(generator, width, height);
+                // Every other config with the ring atlas read, so pass 2c is
+                // its copy (the same mesh and transform, a different program)
+                // rather than the ring's own shading - both have to tile.
+                const bool atlas = (i % 2) == 1;
+                if (atlas)
+                {
+                    effect.AddHostRead(NeonRenderer::RING_KEY);
+                }
+                else
+                {
+                    effect.RemoveHostRead(NeonRenderer::RING_KEY);
+                }
                 effect.SetConfig(config);
                 effect.Update(0.0f);
 
@@ -252,6 +266,7 @@ namespace NeonScaleCheck
                 if (ring)
                 {
                     ++ringDrawn;
+                    ringCopied += (glGetUniformLocation(ring->program, "uRingAtlas") >= 0) ? 1 : 0;
                 }
                 if (!blit && !ring)
                 {
@@ -277,14 +292,16 @@ namespace NeonScaleCheck
         }
         PassRecorder::Release();
 
-        std::printf("%d configs, seed %u: ring drawn in %ld, %ld px covered, %ld px overlapping, %ld px of seam gap\n",
-                    configs, seed, ringDrawn, covered, overlap, seamGap);
-        if (ringDrawn == 0)
+        std::printf("%d configs, seed %u: ring drawn in %ld (copied from the ring atlas in %ld), %ld px covered, "
+                    "%ld px overlapping, %ld px of seam gap\n",
+                    configs, seed, ringDrawn, ringCopied, covered, overlap, seamGap);
+        if (ringDrawn == 0 || (configs > 1 && ringCopied == 0))
         {
             // Nothing was tested. A library without the edge ring, or a renamed
             // shader uniform PassRecorder names the passes by; either way a
             // pass here would be a false one.
-            std::printf("FAIL: the ring was never drawn, so nothing was tested. See tools/neon-scale-check/README.md.\n");
+            std::printf("FAIL: the ring was never drawn (or never copied from its atlas), so nothing was tested. "
+                        "See tools/neon-scale-check/README.md.\n");
             return 1;
         }
         if (failing)
