@@ -259,7 +259,8 @@ and dropped; the product stays.
 ### 4.5 The shared buffer
 
 `NeonRenderer.Composite` (`NeonRenderer::COMPOSITE_KEY`; in progress, see the
-progress log) is the whole neon layer - fill, glow, line, cut and cutoffs - at
+progress log, and [`neon-shared-buffer.md`](neon-shared-buffer.md) for a
+plain-language guide) is the whole neon layer - fill, glow, line, cut and cutoffs - at
 `NeonConfig::compositeScale` `s`, made only while that is above 0 and
 something reads it - a layer's declared read or the host's
 `EdgeLightingEffect::AddHostRead` - or `s` is 1. Pass 1s
