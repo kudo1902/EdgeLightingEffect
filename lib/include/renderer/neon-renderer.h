@@ -350,6 +350,38 @@ namespace EdgeLighting
         /// contract here and in CLAUDE.md's neon section first.
         static constexpr const char *GLOW_KEY = "NeonRenderer.Glow";
 
+        /// The key the neon's EDGE RING is published under (@ref BufferRegistry):
+        /// a PUBLIC product, the ring atlas (pass 1t) - with @ref GLOW_KEY,
+        /// one of the two parts the neon draws the screen from
+        /// (docs/neon-shared-layer-plan.md, step 2).
+        ///
+        /// @par What its texels mean
+        /// The edge ring's light exactly as pass 2c puts it on the screen, but
+        /// NOT dithered: premultiplied RGBA over transparent black, the
+        /// one-sided cut and the cutoffs applied, the filament included. A
+        /// texel the ring's shading discarded is an exact 0.
+        ///
+        /// @par Where they lie
+        /// Full resolution, texel for pixel, but PACKED: the ring's box as four
+        /// strips, the side ones transposed (@ref RingFieldLayout). A table,
+        /// so its record carries no placement: a reader finds a pixel's texel
+        /// through @ref GetSharedLight and neon-ring.glsl's neonRingTexel, never by
+        /// sampling it as an image. RGBA16F, NEAREST; no RGBA8 fallback - a
+        /// driver without half float never makes it.
+        ///
+        /// @par When
+        /// Made in the neon's @c Prepare on a frame something reads it (a
+        /// layer's @c CollectReads, a host's @c EdgeLightingEffect::AddHostRead)
+        /// or nothing moved - so a reader declares it to have it on every frame.
+        /// Its version moves when it is drawn and holds while a still frame
+        /// reuses it.
+        ///
+        /// @par What it constrains
+        /// The screen's ring pixels ARE these texels, dithered. A change that
+        /// draws a ring pixel the atlas does not hold, or holds one the screen
+        /// does not draw, breaks every reader.
+        static constexpr const char *RING_KEY = "NeonRenderer.Ring";
+
         /// The key the neon's SHARED buffer is published under
         /// (@ref BufferRegistry): a PUBLIC product - the whole neon layer,
         /// drawn a second time at @c NeonConfig::compositeScale, for any layer
@@ -432,6 +464,43 @@ namespace EdgeLighting
         /// @c uInsideCutoffSoftness, @c uOutsideCutoff, @c uOutsideCutoffSoftness.
         /// A reader that declares the same set uploads through here.
         static void UploadEdgeMask(ShaderProgram &shader, const EdgeMask &mask);
+
+        /// Everything a reader of the neon's light needs to rebuild it from
+        /// its two parts - @ref GLOW_KEY and @ref RING_KEY - through
+        /// neon-light.glsl (ShaderSource::NEON_LIGHT_GLSL): the two textures,
+        /// where the glow lies, where the ring's pixels are and how they are
+        /// packed, and the edge mask the screen's blit applies. All in the
+        /// caller's framebuffer px, y up, or rect-local full-res px.
+        typedef struct SharedLight
+        {
+            /// Both parts hold the light this frame's screen got. False on a
+            /// frame the glow was not drawn, or the ring atlas was neither
+            /// drawn nor reused - declare a read of @ref RING_KEY to have it
+            /// on moving frames too.
+            bool valid = false;
+            unsigned int glowTexture = 0; ///< @ref GLOW_KEY's texture.
+            glm::vec2 glowOrigin{0.0f};   ///< Its box's lower-left corner, caller px.
+            glm::vec2 glowSize{0.0f};     ///< Its box's extent, caller px.
+            unsigned int ringTexture = 0; ///< @ref RING_KEY's texture.
+            glm::vec2 center{0.0f};       ///< The rect's centre, caller px.
+            glm::vec2 ringOuter{0.0f};    ///< The ring's outer box, half extents, rect-local px.
+            glm::vec2 ringHole{0.0f};     ///< The ring's hole, half extents; 0 on an axis: none.
+            glm::vec2 ringLo{0.0f};       ///< The atlas layout's box corner, rect-local px.
+            glm::vec4 ringStrips{0.0f};   ///< The atlas layout's hole, box px, x0, y0, x1, y1.
+            glm::vec2 ringRows{0.0f};     ///< The atlas layout's side-strip rows.
+            EdgeMask mask;                ///< @ref GetEdgeMask's, for the glow's pixels.
+        } SharedLight;
+
+        /// The neon's light as this frame left it (@ref SharedLight): read it after
+        /// @c EdgeLightingEffect::Render, or in a @c Render (or a @c Prepare
+        /// ordered after the neon's) of a layer that declared both reads.
+        const SharedLight &GetSharedLight() const { return mSharedLight; }
+
+        /// Sets @p layer on @p shader, in use, under the names neon-light.glsl
+        /// declares, and binds the glow to texture unit @p glowUnit and the
+        /// ring atlas to @p ringUnit. The one upload, so a reader and the
+        /// neon's own reads (the shared buffer's assemble pass) cannot differ.
+        static void UploadSharedLight(ShaderProgram &shader, const SharedLight &light, int glowUnit, int ringUnit);
 
         /// Releases every GL object it holds, through their RAII wrappers; the
         /// context they were created in must be current.
@@ -2157,6 +2226,7 @@ namespace EdgeLighting
         GlowField mGlowField;       ///< P1f, read by P1c - see @ref GlowField.
         RingField mRingField;       ///< P1r, read by P1t (or P2r) - see @ref RingField.
         RingAtlas mRingAtlas;       ///< P1t, read by P2c's copy - see @ref RingAtlas.
+        SharedLight mSharedLight;               ///< What this frame shares of its light - see @ref GetSharedLight.
         CompositeTarget mComposite; ///< P1s, the shared buffer - see @ref CompositeTarget.
         OffscreenState mOffscreen;  ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
         FramePlan mFramePlan;       ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.

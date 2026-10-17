@@ -5,6 +5,26 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Step 2 of the shared-layer plan: the parts, shared
+
+- **`NeonRenderer.Ring` is PUBLIC** (`RING_KEY`, contract beside it): the ring
+  atlas, the second part the screen is drawn from. A reader declares it, so it
+  is drawn on moving frames too.
+- **`neon-light.glsl`** (`ShaderSource::NEON_LIGHT_GLSL` for a host):
+  `neonLight(fragPx, px)` rebuilds the light from the glow and the ring atlas -
+  the ring's own pixels from the atlas (`neon-ring.glsl`'s `neonRingTexel`,
+  now the one copy `neon-field.frag` uses too), every other pixel from the
+  glow with the blit's edge mask. `neonEdgeMaskAt` / `sdRoundBoxPixelWidth`
+  take the pixel width as an argument, so the mask can be evaluated off the
+  fragment's own pixel. `NeonRenderer::GetSharedLight` / `UploadSharedLight`
+  carry the rest (textures, the glow's placement, the ring's boxes and
+  packing, the edge mask).
+- **Verified** by the new `neon-scale-check parts`: twelve scenes x three
+  scales x still and hue, a host rebuilding the light from the parts against
+  the screen - max 1 level everywhere (the screen's dither), 100% of lit
+  pixels within 1. With nothing reading the parts, `layer-check` is
+  byte-identical to step 1 (all 300 frames), `check` and `partition` pass.
+
 ## 2026-10-17 - Step 1 of the shared-layer plan: the ring atlas
 
 [`neon-shared-layer-plan.md`](neon-shared-layer-plan.md) step 1: the edge ring

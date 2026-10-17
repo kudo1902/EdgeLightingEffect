@@ -2228,7 +2228,9 @@ namespace EdgeLighting
         mBufferRecords.field = RegisterBuffer(mGlowField.buffer);
         mBufferRecords.scaled = RegisterBuffer(mScaledBuffer);
         mBufferRecords.ringField = RegisterBuffer(mRingField.buffer);
-        mBufferRecords.ringAtlas = RegisterBuffer(mRingAtlas.buffer);
+        // The ring atlas is a product: with the glow, what the screen is drawn
+        // from - its contract is RING_KEY's (neon-renderer.h).
+        mBufferRecords.ringAtlas = RegisterBuffer(mRingAtlas.buffer, RING_KEY, BufferVisibility::PUBLIC);
         mBufferRecords.gradientRing = RegisterBuffer(mGradientLUT, GRADIENT_RING_KEY);
         // The reduced buffer a second time, as the product: its contract is
         // GLOW_KEY's (neon-renderer.h), not the intermediate's.
@@ -2263,6 +2265,33 @@ namespace EdgeLighting
         shader.SetUniform("uInsideCutoffSoftness", mask.insideCutoffSoftness);
         shader.SetUniform("uOutsideCutoff", mask.outsideCutoff);
         shader.SetUniform("uOutsideCutoffSoftness", mask.outsideCutoffSoftness);
+    }
+
+    void NeonRenderer::UploadSharedLight(ShaderProgram &shader, const SharedLight &light, int glowUnit, int ringUnit)
+    {
+        glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(glowUnit));
+        glBindTexture(GL_TEXTURE_2D, light.glowTexture);
+        glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(ringUnit));
+        glBindTexture(GL_TEXTURE_2D, light.ringTexture);
+        glActiveTexture(GL_TEXTURE0);
+        shader.SetUniform("uLightGlow", glowUnit);
+        shader.SetUniform("uLightGlowOrigin", light.glowOrigin);
+        shader.SetUniform("uLightGlowSize", light.glowSize);
+        shader.SetUniform("uLightRing", ringUnit);
+        shader.SetUniform("uLightCenter", light.center);
+        shader.SetUniform("uLightRingOuter", light.ringOuter);
+        shader.SetUniform("uLightRingHole", light.ringHole);
+        shader.SetUniform("uLightRingLo", light.ringLo);
+        shader.SetUniform("uLightRingStrips", light.ringStrips);
+        shader.SetUniform("uLightRingRows", light.ringRows);
+        shader.SetUniform("uLightRectSize", light.mask.rectSize);
+        shader.SetUniform("uLightCornerRadius", light.mask.cornerRadius);
+        shader.SetUniform("uLightGlowSide", light.mask.glowSide);
+        shader.SetUniform("uLightGlowSideSoftness", light.mask.glowSideSoftness);
+        shader.SetUniform("uLightInsideCutoff", light.mask.insideCutoff);
+        shader.SetUniform("uLightInsideCutoffSoftness", light.mask.insideCutoffSoftness);
+        shader.SetUniform("uLightOutsideCutoff", light.mask.outsideCutoff);
+        shader.SetUniform("uLightOutsideCutoffSoftness", light.mask.outsideCutoffSoftness);
     }
 
     bool NeonRenderer::Initialize()
@@ -2406,8 +2435,10 @@ namespace EdgeLighting
 
     void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
-        // Nothing for Render to composite until the glow's passes below say so.
+        // Nothing for Render to composite, and nothing shared, until the glow's
+        // passes below say so.
         mFramePlan.glowReady = false;
+        mSharedLight.valid = false;
         // And nothing wants the shared buffer until the decision below says
         // so: a frame that returns early (layer off, fill only) reads it no
         // more than one that draws, so Update's idle release must count it.
@@ -2846,6 +2877,25 @@ namespace EdgeLighting
             bufferUse.ringAtlasRead = ringAtlasReady;
             bufferUse.compositeRead = compositeReady;
             publishBuffers(centerFull, gatherRegion, scaledRegion, bufferUse, config);
+
+            // The light as the two parts hold it, for GetSharedLight: the glow where
+            // its record is placed, the ring where the screen draws it and as
+            // its atlas packs it. Only while both hold this frame's.
+            if (ringAtlasReady)
+            {
+                mSharedLight.valid = true;
+                mSharedLight.glowTexture = mScaledBuffer.GetTextureId();
+                mSharedLight.glowOrigin = centerFull + scaledRegion.origin;
+                mSharedLight.glowSize = scaledRegion.size;
+                mSharedLight.ringTexture = mRingAtlas.buffer.GetTextureId();
+                mSharedLight.center = centerFull;
+                mSharedLight.ringOuter = mRingBounds.outer;
+                mSharedLight.ringHole = mRingBounds.hole;
+                mSharedLight.ringLo = ringLayout.origin;
+                mSharedLight.ringStrips = glm::vec4(ringLayout.hole);
+                mSharedLight.ringRows = glm::vec2(ringLayout.rows);
+                mSharedLight.mask = GetEdgeMask(config, viewportHeight);
+            }
         }
 
         // Hand back the blend state every renderer leaves behind: the passes

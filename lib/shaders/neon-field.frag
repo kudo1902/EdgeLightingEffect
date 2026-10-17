@@ -106,31 +106,10 @@ uniform vec2      uGatherUVScale;
 uniform vec2      uGatherUVOffset;
 
 #ifdef NEON_FIELD_RING
-// The atlas texel holding the ring pixel at vPos. Bottom strip, then the top
-// stacked on it, then the left and the right transposed - the layout
-// computeRingFieldLayout builds and drawRingStrips draws (pass 1r and pass 1t).
-// Keep the three together.
+// The atlas texel holding the ring pixel at vPos: neon-ring.glsl's lookup, the
+// one copy the ring atlas's readers share.
 ivec2 ringTexel() {
-    ivec2 q    = ivec2(floor(vPos - uRingLo));
-    ivec4 hole = ivec4(uRingHole);
-    ivec2 texel;
-    if (q.y < hole.y)
-    {
-        texel = q;
-    }
-    else if (q.y >= hole.w)
-    {
-        texel = ivec2(q.x, q.y - hole.w + hole.y);
-    }
-    else if (q.x < hole.x)
-    {
-        texel = ivec2(q.y - hole.y, int(uRingRows.x) + q.x);
-    }
-    else
-    {
-        texel = ivec2(q.y - hole.y, int(uRingRows.y) + q.x - hole.z);
-    }
-    return texel;
+    return neonRingTexel(vPos, uRingLo, uRingHole, uRingRows);
 }
 #endif
 

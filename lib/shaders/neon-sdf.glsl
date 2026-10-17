@@ -39,13 +39,25 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // moves one axis of p. q and length(max(q, 0)) are sdRoundBox's own, so a
 // caller taking both pays for the length once. A derivative: take it in
 // uniform control flow.
-float sdRoundBoxFwidth(vec2 p, vec2 b, float r) {
+vec2 sdRoundBoxGradAbs(vec2 p, vec2 b, float r) {
     vec2  q  = abs(p) - b + r;
     vec2  qp = max(q, 0.0);
     float l  = length(qp);
-    vec2  g  = (q.x > 0.0 && q.y > 0.0) ? qp / l
-             : ((q.x > q.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
-    return dot(g, fwidth(p));
+    return (q.x > 0.0 && q.y > 0.0) ? qp / l
+         : ((q.x > q.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+}
+
+float sdRoundBoxFwidth(vec2 p, vec2 b, float r) {
+    return dot(sdRoundBoxGradAbs(p, b, r), fwidth(p));
+}
+
+// sdRoundBoxFwidth without the derivative: the same gradient against a pixel
+// of px along each axis - for a reader that evaluates the outline away from
+// its own fragment (a supersampled read of the neon's light, neon-light.glsl),
+// or below non-uniform control flow, where fwidth is undefined. Equal to
+// sdRoundBoxFwidth wherever fwidth(p) is (px, px).
+float sdRoundBoxPixelWidth(vec2 p, vec2 b, float r, float px) {
+    return dot(sdRoundBoxGradAbs(p, b, r), vec2(px));
 }
 
 // --- Band boundary distances -------------------------------------------

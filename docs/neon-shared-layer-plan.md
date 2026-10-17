@@ -75,9 +75,9 @@ Two ways, so every kind of reader is served:
 
 1. **The parts (free).** A layer of this library, or a host that can run our
    shader code, samples the glow and the ring atlas directly with a new shader
-   chunk, `neon-layer.glsl`: `neonLayer(pixel)` returns the neon's colour at
+   chunk, `neon-light.glsl`: `neonLight(pixel)` returns the neon's colour at
    that pixel - exactly what the screen got, before dither. The CPU side is one
-   call, `NeonRenderer::UploadLayer(shader, inputs)`, like `UploadEdgeMask`
+   call, `NeonRenderer::UploadSharedLight(shader, GetSharedLight(), ...)`, like `UploadEdgeMask`
    today.
 2. **One flat texture (cheap, on demand).** A host that needs a single plain
    texture (to hand to a compositor, say) asks for `NeonRenderer.Composite`
@@ -147,7 +147,7 @@ phase 2; skip re-shading it on frames where nothing moved.
   M2 and the AMD, against `main` and this branch. **Stop here if moving frames
   get slower than today by more than a few percent.**
 
-**Step 2 - share the parts.**
+**Step 2 - share the parts.** DONE 2026-10-17. The chunk is `neon-light.glsl` (`neonLight`), the API `GetSharedLight` / `UploadSharedLight` - names chosen so they do not collide with `BaseRenderer::GetLayer`. The probe is `neon-scale-check parts`: within 1 level everywhere.
 Register the ring atlas as a PUBLIC product (`NeonRenderer.Ring`) with its
 layout; add `neon-layer.glsl` and `NeonRenderer::GetLayer` / `UploadLayer`.
 - Check: a probe reader rebuilds the neon from the parts and matches the

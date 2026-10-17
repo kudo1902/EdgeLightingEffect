@@ -41,6 +41,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-mask.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-light.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
@@ -121,6 +123,15 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl" NEON_GRADE)
 # (neon.frag's edge ring, neon-blit.frag, neon-field.frag's ring composite),
 # after @NEON_SDF@, whose distances it reads. One copy; not a shader on its own.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-mask.glsl" NEON_MASK)
+
+# The edge ring's packing - the strip lookup of RingFieldLayout - via
+# @NEON_RING@ into neon-field.frag (the ring field's composite and the ring
+# atlas's copy) and the neon's light, after @NEON_TUNING@. And the neon's
+# light itself, read from its two shared parts (the glow and the ring atlas),
+# via @NEON_LIGHT@ after @NEON_MASK@ and @NEON_RING@ - also exported whole as
+# ShaderSource::NEON_LIGHT_GLSL for a host. Neither is a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring.glsl" NEON_RING)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-light.glsl" NEON_LIGHT)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).

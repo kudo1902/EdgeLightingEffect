@@ -18,6 +18,10 @@
 // composite - after neon-sdf.glsl, whose distances it reads; into the field's
 // composite under NEON_FIELD_RING only, the ring's variant that applies it, so
 // the glow field's composite does not compile it for nothing.
+// neon-ring.glsl (the ring atlas's strip lookup) goes into the field's
+// composite, which reads a packed ring, and neon-light.glsl (the neon's light
+// from its two shared parts) is exported, with the tuning header and the sdf,
+// mask and ring chunks ahead of it, as NEON_LIGHT_GLSL for a host's shader.
 // spotlight-dither.glsl (the spotlight's output noise) goes into the two
 // programs that write that layer to the caller's framebuffer - spotlight.frag
 // and the spotlight's blit.
@@ -90,7 +94,19 @@ namespace EdgeLighting
 #ifdef NEON_FIELD_RING
 @NEON_MASK@
 #endif
+@NEON_RING@
 @NEON_FIELD_FRAG_CONTENT@
+)shadersrc";
+
+                // The neon's light from its two shared parts, as one chunk for
+                // a host's own fragment shader: put it after the version line
+                // and call neonLight (see neon-light.glsl). Not a shader.
+                static const char *const NEON_LIGHT_GLSL = R"shadersrc(
+@NEON_TUNING@
+@NEON_SDF@
+@NEON_MASK@
+@NEON_RING@
+@NEON_LIGHT@
 )shadersrc";
 
                 static const char *const BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@

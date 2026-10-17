@@ -187,6 +187,9 @@ bool neonEdgeMaskLive(int glowSide, float inCutoff, float outCutoff)
 // cut alone, and one cutoff pays for its own side, as the blit did before
 // this chunk (its branches were measured a straight saving). Every condition
 // is of uniforms, so control flow stays uniform.
+float neonEdgeMaskAt(vec2 p, vec2 halfSize, float r, float aa, int glowSide, float sideSoftness, float inCutoff,
+                     float inSoftness, float outCutoff, float outSoftness);
+
 float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftness, float inCutoff,
                    float inSoftness, float outCutoff, float outSoftness)
 {
@@ -194,8 +197,21 @@ float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftn
     {
         return 1.0;
     }
-    float d  = sdRoundBox(p, halfSize, r);
     float aa = max(sdRoundBoxFwidth(p, halfSize, r), 1e-6);
+    return neonEdgeMaskAt(p, halfSize, r, aa, glowSide, sideSoftness, inCutoff, inSoftness, outCutoff, outSoftness);
+}
+
+// neonEdgeMask with the pixel width aa given rather than taken from a
+// derivative - sdRoundBoxPixelWidth's - so it may be called anywhere: at
+// points other than the fragment's own, and in non-uniform control flow.
+float neonEdgeMaskAt(vec2 p, vec2 halfSize, float r, float aa, int glowSide, float sideSoftness, float inCutoff,
+                     float inSoftness, float outCutoff, float outSoftness)
+{
+    if (!neonEdgeMaskLive(glowSide, inCutoff, outCutoff))
+    {
+        return 1.0;
+    }
+    float d  = sdRoundBox(p, halfSize, r);
     NeonEdge e = neonEdgeSide(d, aa, sideSoftness);
     float mask = neonSideCut(e, glowSide);
     bool cutIn  = glowSide != GLOW_SIDE_OUTSIDE && inCutoff  < 0.5 * CUTOFF_NEUTRALISED;

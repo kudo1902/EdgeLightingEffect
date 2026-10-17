@@ -131,6 +131,23 @@ exactly even where they meet at T-junctions. Run this after touching any of
 those, and on every GPU the scaled path ships to: the last of them is a
 property of the rasteriser, which only running on it can confirm.
 
+## `parts`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check parts [--max 1] [--within1 99.9]
+```
+
+Checks that the neon's two shared parts - the glow (`NeonRenderer.Glow`) and
+the ring atlas (`NeonRenderer.Ring`) - are enough to rebuild what the screen
+got. For every scene at scales 1, 0.5 and 0.25, still and under a rotating
+hue, with no opaque fill, it declares host reads of both parts, draws three
+frames, then draws a reader's fullscreen pass - `ShaderSource::NEON_LIGHT_GLSL`
+and `neonLight(gl_FragCoord.xy, 1.0)`, uniforms from
+`NeonRenderer::UploadSharedLight` - over transparent black, and compares the
+two. The screen dithers and the reader does not, so 1 level is the floor.
+Exits 1 when a frame exceeds `--max` or has fewer than `--within1` percent of
+its lit pixels within 1.
+
 ## `generate`
 
 ```bash
