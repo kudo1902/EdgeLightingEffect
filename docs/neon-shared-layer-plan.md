@@ -129,7 +129,12 @@ parts are not offered (the flat texture still can be).
 
 Each step ships on its own and is checked before the next.
 
-**Step 1 - the ring atlas (the core change).**
+**Step 1 - the ring atlas (the core change).** DONE 2026-10-17, with one
+change from this plan, forced by its own gate: drawn on EVERY frame the atlas
+made moving frames 5-26% slower, so it is drawn only on the first frame
+nothing moved (still frames then copy it, 1.04-1.07x) and on frames something
+reads it; other moving frames draw the ring on the screen as before. See the
+progress log.
 Draw the ring into the packed atlas in phase 1; copy it to the screen in
 phase 2; skip re-shading it on frames where nothing moved.
 - Reuses: `RingFieldLayout`, `computeRingFieldLayout`, the per-strip

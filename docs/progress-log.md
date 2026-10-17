@@ -5,6 +5,54 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Step 1 of the shared-layer plan: the ring atlas
+
+[`neon-shared-layer-plan.md`](neon-shared-layer-plan.md) step 1: the edge ring
+drawn into a texture (pass 1t, `mRingAtlas`, `NeonRenderer.Ring`, DEBUG for
+now), packed as the ring field is, and copied to the screen by pass 2c
+(`mRingCopyShader`, `neon-field.frag` with `NEON_RING_COPY`).
+
+**First version: the atlas on every frame - failed the step's gate.** Apple M2
+Pro, Release, 1080p, the twelve scenes, medians of four interleaved rounds,
+branch (`c08639a`) / atlas, above 1 = atlas faster:
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --- | --- | ---- |
+| still | 1.04 | 1.05 | 1.10 |
+| hue | 0.91 | 0.88 | 0.86 |
+| intensity | 0.87 | 0.77 | 0.74 |
+| arc-wipe | 0.95 | 0.94 | 0.94 |
+| segment-travel | 0.95 | 0.96 | 0.96 |
+
+The atlas's clear, four strip draws and the copy cost 0.01-0.03 ms on every
+moving frame, for a ring no later frame copied. The plan said to stop if
+moving frames got slower by more than a few percent.
+
+**Kept: the atlas only where it is copied again or read.** Drawn on the first
+frame nothing moved (every still frame after copies it) and on any frame
+something reads `NeonRenderer.Ring`; a moving frame nobody reads draws the
+ring on the screen as before. Same measurement:
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --- | --- | ---- |
+| still | 1.07 (0.87-1.31) | 1.04 | 1.05 |
+| hue | 1.00 | 1.00 | 1.00 |
+| intensity | 1.00 | 1.00 | 1.00 |
+| arc-wipe | 1.00 | 1.00 | 1.00 |
+| segment-travel | 1.00 | 1.00 | 1.00 |
+
+The first frame is about 1.4 ms slower (35 -> 36.4 ms): the copy's program.
+The first version's numbers stay the price of a READER of the ring on a moving
+frame (step 2): 0.01-0.03 ms.
+
+- **Pixels.** The cover set (every frame moves): byte-identical to the branch.
+  The page's still frames: within 1 level (the ring shaded rather than
+  composited from its field, through half float). `check` and `partition`
+  pass. `layer-check`: 144 of 300 frames differ, all still neon frames; +0.6 MB
+  of textures where the atlas is held.
+- **Tools.** `PassRecorder` files pass 1t as `P1T`, so `partition` and the
+  guide's figures still find the screen's ring (the copy, `P2C`) and pass 1b.
+
 ## 2026-10-17 - The shared buffer's scale-1 copy: timed, and removed
 
 At `compositeScale` 1 the main frame used to be one copy of the shared buffer

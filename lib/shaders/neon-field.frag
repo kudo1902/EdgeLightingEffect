@@ -1,5 +1,11 @@
 precision highp float;
 
+// NEON_RING_COPY is the ring atlas's copy (pass 2c, docs/neon-shared-layer-plan.md
+// step 1): the ring's packing and strip lookup, and nothing of the field.
+#if defined(NEON_RING_COPY) && !defined(NEON_FIELD_RING)
+#define NEON_FIELD_RING
+#endif
+
 // ---------------------------------------------------------------------------
 // The hue-invariant field's composite (pass 1c).
 //
@@ -52,6 +58,16 @@ precision highp float;
 // cutoffs in after its tone map; this composite does the same, from the
 // pixel's own distance to the edge, so a ring with either still takes its
 // field.
+//
+// That composite draws either the caller's framebuffer (uDither 1) or, since
+// the ring atlas (pass 1t), the atlas itself through the strips' own
+// projections, where each fragment's box pixel is its own texel (uDither 0:
+// the atlas is read back and dithered by its copy).
+//
+// NEON_RING_COPY copies the ring atlas onto the caller's framebuffer, in pass
+// 2c's place: the same strip lookup, the atlas's texel as it is, and the output
+// dither. A texel the ring's shading discarded is exactly 0 and is discarded
+// again, so it leaves the target as that discard did.
 // ---------------------------------------------------------------------------
 
 in vec2 vPos;
@@ -62,6 +78,10 @@ uniform sampler2D uField;       ///< Fa (.r) and, with segments, Fs (.g): R16F o
 uniform vec2      uRingLo;      ///< vPos (full-res px) of the ring box's lower-left pixel corner.
 uniform vec4      uRingHole;    ///< Box pixels the ring never draws: [x0, x1) x [y0, y1), as x0, y0, x1, y1.
 uniform vec2      uRingRows;    ///< First atlas row of the left strip and of the right strip.
+uniform int       uDither;      ///< 1 onto the caller's framebuffer, 0 into the ring atlas.
+#ifdef NEON_RING_COPY
+uniform sampler2D uRingAtlas;   ///< The ring atlas: final premultiplied colours, RGBA16F, NEAREST.
+#endif
 
 // The one-sided cut and the cutoffs, as the ring's own shading takes them
 // (uploadNeonUniforms at scale 1.0): full-res px, a disabled cutoff at
@@ -85,11 +105,12 @@ uniform float     uFieldGain;   ///< I / I0: the neon's intensity over the one t
 uniform vec2      uGatherUVScale;
 uniform vec2      uGatherUVOffset;
 
-void main() {
 #ifdef NEON_FIELD_RING
-    // Bottom strip, then the top stacked on it, then the left and the right
-    // transposed - the layout computeRingFieldLayout builds and
-    // renderRingFieldPass bakes. Keep the three together.
+// The atlas texel holding the ring pixel at vPos. Bottom strip, then the top
+// stacked on it, then the left and the right transposed - the layout
+// computeRingFieldLayout builds and drawRingStrips draws (pass 1r and pass 1t).
+// Keep the three together.
+ivec2 ringTexel() {
     ivec2 q    = ivec2(floor(vPos - uRingLo));
     ivec4 hole = ivec4(uRingHole);
     ivec2 texel;
@@ -109,7 +130,20 @@ void main() {
     {
         texel = ivec2(q.y - hole.y, int(uRingRows.y) + q.x - hole.z);
     }
-    vec2 field = texelFetch(uField, texel, 0).rg;
+    return texel;
+}
+#endif
+
+void main() {
+#ifdef NEON_RING_COPY
+    vec4 ring = texelFetch(uRingAtlas, ringTexel(), 0);
+    if (ring == vec4(0.0)) {
+        discard;
+    }
+    fragColor = vec4(neonDither(ring.rgb), ring.a);
+#else
+#ifdef NEON_FIELD_RING
+    vec2 field = texelFetch(uField, ringTexel(), 0).rg;
 #else
     vec2 field = texelFetch(uField, ivec2(floor((vPos - uFieldOrigin) * uFieldTexelScale)), 0).rg;
 #endif
@@ -155,10 +189,13 @@ void main() {
 
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
 #ifdef NEON_FIELD_RING
-    // The output dither, as the ring's own shading writes it (neon.frag): this
-    // is a write to the caller's framebuffer. Pass 1c's to the reduced buffer
-    // is not dithered; the blit is.
-    result = neonDither(result);
+    // The output dither, as the ring's own shading writes it (neon.frag), on a
+    // write to the caller's framebuffer - not into the ring atlas, whose copy
+    // dithers. Pass 1c's to the reduced buffer is not dithered; the blit is.
+    if (uDither != 0) {
+        result = neonDither(result);
+    }
 #endif
     fragColor = vec4(result, alpha);
+#endif
 }

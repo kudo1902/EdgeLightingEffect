@@ -250,6 +250,33 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   and `uploadNeonUniforms` does not send it to `mFieldBakeShader` (I63) - add a
   uniform read only after the grade and it joins that exception.
 
+  **The edge ring can be drawn into a ring atlas** (pass 1t, `mRingAtlas`,
+  step 1 of [`docs/neon-shared-layer-plan.md`](docs/neon-shared-layer-plan.md)):
+  the ring's final premultiplied colours, undithered, RGBA16F, full
+  resolution, packed exactly as the ring field is (`RingFieldLayout`,
+  `computeRingFieldLayout`; both passes draw through `drawRingStrips`, the
+  layout's box per strip - V24's fix) - shaded by `mRingShader` with `uDither`
+  0, or composited from the ring field by `mRingFieldCompositeShader` with
+  `uDither` 0. Pass 2c then COPIES it (`renderRingCopyPass`, `mRingCopyShader`
+  = `neon-field.frag` with `NEON_RING_COPY`: the strip lookup, `texelFetch`,
+  the output dither, and a discard of an exact-0 texel so a pixel the ring's
+  shading discarded stays untouched) over `mRingMesh` through the blit's
+  matrix, so the partition holds. It is drawn only on the FIRST frame nothing
+  moved (`reuseOffscreen` with no atlas yet; every still frame after copies
+  it - 1.04-1.07x on still frames, M2, 1080p) and on any frame something
+  reads `NeonRenderer.Ring`; a frame where something moved and nothing reads
+  it draws the ring on the screen as before (byte-identical: drawn always,
+  the atlas cost 5-26% on moving frames - clear, four strip draws, copy - for
+  a ring nothing copied again). Still frames land within 1 level of before
+  (the ring is shaded, not composited from its field, and goes through half
+  float); the ring field is not decided on a frame the atlas serves, so a
+  still config never bakes it. Reused on `mOffscreen.reusable` plus an equal
+  viewport and layout (`RingFieldLayout::operator==`); cleared on a frame it
+  was neither drawn nor reused. No RGBA8 fallback: without half float
+  `mRingAtlas.unavailable` sends the ring to the screen directly for good.
+  `PassRecorder` files pass 1t as P1T (offscreen `uRingHole`, or offscreen
+  `neon.frag` with `uBlitOwnsCut` 0) and the copy as P2C.
+
   **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
   I45): with no segments, every lit arc over the whole ring and no stops of its
   own, and a gradient ring opaque at every texel (`GradientRingLUT::IsOpaque`),

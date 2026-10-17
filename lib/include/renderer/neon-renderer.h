@@ -967,6 +967,12 @@ namespace EdgeLighting
             glm::ivec4 hole{0};     ///< Box px the ring never draws, [x0, x1) x [y0, y1) as x0, y0, x1, y1.
             glm::ivec2 rows{0};     ///< First atlas row of the left strip and of the right strip.
             glm::ivec2 atlas{0};    ///< The buffer's size, in texels.
+
+            bool operator==(const RingFieldLayout &o) const
+            {
+                return origin == o.origin && size == o.size && hole == o.hole && rows == o.rows && atlas == o.atlas;
+            }
+            bool operator!=(const RingFieldLayout &o) const { return !(*this == o); }
         } RingFieldLayout;
 
         /// The two limits a neon.frag program shades within, as a pair: the
@@ -1227,6 +1233,33 @@ namespace EdgeLighting
             LazyBake schedule;
         } RingField;
 
+        /// The edge ring as a texture (pass 1t, read by pass 2c's copy): the
+        /// ring the screen shows, final premultiplied colours, undithered, at
+        /// full resolution, packed as @c layout - the ring field's packing
+        /// (@ref RingFieldLayout, @ref computeRingFieldLayout): four strips,
+        /// the side ones transposed. Drawn on the first frame nothing moved -
+        /// every still frame after it copies the ring instead of shading it -
+        /// and on any frame something reads it (NeonRenderer.Ring); a frame where
+        /// something moved and nothing reads it draws the ring on the screen
+        /// directly, as before (docs/neon-shared-layer-plan.md, step 1).
+        typedef struct RingAtlas
+        {
+            /// RGBA16F, NEAREST - full res, read texel for pixel. No RGBA8
+            /// fallback: the copy adds the output dither after reading it,
+            /// which needs the tails unrounded (R7). A driver that refuses
+            /// half float sets @c unavailable and the ring is drawn on the
+            /// screen directly, as before.
+            Framebuffer buffer{"NeonRenderer.Ring"};
+            RingFieldLayout layout{}; ///< The packing it holds.
+            /// The layout's box as one quad, drawn per strip as pass 1r draws
+            /// its own (@ref drawRingStrips) - its own mesh, so the two passes
+            /// never upload over each other's.
+            Mesh box{"NeonRenderer.RingAtlasBox"};
+            bool drawn = false;       ///< It holds this frame's ring: drawn or reused last frame.
+            glm::ivec2 viewport{0};   ///< The viewport it was drawn for.
+            bool unavailable = false; ///< No half-float target: the ring is drawn directly for good.
+        } RingAtlas;
+
         /// What the shared buffer holds, for its reuse (@ref CompositeTarget).
         typedef struct CompositeCache
         {
@@ -1340,6 +1373,7 @@ namespace EdgeLighting
             BufferHandle field = -1;             ///< @c mGlowField.buffer, placed where pass 1c reads it.
             BufferHandle scaled = -1;            ///< @c mScaledBuffer, placed.
             BufferHandle ringField = -1;         ///< @c mRingField.buffer, a table: four strips packed, no one box.
+            BufferHandle ringAtlas = -1;         ///< @c mRingAtlas.buffer, a table: the ring, packed as the field is.
             BufferHandle gradientRing = -1;      ///< @c mGradientLUT, a table, under @ref GRADIENT_RING_KEY.
             BufferHandle glow = -1;              ///< @c mScaledBuffer again, as the PUBLIC product @ref GLOW_KEY, placed like @c scaled.
             BufferHandle composite = -1;         ///< @c mComposite.buffer, the PUBLIC product @ref COMPOSITE_KEY, placed over the viewport.
@@ -1363,6 +1397,8 @@ namespace EdgeLighting
             bool scaledWritten = false;    ///< Pass 1b or 1c drew the reduced buffer rather than reusing it.
             bool ringFieldRead = false;    ///< The ring's field holds this frame's, as @c fieldRead.
             bool ringFieldWritten = false; ///< Pass 1r ran and succeeded.
+            bool ringAtlasRead = false;    ///< The ring atlas holds this frame's ring: drawn or reused.
+            bool ringAtlasWritten = false; ///< Pass 1t drew it.
             bool compositeRead = false;    ///< The shared buffer holds this frame's: drawn, or reused on a frame nothing moved.
             bool compositeWritten = false; ///< Pass 1s drew it.
         } BufferUse;
@@ -1379,6 +1415,10 @@ namespace EdgeLighting
             UVMap gatherUVFull;           ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
             UVMap scaledUV;               ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
             LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) rather than shading (P2c), and the gain.
+            /// The ring atlas holds this frame's ring, so pass 2c copies it in
+            /// place of shading the ring (or compositing its field) on the
+            /// caller's framebuffer.
+            bool ringFromAtlas = false;
         } FramePlan;
 
         // --- Programs: built once, on first use ------------------------------
@@ -1431,6 +1471,11 @@ namespace EdgeLighting
         /// A failure is recorded in @c mFailedPrograms; the ring is then shaded
         /// directly.
         bool ensureRingFieldPrograms();
+
+        /// Make sure @c mRingCopyShader, pass 2c's copy of the ring atlas
+        /// (neon-field.frag with NEON_RING_COPY), is built. A failure is
+        /// recorded in @c mFailedPrograms; the ring is then drawn directly.
+        bool ensureRingCopyProgram();
 
         /// Make sure the opaque fill (black-rect.frag) is built, building it if
         /// not. Called by @ref renderFillPass only when it draws through the
@@ -1837,6 +1882,27 @@ namespace EdgeLighting
         /// @return false if the buffer could not be allocated.
         bool renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config);
 
+        /// Draw @c box's quad - the box of @p layout, a pixel past it each
+        /// side - once per strip of @p layout into the bound atlas, with
+        /// @p program in use: each strip's atlas rows as the viewport and a
+        /// projection taking its rect-local px onto them, transposed for the
+        /// side strips. Sets @c uMVP per strip. Shared by pass 1r and pass 1t,
+        /// so the field and the ring atlas are packed alike.
+        void drawRingStrips(ShaderProgram &program, const RingFieldLayout &layout, Mesh &box);
+
+        /// Pass 1t: the edge ring into the ring atlas, at full resolution and
+        /// undithered, packed as @p layout - shaded by @c mRingShader with the
+        /// uniforms pass 2c used to take, or, where @p ringField says, the
+        /// ring field's composite (@c mRingFieldCompositeShader, gain
+        /// included) in its place. Unblended into a cleared atlas.
+        /// @pre Pass 1a holds this frame's gather (and pass 1r its field, when
+        ///      @p ringField uses it); blending disabled.
+        /// @return false if the atlas could not be allocated - the frame then
+        ///         draws the ring directly. Leaves the atlas bound;
+        ///         @ref RenderOffscreen restores the target.
+        bool renderRingAtlasPass(const RingFieldLayout &layout, const UVMap &gatherUV,
+                                 const LazyBake::Decision &ringField, float time, const Config &config);
+
         /// Pass 1s: the shared buffer (@ref COMPOSITE_KEY), after pass 1r.
         /// Allocates it at @p texels (GetCompositeTexels, at the shared scale
         /// over the viewport), clears it, and draws into it, premultiplied
@@ -1925,6 +1991,16 @@ namespace EdgeLighting
         ///      full-resolution viewport are restored; pass 1 succeeded.
         void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config);
 
+        /// Pass 2c from the ring atlas: @c mRingMesh drawn through @p mvp -
+        /// the matrix the blit drew with, so the partition holds - each
+        /// fragment copying its own pixel's texel of the atlas, dithered here
+        /// on the way to 8 bits, as the ring's shading used to dither itself.
+        /// An exactly empty texel (what the ring's shading discarded) is
+        /// discarded, so it leaves the target as the discard did.
+        /// @pre Premultiplied-over blending; the caller's framebuffer and
+        ///      viewport are restored; the atlas holds this frame's ring.
+        void renderRingCopyPass(const glm::mat4 &mvp);
+
         /// Pass 2r: in pass 2c's place, @c mRingMesh drawn through
         /// @p mvp - the matrix the blit drew with, so the partition holds -
         /// with the ring field's composite: the field times @p gain times the
@@ -1965,6 +2041,7 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_COMPOSITE_FILL = 1u << 11;      ///< @c mCompositeFillShader, P1s.
         static constexpr unsigned int PROGRAM_COMPOSITE_BLIT = 1u << 12;      ///< @c mCompositeBlitShader, P1s.
         static constexpr unsigned int PROGRAM_COMPOSITE_RING = 1u << 13;      ///< @c mCompositeRingShader, P1s.
+        static constexpr unsigned int PROGRAM_RING_COPY = 1u << 14;           ///< @c mRingCopyShader, P2c's copy.
 
         /// Uniform blocks a program declares, for @ref ensureProgram.
         static constexpr unsigned int BLOCK_SEGMENT = 1u << 0; ///< SegmentBlock
@@ -2009,6 +2086,7 @@ namespace EdgeLighting
         ShaderProgram mCompositeFillShader;      ///< P1s, black-rect.frag, into the shared buffer. Built on the first frame it is wanted.
         ShaderProgram mCompositeBlitShader;      ///< P1s, neon-blit.frag, into the shared buffer. Built with it.
         ShaderProgram mCompositeRingShader;      ///< P1s, neon.frag, into the shared buffer. Built with it.
+        ShaderProgram mRingCopyShader;           ///< P2c from the ring atlas, neon-field.frag + NEON_RING_COPY. Built on the first frame the atlas is drawn.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.
@@ -2077,7 +2155,8 @@ namespace EdgeLighting
         GlowCoverTable mGlowCover;  ///< P0b - see @ref GlowCoverTable.
         GatherTarget mGather;       ///< P1a - see @ref GatherTarget.
         GlowField mGlowField;       ///< P1f, read by P1c - see @ref GlowField.
-        RingField mRingField;       ///< P1r, read by P2r - see @ref RingField.
+        RingField mRingField;       ///< P1r, read by P1t (or P2r) - see @ref RingField.
+        RingAtlas mRingAtlas;       ///< P1t, read by P2c's copy - see @ref RingAtlas.
         CompositeTarget mComposite; ///< P1s, the shared buffer - see @ref CompositeTarget.
         OffscreenState mOffscreen;  ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
         FramePlan mFramePlan;       ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.

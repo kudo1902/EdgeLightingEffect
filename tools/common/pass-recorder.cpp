@@ -50,9 +50,12 @@ void main() { fragColor = uColor; }
             // Before uGather: the field's composite reads the gather too. The
             // edge ring's composite (NEON_FIELD_RING) draws the ring's pixels
             // in pass 2c's place, so it is filed as the ring.
+            // Onto the target that is the ring (its atlas's copy, or the
+            // field's composite without the atlas); offscreen it is the field's
+            // composite into the ring atlas (pass 1t).
             if (HasUniform(program, "uRingHole"))
             {
-                return PassKind::P2C;
+                return ontoCaller ? PassKind::P2C : PassKind::P1T;
             }
             if (HasUniform(program, "uField"))
             {
@@ -72,7 +75,15 @@ void main() { fragColor = uColor; }
                 GLint alphaBits = 0;
                 glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                                       GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alphaBits);
-                return (alphaBits == 0) ? PassKind::P1F : PassKind::P1B;
+                if (alphaBits == 0)
+                {
+                    return PassKind::P1F;
+                }
+                // The ring's shading into the ring atlas (pass 1t) takes the cut
+                // itself (uBlitOwnsCut 0); pass 1b leaves it to the blit.
+                GLint blitOwnsCut = 1;
+                glGetUniformiv(program, glGetUniformLocation(program, "uBlitOwnsCut"), &blitOwnsCut);
+                return (blitOwnsCut == 0) ? PassKind::P1T : PassKind::P1B;
             }
             // The gather is the one program that reads the emission table.
             if (HasUniform(program, "uEmission"))
@@ -253,6 +264,10 @@ void main() { fragColor = uColor; }
         case PassKind::P1C:
         {
             return "P1c";
+        }
+        case PassKind::P1T:
+        {
+            return "P1t";
         }
         case PassKind::P2A:
         {
