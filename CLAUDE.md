@@ -255,9 +255,12 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   the ring's final premultiplied colours, undithered, RGBA16F, full
   resolution, packed exactly as the ring field is (`RingFieldLayout`,
   `computeRingFieldLayout`; both passes draw through `drawRingStrips`, the
-  layout's box per strip - V24's fix) - shaded by `mRingShader` with `uDither`
-  0, or composited from the ring field by `mRingFieldCompositeShader` with
-  `uDither` 0. Pass 2c then COPIES it (`renderRingCopyPass`, `mRingCopyShader`
+  layout's box per strip - V24's fix, its box re-uploaded only when the layout
+  moves) - shaded by `mRingAtlasShader` (neon.frag) with `uDither` 0, or
+  composited from the ring field by `mRingFieldAtlasShader` with `uDither` 0:
+  program objects of their own, not the screen ring's `mRingShader` /
+  `mRingFieldCompositeShader`, by the AB rule - on some frames those draw the
+  screen blended, on others pass 1t draws the atlas unblended. Pass 2c then COPIES it (`renderRingCopyPass`, `mRingCopyShader`
   = `neon-field.frag` with `NEON_RING_COPY`: the strip lookup, `texelFetch`,
   the output dither, and a discard of an exact-0 texel so a pixel the ring's
   shading discarded stays untouched) over `mRingMesh` through the blit's
@@ -272,7 +275,9 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   float); the ring field is not decided on a frame the atlas serves, so a
   still config never bakes it. Reused on `mOffscreen.reusable` plus an equal
   viewport and layout (`RingFieldLayout::operator==`); cleared on a frame it
-  was neither drawn nor reused. No RGBA8 fallback: without half float
+  was neither drawn nor reused, and released by `Update` once it has gone
+  `RING_ATLAS_RELEASE_SECONDS` neither drawn nor reused (a config that never
+  holds still and that nothing reads). No RGBA8 fallback: without half float
   `mRingAtlas.unavailable` sends the ring to the screen directly for good.
   `PassRecorder` files pass 1t as P1T (offscreen `uRingHole`, or offscreen
   `neon.frag` with `uBlitOwnsCut` 0) and the copy as P2C.
@@ -284,7 +289,9 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   read of it (so it is drawn on moving frames too), and after the neon's
   `Prepare` takes `GetSharedLight()` (`SharedLight`: both textures, the glow's
   placement, the ring's boxes and packing, the edge mask; `valid` only while
-  both hold this frame's light) into `UploadSharedLight` and samples
+  both hold this frame's light - or the glow alone on a frame with no ring on
+  the screen, its ring box empty and the glow standing in at the ring's unit;
+  cleared whenever a release frees a texture it names) into `UploadSharedLight` and samples
   `neonLight` - `neon-scale-check parts` verifies that rebuild within the
   dither. Shading it is the cost of a reader on a moving frame: the ring goes
   to the atlas and is copied (0.01-0.03 ms on the M2, step 1's first version),

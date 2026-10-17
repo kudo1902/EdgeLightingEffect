@@ -277,6 +277,13 @@ namespace EdgeLighting
         /// time; short enough that a reader gone for good gives it back.
         constexpr float COMPOSITE_RELEASE_SECONDS = 5.0f;
 
+        /// How long, in seconds of frame time, the ring atlas (pass 1t) may
+        /// stay allocated without being drawn or reused before Update releases
+        /// it: what a config that never holds still, and that nothing reads,
+        /// leaves behind from its last still frame. The shared buffer's delay,
+        /// for its reasons.
+        constexpr float RING_ATLAS_RELEASE_SECONDS = COMPOSITE_RELEASE_SECONDS;
+
         /// Gather-buffer formats in PREFERENCE ORDER, best first - walked by
         /// ResizeInBestFormat, from @ref NeonRenderer::renderGatherPass.
         ///
@@ -2401,6 +2408,24 @@ namespace EdgeLighting
                 mComposite.unwantedSeconds = 0.0f;
             }
         }
+
+        // The ring atlas likewise, once it has gone undrawn and unreused for
+        // as long: a config that never holds still and that nothing reads
+        // keeps no use for the atlas its last still frame left.
+        if (!mRingAtlas.buffer.IsValid() || mRingAtlas.drawn)
+        {
+            mRingAtlas.idleSeconds = 0.0f;
+        }
+        else
+        {
+            mRingAtlas.idleSeconds += std::max(deltaTime, 0.0f);
+            if (mRingAtlas.idleSeconds >= RING_ATLAS_RELEASE_SECONDS)
+            {
+                mRingAtlas.buffer.Release();
+                mRingAtlas.idleSeconds = 0.0f;
+                mSharedLight.valid = false;
+            }
+        }
     }
 
     void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -2606,8 +2631,9 @@ namespace EdgeLighting
         // for a ring no frame would copy again.
         const RingFieldLayout ringLayout =
             computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
-        const bool ringAtlasOn = glowReady && mRingMesh.count > 0 && !mRingAtlas.unavailable &&
-                                 ringLayout.atlas.x > 0 && ringLayout.atlas.y > 0 && ensureRingCopyProgram();
+        const bool ringAbsent = mRingMesh.count == 0 || ringLayout.atlas.x <= 0 || ringLayout.atlas.y <= 0;
+        const bool ringAtlasOn = glowReady && !ringAbsent && !mRingAtlas.unavailable &&
+                                 ensureRingAtlasPrograms();
         const bool ringAtlasReused = ringAtlasOn && reuseOffscreen && mRingAtlas.drawn &&
                                      mRingAtlas.viewport == viewport && mRingAtlas.layout == ringLayout;
         const bool ringAtlasWanted = ringAtlasOn && IsBufferWanted(mBufferRecords.ringAtlas);
@@ -2795,21 +2821,31 @@ namespace EdgeLighting
             // The light as the two parts now hold it - for pass 1s, and for
             // GetSharedLight: the glow where its record is placed, the ring
             // where the screen draws it and as its atlas packs it. Only while
-            // both hold this frame's.
-            if (glowReady && ringAtlasReady)
+            // both hold this frame's - or the glow alone, on a frame with no
+            // ring on the screen (none, or one wholly off the viewport), where
+            // the ring's box is empty so no pixel reads the atlas, and the
+            // glow stands in at its unit.
+            if (glowReady && (ringAtlasReady || ringAbsent))
             {
                 light.valid = true;
                 light.glowTexture = mScaledBuffer.GetTextureId();
                 light.glowOrigin = centerFull + scaledRegion.origin;
                 light.glowSize = scaledRegion.size;
-                light.ringTexture = mRingAtlas.buffer.GetTextureId();
                 light.center = centerFull;
-                light.ringOuter = mRingBounds.outer;
-                light.ringHole = mRingBounds.hole;
-                light.ringLo = ringLayout.origin;
-                light.ringStrips = glm::vec4(ringLayout.hole);
-                light.ringRows = glm::vec2(ringLayout.rows);
                 light.mask = GetEdgeMask(config, viewportHeight);
+                if (ringAtlasReady)
+                {
+                    light.ringTexture = mRingAtlas.buffer.GetTextureId();
+                    light.ringOuter = mRingBounds.outer;
+                    light.ringHole = mRingBounds.hole;
+                    light.ringLo = ringLayout.origin;
+                    light.ringStrips = glm::vec4(ringLayout.hole);
+                    light.ringRows = glm::vec2(ringLayout.rows);
+                }
+                else
+                {
+                    light.ringTexture = light.glowTexture;
+                }
             }
 
             // --- Pass 1s: the shared buffer, assembled from the two parts -
@@ -3244,6 +3280,8 @@ namespace EdgeLighting
             mGather.buffer.Release();
             mRingAtlas.buffer.Release();
             mRingAtlas.drawn = false;
+            // What GetSharedLight hands out names the textures just released.
+            mSharedLight.valid = false;
         }
         // The shared buffer, the moment nothing wants it: the scale back to
         // 0, or the layer off. 4 MB at 0.5 at 1080p, 16 at 1.
@@ -3523,14 +3561,27 @@ namespace EdgeLighting
         return true;
     }
 
-    bool NeonRenderer::ensureRingCopyProgram()
+    bool NeonRenderer::ensureRingAtlasPrograms()
     {
-        // The ring atlas's copy onto the caller's framebuffer: neon-field.frag's
-        // strip lookup and nothing of the field. Its own object (the AB rule),
-        // and a compile of its own, for the define. A failure only means the
-        // ring is drawn directly, as before the atlas.
-        return ensureProgram(mRingCopyShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_RING_COPY",
-                             "NeonRenderer.RingCopy", PROGRAM_RING_COPY, 0, "the ring is drawn directly");
+        // Pass 1t's shading - neon.frag, a link of the stage the screen ring
+        // already compiled - and pass 2c's copy - neon-field.frag's strip
+        // lookup and nothing of the field, a compile of its own for the
+        // define. Both objects of their own (the AB rule). A failure only
+        // means the ring is drawn directly, as before the atlas.
+        const char *direct = "the ring is drawn directly";
+        return ensureProgram(mRingAtlasShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.RingAtlas",
+                             PROGRAM_RING_ATLAS, BLOCK_SEGMENT | BLOCK_ARC, direct) &&
+               ensureProgram(mRingCopyShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_RING_COPY",
+                             "NeonRenderer.RingCopy", PROGRAM_RING_COPY, 0, direct);
+    }
+
+    bool NeonRenderer::ensureRingFieldAtlasProgram()
+    {
+        // The ring field's composite into the atlas: the screen composite's
+        // stages, linked into an object of its own (the AB rule).
+        return ensureProgram(mRingFieldAtlasShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_FIELD_RING",
+                             "NeonRenderer.RingFieldAtlas", PROGRAM_RING_FIELD_ATLAS, 0,
+                             "the ring atlas is shaded, not composited from its field");
     }
 
     bool NeonRenderer::ensureFillProgram()
@@ -4933,12 +4984,13 @@ namespace EdgeLighting
         // the layout's slack - one to two pixels each side of the band - on a
         // bake that runs only once a config settles; the frame that bakes
         // measured no slower.
-        drawRingStrips(mFieldBakeShader, layout, mRingField.box);
+        drawRingStrips(mFieldBakeShader, layout, mRingField.box, true);
         mFieldBakeShader.Unuse();
         return true;
     }
 
-    void NeonRenderer::drawRingStrips(ShaderProgram &program, const RingFieldLayout &layout, Mesh &box)
+    void NeonRenderer::drawRingStrips(ShaderProgram &program, const RingFieldLayout &layout, Mesh &box,
+                                      bool uploadBox)
     {
         // One draw per strip: the strip's atlas rows as the viewport, and a
         // projection taking its rect-local px onto them at one texel per px -
@@ -4954,7 +5006,10 @@ namespace EdgeLighting
             boxLo.x, boxHi.y,  boxHi.x, boxLo.y,  boxHi.x, boxHi.y,
         };
         // clang-format on
-        box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
+        if (uploadBox)
+        {
+            box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
+        }
 
         glm::mat4 transpose(0.0f);
         transpose[0][1] = 1.0f;
@@ -5014,41 +5069,47 @@ namespace EdgeLighting
         mRingAtlas.buffer.Bind();
         mRingAtlas.buffer.ClearBuffer();
 
-        if (ringField.use)
+        // The box is re-uploaded only when the layout moved: a still frame
+        // that draws the atlas follows one that drew it for the same ring.
+        const bool uploadBox = (layout != mRingAtlas.boxLayout) || mRingAtlas.box.count == 0;
+        mRingAtlas.boxLayout = layout;
+
+        if (ringField.use && ensureRingFieldAtlasProgram())
         {
             // The ring's field, composited as pass 2r composites it onto the
             // screen - mask and gain included, no dither - each atlas texel
             // finding its own field texel through the field's layout (the one
             // it was baked with).
             const RingFieldLayout &fieldLayout = mRingField.layout;
-            mRingFieldCompositeShader.Use();
-            uploadShapeUniforms(mRingFieldCompositeShader, glm::mat4(1.0f), 1.0f, config);
-            UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, true);
+            ShaderProgram &program = mRingFieldAtlasShader;
+            program.Use();
+            uploadShapeUniforms(program, glm::mat4(1.0f), 1.0f, config);
+            UploadEdgeMaskUniforms(program, 1.0f, config, true);
             mRingField.buffer.BindTexture(7);
-            mRingFieldCompositeShader.SetUniform("uField", 7);
-            mRingFieldCompositeShader.SetUniform("uRingLo", fieldLayout.origin);
-            mRingFieldCompositeShader.SetUniform("uRingHole", glm::vec4(fieldLayout.hole));
-            mRingFieldCompositeShader.SetUniform("uRingRows", glm::vec2(fieldLayout.rows));
-            mRingFieldCompositeShader.SetUniform("uFieldGain", ringField.gain);
-            mRingFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
-            mRingFieldCompositeShader.SetUniform("uDither", 0);
-            bindGatherBuffer(mRingFieldCompositeShader, gatherUV);
-            drawRingStrips(mRingFieldCompositeShader, layout, mRingAtlas.box);
-            mRingFieldCompositeShader.Unuse();
+            program.SetUniform("uField", 7);
+            program.SetUniform("uRingLo", fieldLayout.origin);
+            program.SetUniform("uRingHole", glm::vec4(fieldLayout.hole));
+            program.SetUniform("uRingRows", glm::vec2(fieldLayout.rows));
+            program.SetUniform("uFieldGain", ringField.gain);
+            program.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+            program.SetUniform("uDither", 0);
+            bindGatherBuffer(program, gatherUV);
+            drawRingStrips(program, layout, mRingAtlas.box, uploadBox);
+            program.Unuse();
         }
         else
         {
-            // The ring's own shading, with every uniform pass 2c took - scale
+            // The ring's own shading, with every uniform pass 2c takes - scale
             // 1.0, its own limits, the cut and the cutoffs applied (uBlitOwnsCut
             // 0) - but undithered. Only the transform changes per strip.
             mLightBlocks.segment.BindBase(SEGMENT_BLOCK_BINDING);
             mLightBlocks.arc.BindBase(ARC_BLOCK_BINDING);
-            mRingShader.Use();
-            uploadNeonUniforms(mRingShader, glm::mat4(1.0f), 1.0f, time, mRingLimits, false, config);
-            mRingShader.SetUniform("uDither", 0);
-            bindGatherBuffer(mRingShader, gatherUV);
-            drawRingStrips(mRingShader, layout, mRingAtlas.box);
-            mRingShader.Unuse();
+            mRingAtlasShader.Use();
+            uploadNeonUniforms(mRingAtlasShader, glm::mat4(1.0f), 1.0f, time, mRingLimits, false, config);
+            mRingAtlasShader.SetUniform("uDither", 0);
+            bindGatherBuffer(mRingAtlasShader, gatherUV);
+            drawRingStrips(mRingAtlasShader, layout, mRingAtlas.box, uploadBox);
+            mRingAtlasShader.Unuse();
         }
         return true;
     }

@@ -5,6 +5,32 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Review of the shared-layer C++, and its fixes
+
+A deep review of the four steps' C++ (`c08639a..ae47968`) found, and this fixes:
+
+- **The AB rule, broken by pass 1t.** It drew the ring atlas with the screen
+  ring's own programs (`mRingShader`, `mRingFieldCompositeShader`), which on
+  other frames draw the screen blended - the shape measured 93-624x slower on
+  the AMD driver. Pass 1t now has its own: `mRingAtlasShader` (a link of
+  `neon.frag`'s stage) and `mRingFieldAtlasShader`.
+- **No shared light without a ring.** A frame with no ring on the screen (none,
+  or one wholly off the viewport) never made the ring atlas, so
+  `GetSharedLight` was invalid and the shared buffer was not made although the
+  glow was. Now the light is the glow alone there.
+- **A stale `SharedLight`.** Disabling the layer released the glow and the ring
+  atlas, but `GetSharedLight` kept naming their textures until the next
+  `Render`. Every release now clears it.
+- **An atlas kept forever.** A config that never holds still kept the atlas its
+  last still frame drew. `Update` now releases it after
+  `RING_ATLAS_RELEASE_SECONDS` neither drawn nor reused.
+- **A re-upload per atlas draw.** The strips' box is uploaded only when the
+  layout moves (5 fewer allocations over 8 frames on `shared/default@1+hue+view`).
+- Doc fixes (`UploadSharedLight`'s parameter, the shared record's placement).
+
+`layer-check`: all 300 frames identical to step 4; `check`, `partition`,
+`parts` and `shared` pass.
+
 ## 2026-10-17 - Step 4 of the shared-layer plan: tools and docs
 
 - `partition` declares a host read of the ring atlas on every other config, so

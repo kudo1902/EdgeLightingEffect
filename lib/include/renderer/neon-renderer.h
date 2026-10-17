@@ -502,7 +502,7 @@ namespace EdgeLighting
         /// ordered after the neon's) of a layer that declared both reads.
         const SharedLight &GetSharedLight() const { return mSharedLight; }
 
-        /// Sets @p layer on @p shader, in use, under the names neon-light.glsl
+        /// Sets @p light on @p shader, in use, under the names neon-light.glsl
         /// declares, and binds the glow to texture unit @p glowUnit and the
         /// ring atlas to @p ringUnit. The one upload, so a reader and the
         /// neon's own reads (the shared buffer's assemble pass) cannot differ.
@@ -1314,7 +1314,7 @@ namespace EdgeLighting
         /// (@ref RingFieldLayout, @ref computeRingFieldLayout): four strips,
         /// the side ones transposed. Drawn on the first frame nothing moved -
         /// every still frame after it copies the ring instead of shading it -
-        /// and on any frame something reads it (NeonRenderer.Ring); a frame where
+        /// and on any frame something reads it (@ref RING_KEY); a frame where
         /// something moved and nothing reads it draws the ring on the screen
         /// directly, as before (docs/neon-shared-layer-plan.md, step 1).
         typedef struct RingAtlas
@@ -1330,9 +1330,15 @@ namespace EdgeLighting
             /// its own (@ref drawRingStrips) - its own mesh, so the two passes
             /// never upload over each other's.
             Mesh box{"NeonRenderer.RingAtlasBox"};
-            bool drawn = false;       ///< It holds this frame's ring: drawn or reused last frame.
-            glm::ivec2 viewport{0};   ///< The viewport it was drawn for.
-            bool unavailable = false; ///< No half-float target: the ring is drawn directly for good.
+            RingFieldLayout boxLayout{}; ///< The layout @c box was last uploaded for: re-uploaded only when it moves.
+            bool drawn = false;          ///< It holds this frame's ring: drawn or reused last frame.
+            glm::ivec2 viewport{0};      ///< The viewport it was drawn for.
+            bool unavailable = false;    ///< No half-float target: the ring is drawn directly for good.
+            /// How long, in frame time, it has stayed allocated without being
+            /// drawn or reused - a config that never holds still and that
+            /// nothing reads; @ref Update releases it after
+            /// RING_ATLAS_RELEASE_SECONDS.
+            float idleSeconds = 0.0f;
         } RingAtlas;
 
         /// Where the shared buffer lies: a window of the shared scale's grid,
@@ -1457,7 +1463,7 @@ namespace EdgeLighting
             BufferHandle ringAtlas = -1;         ///< @c mRingAtlas.buffer, a table: the ring, packed as the field is.
             BufferHandle gradientRing = -1;      ///< @c mGradientLUT, a table, under @ref GRADIENT_RING_KEY.
             BufferHandle glow = -1;              ///< @c mScaledBuffer again, as the PUBLIC product @ref GLOW_KEY, placed like @c scaled.
-            BufferHandle composite = -1;         ///< @c mComposite.buffer, the PUBLIC product @ref COMPOSITE_KEY, placed over the viewport.
+            BufferHandle composite = -1;         ///< @c mComposite.buffer, the PUBLIC product @ref COMPOSITE_KEY, placed over its region.
             /// The ring's upload count at its last mark: a change since is a
             /// new version of the record.
             uint32_t gradientRingUploads = 0;
@@ -1553,10 +1559,21 @@ namespace EdgeLighting
         /// directly.
         bool ensureRingFieldPrograms();
 
-        /// Make sure @c mRingCopyShader, pass 2c's copy of the ring atlas
-        /// (neon-field.frag with NEON_RING_COPY), is built. A failure is
-        /// recorded in @c mFailedPrograms; the ring is then drawn directly.
-        bool ensureRingCopyProgram();
+        /// Make sure the ring atlas's programs are built: pass 1t's shading
+        /// (@c mRingAtlasShader, neon.frag) and pass 2c's copy
+        /// (@c mRingCopyShader, neon-field.frag with NEON_RING_COPY). Program
+        /// objects of their own, not the screen ring's, by the AB rule: pass
+        /// 1t draws the atlas unblended on the very frames the screen ring's
+        /// programs are not used, and on others they draw the screen blended.
+        /// A failure is recorded in @c mFailedPrograms; the ring is then drawn
+        /// directly.
+        bool ensureRingAtlasPrograms();
+
+        /// Make sure @c mRingFieldAtlasShader - the ring field's composite into
+        /// the ring atlas (neon-field.frag with NEON_FIELD_RING, its own object
+        /// for the same reason) - is built. A failure only means pass 1t shades
+        /// the ring instead of compositing its field.
+        bool ensureRingFieldAtlasProgram();
 
         /// Make sure the opaque fill (black-rect.frag) is built, building it if
         /// not. Called by @ref renderFillPass only when it draws through the
@@ -1972,7 +1989,9 @@ namespace EdgeLighting
         /// projection taking its rect-local px onto them, transposed for the
         /// side strips. Sets @c uMVP per strip. Shared by pass 1r and pass 1t,
         /// so the field and the ring atlas are packed alike.
-        void drawRingStrips(ShaderProgram &program, const RingFieldLayout &layout, Mesh &box);
+        /// @p uploadBox false reuses what @p box already holds (the caller knows
+        /// it was uploaded for this @p layout).
+        void drawRingStrips(ShaderProgram &program, const RingFieldLayout &layout, Mesh &box, bool uploadBox);
 
         /// Pass 1t: the edge ring into the ring atlas, at full resolution and
         /// undithered, packed as @p layout - shaded by @c mRingShader with the
@@ -2114,7 +2133,9 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_GLOW_COVER_FILL = 1u << 10;     ///< @c mGlowCoverFillShader, P0f.
         static constexpr unsigned int PROGRAM_COMPOSITE_FILL = 1u << 11;      ///< @c mCompositeFillShader, P1s.
         static constexpr unsigned int PROGRAM_ASSEMBLE = 1u << 12;            ///< @c mAssembleShader, P1s.
+        static constexpr unsigned int PROGRAM_RING_ATLAS = 1u << 13;          ///< @c mRingAtlasShader, P1t.
         static constexpr unsigned int PROGRAM_RING_COPY = 1u << 14;           ///< @c mRingCopyShader, P2c's copy.
+        static constexpr unsigned int PROGRAM_RING_FIELD_ATLAS = 1u << 15;    ///< @c mRingFieldAtlasShader, P1t from the ring field.
 
         /// Uniform blocks a program declares, for @ref ensureProgram.
         static constexpr unsigned int BLOCK_SEGMENT = 1u << 0; ///< SegmentBlock
@@ -2159,6 +2180,8 @@ namespace EdgeLighting
         ShaderProgram mCompositeFillShader;      ///< P1s, black-rect.frag, into the shared buffer. Built on the first frame it is wanted.
         ShaderProgram mAssembleShader;           ///< P1s, neon-assemble.frag: the light from the two parts, into the shared buffer. Built with it.
         ShaderProgram mRingCopyShader;           ///< P2c from the ring atlas, neon-field.frag + NEON_RING_COPY. Built on the first frame the atlas is drawn.
+        ShaderProgram mRingAtlasShader;          ///< P1t, neon.frag: the ring shaded into the ring atlas. Its own object (the AB rule). Built with the copy.
+        ShaderProgram mRingFieldAtlasShader;     ///< P1t, neon-field.frag + NEON_FIELD_RING: the ring field composited into the atlas. Its own object. Built the first time the atlas takes the field.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.
