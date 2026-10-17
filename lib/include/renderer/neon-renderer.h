@@ -1566,7 +1566,10 @@ namespace EdgeLighting
         /// 1t draws the atlas unblended on the very frames the screen ring's
         /// programs are not used, and on others they draw the screen blended.
         /// A failure is recorded in @c mFailedPrograms; the ring is then drawn
-        /// directly.
+        /// directly. Called on the first frame of a config whose hue does not
+        /// rotate (one that can hold still, so its first frame pays, not its
+        /// second) and on every frame the atlas is drawn - never before for a
+        /// rotating hue, which does not hold still while the clock runs.
         bool ensureRingAtlasPrograms();
 
         /// Make sure @c mRingFieldAtlasShader - the ring field's composite into

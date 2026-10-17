@@ -137,6 +137,11 @@ What is in it:
 floor is for the fill, which is drawn at the scale and needs room for its soft
 edge; the light needs no floor.
 
+**Cost**: 0.04-0.19 ms on a frame where something moves, on an Apple M2 Pro
+at 1080p - against 0.016-0.033 ms for a reader of the two parts. Nearly all
+of it is two more render passes, not shading, so read the parts if you can.
+See [`neon-shared-layer-perf-review.md`](neon-shared-layer-perf-review.md).
+
 **Memory**: RGBA16F, 8 bytes a texel, over its region - at most 4.1 MB at 0.5
 and 16.6 MB at 1 at 1920 x 1080 (66 MB at 1 at 4K, for a fill covering the
 screen). Freed when the scale goes back to 0, the neon is disabled, or nobody
@@ -190,7 +195,12 @@ Pass 1s draws two things into the shared buffer:
    of each pixel the square covers.
 
 No neon shading runs. At scale 1 each texel touches exactly one screen pixel,
-so it IS that pixel's light.
+so it IS that pixel's light - one read, no loop. Below 1, a texel whose square
+is more than a square's width from the ring, on a config with no edge mask
+live (no one-sided glow, no cutoff), reads the glow once at the square's
+centre instead of once per pixel: away from the ring the glow is smooth, and
+the two differ by a fraction of a level (`neon-scale-check shared` holds
+them within 1). See [`neon-shared-layer-perf-review.md`](neon-shared-layer-perf-review.md).
 
 ### 4.4 Who owns what
 
@@ -227,4 +237,9 @@ so it IS that pixel's light.
   screen directly, the parts are not offered and the shared buffer is not
   made.
 - One shared-buffer scale for every reader.
-- The first frame is about 1.4 ms slower (the copy's program builds).
+- The ring atlas's two programs cost ~5 ms to build (M2). A config whose hue
+  does not rotate builds them on its first frame, with every other program;
+  a rotating hue builds them only on the first frame the atlas is needed, so
+  the default config's first frame does not pay for them. See
+  [`neon-shared-layer-perf-review.md`](neon-shared-layer-perf-review.md)
+  section 7.

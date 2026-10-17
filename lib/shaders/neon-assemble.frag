@@ -21,9 +21,36 @@ uniform float uAssembleScale;  ///< s, the shared buffer's texels per caller px.
 uniform vec2  uAssembleOrigin; ///< Caller px of texel (0, 0)'s lower-left corner.
 
 void main() {
+    // At s 1 the square is one whole pixel (the origin is a whole pixel too):
+    // its light is the one read at its centre, with weight 1 - what the loop
+    // below computes there, without the loop or the test before it, which
+    // cost a frame at s 1 up to 1.16x (docs/neon-shared-layer-perf-review.md).
+    if (uAssembleScale >= 1.0)
+    {
+        fragColor = neonLight(uAssembleOrigin + floor(gl_FragCoord.xy) + 0.5, 1.0);
+        return;
+    }
     float footprint = 1.0 / uAssembleScale;
     vec2  lo = uAssembleOrigin + floor(gl_FragCoord.xy) * footprint;
     vec2  hi = lo + vec2(footprint);
+
+    // The glow alone, unmasked, over a square that touches no ring pixel:
+    // one bilinear read at the square's centre instead of one per pixel. The
+    // glow is a bilinear upsample of a smooth buffer, so the average of its
+    // reads at the square's pixel centres differs from the read at its centre
+    // only by the buffer's second difference across a texel - a fraction of a
+    // level a square's width away from the ring, which holds every steep part
+    // of the light (right beside it, on a hairline, it reached 2). Not
+    // where the edge mask is live: its ramps are a full-res pixel wide, and
+    // only the per-pixel average is their box filter.
+    if (!neonEdgeMaskLive(uLightGlowSide, uLightInsideCutoff, uLightOutsideCutoff) &&
+        !neonLightSquareTouchesRing(lo - uLightCenter - vec2(footprint), hi - uLightCenter + vec2(footprint)))
+    {
+        vec2 uv = (0.5 * (lo + hi) - uLightGlowOrigin) / uLightGlowSize;
+        bool inside = uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0;
+        fragColor = inside ? textureLod(uLightGlow, uv, 0.0) : vec4(0.0);
+        return;
+    }
     ivec2 j0 = ivec2(floor(lo));
     ivec2 j1 = ivec2(ceil(hi)) - 1;
     vec4  sum = vec4(0.0);

@@ -50,6 +50,22 @@ bool neonLightInRing(vec2 p)
     return solid || a.x >= uLightRingHole.x || a.y >= uLightRingHole.y;
 }
 
+// Whether the axis-aligned square [lo, hi] of rect-local px touches any of
+// the ring's pixels - the annulus neonLightInRing tests a point against. A
+// square that does not reads only glow pixels.
+bool neonLightSquareTouchesRing(vec2 lo, vec2 hi)
+{
+    vec2 far  = max(abs(lo), abs(hi));
+    vec2 near = vec2(lo.x > 0.0 || hi.x < 0.0 ? min(abs(lo.x), abs(hi.x)) : 0.0,
+                     lo.y > 0.0 || hi.y < 0.0 ? min(abs(lo.y), abs(hi.y)) : 0.0);
+    if (near.x >= uLightRingOuter.x || near.y >= uLightRingOuter.y)
+    {
+        return false; // wholly outside the ring's outer box
+    }
+    bool solid = uLightRingHole.x <= 0.0 || uLightRingHole.y <= 0.0;
+    return solid || far.x >= uLightRingHole.x || far.y >= uLightRingHole.y;
+}
+
 // The neon's light at caller px fragPx (a pixel centre, y up), for a
 // destination whose pixel is px caller px wide - 1 at full resolution, which
 // is what the screen's own masks take. Exact on the ring's pixels (the atlas

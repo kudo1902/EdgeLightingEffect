@@ -2632,13 +2632,23 @@ namespace EdgeLighting
         const RingFieldLayout ringLayout =
             computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
         const bool ringAbsent = mRingMesh.count == 0 || ringLayout.atlas.x <= 0 || ringLayout.atlas.y <= 0;
-        const bool ringAtlasOn = glowReady && !ringAbsent && !mRingAtlas.unavailable &&
-                                 ensureRingAtlasPrograms();
+        const bool ringAtlasPossible = glowReady && !ringAbsent && !mRingAtlas.unavailable;
+        const bool ringAtlasWanted = ringAtlasPossible && IsBufferWanted(mBufferRecords.ringAtlas);
+        const bool ringAtlasNeeded = ringAtlasPossible && (reuseOffscreen || ringAtlasWanted || compositeDraw);
+        // Its programs are built on the first frame of a config that can hold
+        // still - one whose hue does not move with time alone - so a still
+        // host pays the build with every other program on its first frame,
+        // not as a ~5 ms hitch on its second (M2); and otherwise on the first
+        // frame the atlas is needed, so a rotating hue (the default), which
+        // never holds still while the clock runs, never builds them unread.
+        const bool ringAtlasOn = ringAtlasNeeded && ensureRingAtlasPrograms();
+        if (!ringAtlasOn && ringAtlasPossible && config.neon.hueRotationRate == 0.0f)
+        {
+            ensureRingAtlasPrograms();
+        }
         const bool ringAtlasReused = ringAtlasOn && reuseOffscreen && mRingAtlas.drawn &&
                                      mRingAtlas.viewport == viewport && mRingAtlas.layout == ringLayout;
-        const bool ringAtlasWanted = ringAtlasOn && IsBufferWanted(mBufferRecords.ringAtlas);
-        const bool ringAtlasDraw =
-            ringAtlasOn && !ringAtlasReused && (reuseOffscreen || ringAtlasWanted || compositeDraw);
+        const bool ringAtlasDraw = ringAtlasOn && !ringAtlasReused;
         bool ringAtlasReady = ringAtlasReused;
 
         // The edge ring factored the same way (pass 1r bakes its field, which

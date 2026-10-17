@@ -5,6 +5,57 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-17 - Performance review of the shared layer
+
+[`neon-shared-layer-perf-review.md`](neon-shared-layer-perf-review.md),
+measured on an Apple M2 Pro at 1080p against `main`, the branch before the
+plan (`c08639a`) and `29e30af`. Findings:
+
+- **No reader pays nothing.** Moving frames are 0.97-1.00 of `main` and
+  still frames 0.95-0.98.
+- **A reader of the parts pays 0.016-0.033 ms a moving frame**: the ring
+  atlas's render pass.
+- **A reader of the shared buffer pays 0.04-0.19 ms.** A clear-only switch
+  shows that at view 0.5 nearly all of it is the two render passes (the atlas,
+  the buffer) and almost none of it shading (0.208 ms with nothing drawn
+  into the buffer, 0.209 with).
+- **Against the re-shaded buffer it replaced**: 3-12% cheaper at scale 1,
+  1.10-1.16x dearer at 0.5 on hue and intensity frames. The extra is the
+  atlas's pass, which the old buffer skipped by shading a thin line at half
+  resolution, up to 82 levels wrong.
+
+Three changes:
+
+- **Pass 1s below scale 1** reads the glow once per texel for a square more
+  than a square's width from the ring when no edge mask is live
+  (`neonLightSquareTouchesRing`). Pass 1s: 0.031 -> 0.013 ms on hue frames.
+  Frames: 1.05-1.11x at shared 0.5. Without the margin, `shared` failed:
+  `hairline` 0.5 read 2 levels off, 99.852% within 1.
+- **Pass 1s at scale 1** returns one read per texel before the loop. It is
+  the loop's value: `layer-check`'s views at 1 are unchanged. 1.06-1.11x at
+  view 0.5 against `29e30af`. Without it, the previous change's untaken test
+  made scale 1 up to 1.04x dearer.
+- **The ring atlas's programs** are built on the first frame of a config
+  whose hue does not rotate, otherwise on the first frame the atlas is
+  needed. `29e30af` built them on every host's first frame (+5 ms, 41.6
+  against 35.9). That bought nothing for the default rotating hue, which never
+  holds still while the clock runs.
+  - Building them only when needed moved the 5 ms of a still config to its
+    second frame (1.4 -> 6.2 ms), a hitch.
+  - The rule kept now gives a rotating hue's first frame 36.0 ms, and a still
+    config 40.2 on frame 1 and 1.4 on frame 2, as before.
+  - On the default config, `layer-check startup` shows 22 compiles and 19
+    links, against 23 and 21.
+
+Gates:
+- `check`, `partition` (the ring copied in 477 of 1000), `parts` and `shared`
+  (max 1, 100% within 1 at 0.5): all pass.
+- `layer-check`: 7 of 300 frames differ, all views of the shared buffer at
+  0.5 (the first change); every other frame is identical.
+
+Open: the render-pass cost on a tiler (Mali / Tizen) is unmeasured, and on the
+M2 it is the whole of a reader's cost.
+
 ## 2026-10-17 - Review of the shared-layer C++, and its fixes
 
 A deep review of the four steps' C++ (`c08639a..ae47968`) found, and this fixes:
