@@ -83,7 +83,7 @@ namespace EdgeLighting
     ///              glow INSIDE the band, not its edges. (It used to blur them:
     ///              with the masks drawn into the buffer, the pixel just inside
     ///              @c size kept only 56-63% at 0.25 and softness 0. See
-    ///              docs/neon-resolution-scale-plan.md, step 2.)
+    ///              docs/history/neon-resolution-scale-plan.md, step 2.)
     ///
     ///              On the glow the feather is coverage applied to the graded
     ///              output, not a multiply into the linear emission ahead of
@@ -96,7 +96,7 @@ namespace EdgeLighting
     /// @c size, so there is no setting of the subsumed cutoff that changes the
     /// silhouette - but leaving it applied DID change the picture, by cutting
     /// into the band the reduced-resolution blit reconstructs the cut from. See
-    /// docs/glow-side-comparison.md.
+    /// docs/reference/glow-side-comparison.md.
     ///
     /// Neither pair reaches the other layer: the glow's cutoffs do not shape
     /// the fill, and the fill's never touch the glow. The fill has no notion of
@@ -240,7 +240,7 @@ namespace EdgeLighting
     /// position: 1 = full brightness (default), 0 = no line there. It does NOT
     /// reach the halo or the bloom, which scale with a gathered coverage the
     /// emission table builds without alpha - an alpha-0 stretch keeps its full
-    /// glow (V18 in docs/review-findings.md, open). To dim the glow along part
+    /// glow (V18 in docs/reference/review-findings.md, open). To dim the glow along part
     /// of the ring, gate it with arcs or an arc's intensity instead. It interpolates linearly between stops in every
     /// @ref BlendSpace (the hue-space conversions apply to @c .rgb only).
     typedef struct ColorStop
@@ -428,7 +428,7 @@ namespace EdgeLighting
         /// barely on still or hue-rotating frames, which the renderer mostly
         /// serves from cached buffers and fields. Below ~0.35 the passes it
         /// does not scale are most of an animated frame. See
-        /// docs/neon-reduced-scale-plan.md.
+        /// docs/plans/neon-reduced-scale-plan.md.
         ///
         /// Memory: an RGBA8 buffer at this scale over the part of the frame
         /// the glow can reach - never more than the whole viewport at it - and
@@ -1270,7 +1270,7 @@ namespace EdgeLighting
         /// viewport - roughly six lamps at default settings, or fewer with a
         /// large @c SpotLight::bloomRadius. Below that it costs more than it
         /// saves, which is why the default is 1.0 and why this is a knob
-        /// rather than a policy. See docs/spotlight-renderer-plan.md.
+        /// rather than a policy. See docs/history/spotlight-renderer-plan.md.
         ///
         /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
         /// supersampled: the point of the knob is to shade FEWER fragments.

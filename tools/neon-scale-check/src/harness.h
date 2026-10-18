@@ -92,7 +92,7 @@ namespace NeonScaleCheck
     /// never in it. The other modes put that work back, the way a host's frame
     /// loop does: each frame writes the mode's change through SetConfig and
     /// then calls Update(1/60) - both inside the timed region, so the figure
-    /// includes the library's CPU path too. See docs/neon-perf-plan.md.
+    /// includes the library's CPU path too. See docs/plans/neon-perf-plan.md.
     typedef enum class TimeMode
     {
         STILL,          ///< Nothing changes; Render() only.
@@ -106,7 +106,7 @@ namespace NeonScaleCheck
 
     /// The lights TimeMode::LIGHTS draws, in place of the scene's own: the
     /// frames of a host animating several arcs or segments at once
-    /// (docs/neon-animation-perf-analysis.md), which arc-wipe and
+    /// (docs/history/neon-animation-perf-analysis.md), which arc-wipe and
     /// segment-travel - one light each - do not cover.
     ///
     /// @c arcs arcs evenly spaced over 0.6 of the ring, each length moving

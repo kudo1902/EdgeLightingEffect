@@ -1,4 +1,4 @@
-# layer-check - the five-layer baseline of docs/resource-sharing-plan.md (S0).
+# layer-check - the five-layer baseline of docs/plans/resource-sharing-plan.md (S0).
 #
 # Two ways in, as for neon-scale-check:
 #

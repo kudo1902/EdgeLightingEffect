@@ -251,7 +251,7 @@ namespace EdgeLighting
         /// switch away from it and back stores its tiles out and loads them in
         /// again - and so any renderer's @ref Render can read what any
         /// renderer's Prepare made, wherever the two sit in the compositing
-        /// order (docs/resource-sharing-plan.md 3.3).
+        /// order (docs/plans/resource-sharing-plan.md 3.3).
         ///
         /// Takes the arguments the frame's @ref Render will take. Restores the
         /// framebuffer and viewport it was handed, and hands back blending on

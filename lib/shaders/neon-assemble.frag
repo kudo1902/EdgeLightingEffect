@@ -24,7 +24,7 @@ void main() {
     // At s 1 the square is one whole pixel (the origin is a whole pixel too):
     // its light is the one read at its centre, with weight 1 - what the loop
     // below computes there, without the loop or the test before it, which
-    // cost a frame at s 1 up to 1.16x (docs/neon-shared-layer-perf-review.md).
+    // cost a frame at s 1 up to 1.16x (docs/history/neon-shared-layer-perf-review.md).
     if (uAssembleScale >= 1.0)
     {
         fragColor = neonLight(uAssembleOrigin + floor(gl_FragCoord.xy) + 0.5, 1.0);

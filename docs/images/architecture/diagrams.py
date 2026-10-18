@@ -1,4 +1,4 @@
-"""Draws the diagrams in docs/architecture.md as SVG files beside this script.
+"""Draws the diagrams in docs/guides/architecture.md as SVG files beside this script.
 
     python3 docs/images/architecture/diagrams.py
 
@@ -391,7 +391,7 @@ def channels():
 
     s.text(440, 40, "2. The registry", size=15, weight="bold")
     s.note(440, 60, "producers mark records in phase 1; readers find and sample them", size=12)
-    s.rect(440, 80, 250, 330, "renderer")
+    s.rect(440, 80, 250, 370, "renderer")
     s.text(456, 104, "NeonRenderer", size=13, weight="bold", mono=True)
     recs = ["GradientRing", "Emission", "GlowCover(Segments)", "Gather, Gather[1]", "Field, RingField", "Scaled"]
     ry = 118
@@ -400,30 +400,35 @@ def channels():
         s.text(466, ry + 20, r, size=12, mono=True)
         s.text(664, ry + 20, "DEBUG", size=10.5, color=MUTED, anchor="end")
         ry += 36
-    s.rect(456, ry, 218, 30, "public", radius=5)
-    s.text(466, ry + 20, "Glow", size=12, mono=True, weight="bold")
-    s.text(664, ry + 20, "PUBLIC", size=10.5, color="#1a7f37", anchor="end", weight="bold")
+    public_top = ry
+    for r in ["Glow", "Ring", "Composite"]:
+        s.rect(456, ry, 218, 30, "public", radius=5)
+        s.text(466, ry + 20, r, size=12, mono=True, weight="bold")
+        s.text(664, ry + 20, "PUBLIC", size=10.5, color="#1a7f37", anchor="end", weight="bold")
+        ry += 36
+    public_bottom = ry - 6
 
-    s.rect(440, 426, 250, 46, "renderer")
-    s.rect(456, 434, 218, 30, "debug", radius=5)
-    s.text(466, 454, "LensFlare.Scaled", size=12, mono=True)
-    s.text(664, 454, "DEBUG", size=10.5, color=MUTED, anchor="end")
-    s.rect(440, 482, 250, 46, "renderer")
-    s.rect(456, 490, 218, 30, "debug", radius=5)
-    s.text(466, 510, "Spotlight.Scaled", size=12, mono=True)
-    s.text(664, 510, "DEBUG", size=10.5, color=MUTED, anchor="end")
+    s.rect(440, 462, 250, 46, "renderer")
+    s.rect(456, 470, 218, 30, "debug", radius=5)
+    s.text(466, 490, "LensFlare.Scaled", size=12, mono=True)
+    s.text(664, 490, "DEBUG", size=10.5, color=MUTED, anchor="end")
+    s.rect(440, 518, 250, 46, "renderer")
+    s.rect(456, 526, 218, 30, "debug", radius=5)
+    s.text(466, 546, "Spotlight.Scaled", size=12, mono=True)
+    s.text(664, 546, "DEBUG", size=10.5, color=MUTED, anchor="end")
 
     s.box(820, 110, 210, 104, "DebugRenderer", ["buffer view: any key", "LUT strip: GradientRing", "~(declared in CollectReads)"],
           "renderer")
-    s.box(820, 300, 210, 104, "a host's layer", ["reads Glow, applies", "neonEdgeMask itself", "~GetEdgeMask / UploadEdgeMask"],
+    s.box(820, 300, 210, 140, "a host or its layer", ["Glow + Ring: neonLight,", "~via GetSharedLight and", "~UploadSharedLight", "Composite: one texture", "~(or Glow alone, masked)"],
           "host")
     s.arrow([(674, 133), (820, 150)], "")
     s.arrow([(690, 250), (770, 250), (770, 195), (820, 195)], "")
     s.note(700, 243, "any record", size=11.5, italic=False)
-    s.arrow([(674, ry + 15), (820, ry + 15)], "")
-    s.arrow([(674, 449), (820, 392)], "logged", dashed=True, color="#cf222e", label_at=0.6, label_dx=6,
+    s.rect(680, public_top, 6, public_bottom - public_top, "public", radius=2)
+    s.arrow([(686, (public_top + public_bottom) / 2), (820, (public_top + public_bottom) / 2)], "")
+    s.arrow([(674, 485), (820, 432)], "logged", dashed=True, color="#cf222e", label_at=0.6, label_dx=6,
             label_dy=22)
-    s.note(820, 440, "reading a DEBUG record outside the\ndebug layer is logged: its producer\nmay change it with any optimisation",
+    s.note(820, 480, "reading a DEBUG record outside the\ndebug layer is logged: its producer\nmay change it with any optimisation",
            size=11.5)
     s.write("channels.svg")
 

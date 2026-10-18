@@ -451,7 +451,7 @@ namespace EdgeLightingDemo
             {
                 // The aperture bloom's SUPPORT, not its radius - that is what
                 // decides the strip area, and a large one fills the frame on
-                // its own. See docs/spotlight-renderer-plan.md.
+                // its own. See docs/history/spotlight-renderer-plan.md.
                 std::cout << " (support " << std::setprecision(0)
                           << l.bloomRadius * static_cast<float>(SPOT_BLOOM_WINDOW_OUTER) << " px)";
             }

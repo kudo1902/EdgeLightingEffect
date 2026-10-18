@@ -220,7 +220,7 @@ namespace EdgeLighting
     /// loop and filtered LUT reads that used to run in it are all
     /// fragment-invariant and moved to @c neon-emission.frag, which is why its
     /// cost no longer scales with the arc or segment count. See
-    /// docs/emission-prepass.md.
+    /// docs/reference/emission-prepass.md.
     ///
     /// The three baked LUTs stay bound, but for the POINTWISE reads only - the
     /// colour-stop alpha, taken at the fragment's own perimeter position:
@@ -254,7 +254,7 @@ namespace EdgeLighting
     /// while the filament, the cut and the cutoffs near the line come out at
     /// full resolution. Both buffers cover only the part of the frame their
     /// readers reach (@ref GetBufferRegion). See
-    /// docs/neon-resolution-scale-plan.md sections 12 and 13.
+    /// docs/history/neon-resolution-scale-plan.md sections 12 and 13.
     ///
     /// With a colour-stop alpha time cannot move, the shading is factored:
     /// neon.frag's output is tonemap(col * Fa + segColHue * Fs) with only the
@@ -266,8 +266,8 @@ namespace EdgeLighting
     /// with only the time moved, 1.1-2.0x on them, and under an intensity
     /// animation, scaled (I56). The ring has a field of its own (pass 1r / 2r),
     /// still frames included. A frame whose config just changed shades
-    /// directly. See docs/neon-perf-plan.md section 11, and I46, I50, I52 and
-    /// I56 in docs/review-findings.md.
+    /// directly. See docs/plans/neon-perf-plan.md section 11, and I46, I50, I52 and
+    /// I56 in docs/reference/review-findings.md.
     ///
     /// Every pixel-valued uniform is multiplied by the scale (a no-op at 1.0)
     /// and the shader converts its own full-res px constants with
@@ -308,7 +308,7 @@ namespace EdgeLighting
         static constexpr const char *GRADIENT_RING_KEY = "NeonRenderer.GradientRing";
 
         /// The key the neon's GLOW is published under (@ref BufferRegistry):
-        /// a PUBLIC product (docs/resource-sharing-plan.md 3.5, P-a) - what a
+        /// a PUBLIC product (docs/plans/resource-sharing-plan.md 3.5, P-a) - what a
         /// layer that wants the glow reads. Never read @c NeonRenderer.Scaled
         /// for it: that is the same texture today, listed as the DEBUG
         /// intermediate it is, and nothing promises it stays the product.
@@ -353,7 +353,7 @@ namespace EdgeLighting
         /// The key the neon's EDGE RING is published under (@ref BufferRegistry):
         /// a PUBLIC product, the ring atlas (pass 1t) - with @ref GLOW_KEY,
         /// one of the two parts the neon draws the screen from
-        /// (docs/neon-shared-layer-plan.md, step 2).
+        /// (docs/guides/neon-shared-buffer.md).
         ///
         /// @par What its texels mean
         /// The edge ring's light exactly as pass 2c puts it on the screen, but
@@ -387,7 +387,7 @@ namespace EdgeLighting
         /// one plain texture at @c NeonConfig::compositeScale, for a reader
         /// that cannot sample the two parts (@ref GLOW_KEY, @ref RING_KEY)
         /// itself. ASSEMBLED from those parts (pass 1s,
-        /// docs/neon-shared-layer-plan.md step 3): nothing is shaded again.
+        /// docs/guides/neon-shared-buffer.md section 4.7): nothing is shaded again.
         /// Made only while that scale is above 0 AND something reads it - a
         /// layer's @c CollectReads, or the host's
         /// @c EdgeLightingEffect::AddHostRead.
@@ -1223,7 +1223,7 @@ namespace EdgeLighting
             /// GetGlowCoverDirtySegmentPieces), so a segment
             /// travelling along one straight re-bakes that band rather than the
             /// table - 1.18-1.91x on such frames on an Apple M2 Pro
-            /// (docs/neon-perf-plan.md, item 5). The shape, the winding and the
+            /// (docs/plans/neon-perf-plan.md, item 5). The shape, the winding and the
             /// glow radius dirty all eight, as do the brightest arc's intensity
             /// and any light covering the whole ring.
             ///
@@ -1246,7 +1246,7 @@ namespace EdgeLighting
 
             /// Seconds of frame time @c mGlowCover.buffer has gone unread - the ring
             /// lit uniformly, or the layer off. @ref Update releases the table at
-            /// GLOW_COVER_RELEASE_SECONDS (docs/neon-perf-plan.md item 10).
+            /// GLOW_COVER_RELEASE_SECONDS (docs/plans/neon-perf-plan.md item 10).
             float unreadSeconds = 0.0f;
         } GlowCoverTable;
 
@@ -1329,7 +1329,7 @@ namespace EdgeLighting
         /// every still frame after it copies the ring instead of shading it -
         /// and on any frame something reads it (@ref RING_KEY); a frame where
         /// something moved and nothing reads it draws the ring on the screen
-        /// directly, as before (docs/neon-shared-layer-plan.md, step 1).
+        /// directly, as before (docs/guides/neon-shared-buffer.md section 4.5).
         typedef struct RingAtlas
         {
             /// RGBA16F, NEAREST - full res, read texel for pixel. No RGBA8
@@ -1457,7 +1457,7 @@ namespace EdgeLighting
             /// at scale 0.5 (3.1-5.5x across neon-scale-check's twelve scenes),
             /// 10.3x at 1.0 and 2.1x at 0.125; frames whose config changes are
             /// unaffected, since every change clears it (AMD Radeon Pro 5300M,
-            /// 1920 x 1080, 2026-10-08). First built as docs/neon-perf-plan.md
+            /// 1920 x 1080, 2026-10-08). First built as docs/plans/neon-perf-plan.md
             /// item 4.
             bool reusable = false;
 
@@ -1814,7 +1814,7 @@ namespace EdgeLighting
         ///
         /// It used to be "any config change" (@c mEmissionDirty), deliberately
         /// wide because a field list would drift from the shader; the version
-        /// numbers have no field list. See docs/emission-prepass.md section 3.
+        /// numbers have no field list. See docs/reference/emission-prepass.md section 3.
         /// @pre @ref packLightBlocks has run this frame: the blocks' counts
         ///      are part of the key, and only the pack moves them.
         bool isEmissionTableStale(float time, const Config &config) const;
@@ -1897,7 +1897,7 @@ namespace EdgeLighting
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmission.buffer, at the clamped sample count so texel i here is
         /// sample i in the gather. Retargets the framebuffer and viewport, so
-        /// it restores both before returning - see docs/emission-prepass.md.
+        /// it restores both before returning - see docs/reference/emission-prepass.md.
         ///
         /// Records what it baked (@c mEmission.bake) on the way out, so
         /// @ref isEmissionTableStale reads a snapshot written by the only
@@ -1912,7 +1912,7 @@ namespace EdgeLighting
         /// for each piece of the emitter, the arcs' and the segments' coverage
         /// over that piece's own extent, weighted by the halo's and the bloom's
         /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
-        /// V21 in docs/review-findings.md).
+        /// V21 in docs/reference/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
         /// returning, and clears both of @c mGlowCover's dirty masks on the
         /// way out. Bakes only the pieces they name, by drawing its quad onto

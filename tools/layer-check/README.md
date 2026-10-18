@@ -1,6 +1,6 @@
 # layer-check
 
-The five-layer baseline of [`docs/resource-sharing-plan.md`](../../docs/resource-sharing-plan.md)
+The five-layer baseline of [`docs/plans/resource-sharing-plan.md`](../../docs/plans/resource-sharing-plan.md)
 (its S0). `neon-scale-check` judges the neon alone, against committed images.
 This tool judges every layer at once, against itself. Each step of that plan
 has to leave the pixels alone, and two reports from the same machine and build

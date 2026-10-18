@@ -88,7 +88,7 @@ namespace EdgeLighting
         registry.BeginFrame();
         float t = mClock.GetTime();
         // What every layer will bind this frame, before any of it is made
-        // (docs/resource-sharing-plan.md 3.4): producers read it for demand,
+        // (docs/plans/resource-sharing-plan.md 3.4): producers read it for demand,
         // and the schedule below for order.
         reads.Clear();
         for (auto &renderer : mRenderers)

@@ -4,7 +4,7 @@
 // neon composites them onto the screen: the edge ring's own pixels from the
 // atlas, every other pixel from the glow with the edge mask applied, as the
 // blit applies it. Premultiplied, over transparent black, UNDITHERED, without
-// the opaque fill (docs/neon-shared-layer-plan.md, step 2).
+// the opaque fill (docs/guides/neon-shared-buffer.md section 2).
 //
 // Not a shader: injected after the tuning header, neon-sdf.glsl, neon-mask.glsl
 // and neon-ring.glsl - into the neon's own assemble pass (neon-assemble.frag),

@@ -291,7 +291,7 @@ namespace EdgeLighting
         /// the edge ring shade from - multiplied by intensity, the falloffs and
         /// the bloom, then tone-mapped - so a storage step is amplified, not
         /// hidden. Measured on the twelve scenes of `probe scenes`
-        /// (docs/neon-resolution-scale-plan.md section 13): RGBA8 holds 3/255
+        /// (docs/history/neon-resolution-scale-plan.md section 13): RGBA8 holds 3/255
         /// of the 1.0 render, RGBA16F 1-2, better than the 2-3 of the edge
         /// ring before the gather was split out, which also stored it in
         /// RGBA8. The buffer is usually one or two hundred texels a side
@@ -906,7 +906,7 @@ namespace EdgeLighting
         /// rect at glowRadius 2 shaded the whole interior to write zeros, and
         /// an inside cutoff placed past where anything was lit - changing no
         /// pixel - took the frame from 6.0 ms to 2.8 ms (AMD Radeon Pro 5300M).
-        /// docs/neon-perf-review.md section 6 had set this aside because the
+        /// docs/history/neon-perf-review.md section 6 had set this aside because the
         /// demo's rect is smaller than twice the glow reach.
         ///
         /// WHY NOT SIMPLY `reach`. Past neon.frag's `reach` the filament and
@@ -2590,10 +2590,10 @@ namespace EdgeLighting
         // above 0 AND something reads it - a layer's CollectReads or the
         // host's AddHostRead (IsBufferWanted). Never the main frame: that is
         // always drawn directly (the copy it once was at scale 1 was measured
-        // and removed - docs/progress-log.md, 2026-10-17). Drawn on a frame the
+        // and removed - docs/history/progress-log.md, 2026-10-17). Drawn on a frame the
         // offscreen passes run, and REUSED on one where nothing moved - it is
         // ASSEMBLED from the neon's two parts (the glow and the ring atlas,
-        // step 3 of docs/neon-shared-layer-plan.md), so the same parts and the
+        // docs/guides/neon-shared-buffer.md section 4.7), so the same parts and the
         // same region give the same picture. Its programs are built the first
         // frame it is wanted.
         const float compositeScale = mComposite.scale;
@@ -2605,7 +2605,7 @@ namespace EdgeLighting
         mComposite.wanted = compositeWanted;
 
         // The edge ring as a texture (pass 1t, the ring atlas), copied to the
-        // screen by pass 2c (docs/neon-shared-layer-plan.md, step 1). Packed
+        // screen by pass 2c (docs/guides/neon-shared-buffer.md section 4.5). Packed
         // as the ring's field is, and a function of exactly what passes 1a
         // and 1b are (mOffscreen.reusable) plus where the ring lies on this
         // viewport (the layout), so once drawn it is reused until something
@@ -3497,7 +3497,7 @@ namespace EdgeLighting
         // One program drawing two differently configured targets in a frame -
         // an offscreen buffer unblended and the caller's framebuffer blended -
         // is the shape that measured 93-624x slower on the AMD macOS driver
-        // (docs/neon-resolution-scale-plan.md section 7, build AB). A second
+        // (docs/history/neon-resolution-scale-plan.md section 7, build AB). A second
         // link on the first frame is the price of never finding out which
         // half of that difference the driver keys on. Not a second compile:
         // both link the one neon.frag stage the shader cache holds.

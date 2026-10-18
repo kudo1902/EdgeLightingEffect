@@ -1,5 +1,6 @@
-"""Draws the diagrams in docs/neon-shared-buffer.md and
-docs/neon-shared-layer-plan.md as SVG files beside this script.
+"""Draws the diagrams in docs/guides/neon-shared-buffer.md,
+docs/guides/neon-shared-buffer-explained.md and
+docs/plans/neon-shared-parts-plan.md as SVG files beside this script.
 
     python3 docs/images/neon-shared-buffer/diagrams.py
 
@@ -97,105 +98,7 @@ def phase2_frame(s, passes, top=52):
 
 
 # -----------------------------------------------------------------------------
-# 1. Today: the shared buffer is an extra drawing
-# -----------------------------------------------------------------------------
-def today():
-    s = Svg(1240, 760, "The neon's shared buffer today: an extra drawing, made only while read")
-    s.text(30, 34, "Today - the shared buffer is drawn a second time, only while something reads it",
-           size=16, weight="bold")
-    rows = [
-        ("Pass 0 - emission table", ["~each perimeter sample's colour"], "Emission", "DEBUG", "plain", False),
-        ("Pass 0b - glow coverage table", ["~how lit each edge piece is"], "GlowCover", "DEBUG", "plain", False),
-        ("Pass 1a - gather", ["~colour arriving at each point"], "Gather", "DEBUG", "plain", False),
-        ("Pass 1b / 1c - shading", ["~halo + bloom at resolutionScale"], "Scaled = Glow", "PUBLIC", "plain", False),
-        ("Pass 1r - ring field bake", ["~a cache for the ring (some configs)"], "RingField", "DEBUG", "plain", False),
-        ("Pass 1s - the shared buffer", ["reads Glow + Gather; only while read", "fill again + glow copy + RING AGAIN"],
-         "Composite", "PUBLIC", "warn", False),
-    ]
-    centres, bottom = phase1_frame(s, rows)
-    s.box(PASS_X, bottom + 18, 570, 60, "", ["~not drawn: 0 cost but useless  |  drawn: 1.3-2.2x on frames",
-                                             "~where something moves (M2, 1080p, scale 1)"], "plain", center=True)
-
-    passes = [
-        ("Pass 2a - fill", ["~the opaque fill, full res"], "plain"),
-        ("Pass 2b - blit", ["~Glow scaled up, edge mask"], "plain"),
-        ("Pass 2c / 2r - edge ring", ["~SHADED every frame, full res"], "warn"),
-    ]
-    ys, px, pw, _ = phase2_frame(s, passes)
-
-    # The screen's inputs.
-    s.arrow([(BUF_X + BUF_W, centres[3]), (655, centres[3]), (655, ys[1] + 28), (px, ys[1] + 28)])
-    s.arrow([(BUF_X + BUF_W, centres[2] - 6), (662, centres[2] - 6), (662, ys[2] + 22), (px, ys[2] + 22)])
-    s.arrow([(BUF_X + BUF_W, centres[4]), (669, centres[4]), (669, ys[2] + 36), (px, ys[2] + 36)], dashed=True)
-    # Readers.
-    rx = 1000
-    s.text(rx, 470, "Readers of Composite", size=14, weight="bold")
-    readers = [("debug buffer view", ["~Debug > Buffer View"], "renderer"),
-               ("another layer", ["~declares it in CollectReads"], "renderer"),
-               ("a C++ host", ["~AddHostRead(COMPOSITE_KEY)"], "host")]
-    for i, (name, lines, style) in enumerate(readers):
-        y = 486 + i * 74
-        s.box(rx, y, 220, 60, name, lines, style)
-        s.arrow([(BUF_X + BUF_W, centres[5]), (960, centres[5]), (960, y + 30), (rx, y + 30)])
-    s.note(rx, 720, "a read declaration is what\nmakes pass 1s run at all", size=11.5)
-    s.legend(690, 520, [("warn", "the edge ring: shaded twice when read"),
-                        ("public", "PUBLIC product: a written contract"),
-                        ("debug", "DEBUG: internal, may change any time")])
-    s.write("today.svg")
-
-
-# -----------------------------------------------------------------------------
-# 2. Proposed: the screen is drawn from the textures readers get
-# -----------------------------------------------------------------------------
-def proposed():
-    s = Svg(1240, 730, "Proposed: the neon draws the screen from textures it shares")
-    s.text(30, 34, "Proposed - the screen is drawn FROM the shared textures; sharing costs nothing",
-           size=16, weight="bold")
-    rows = [
-        ("Pass 0 - emission table", ["~unchanged"], "Emission", "DEBUG", "plain", False),
-        ("Pass 0b - glow coverage table", ["~unchanged"], "GlowCover", "DEBUG", "plain", False),
-        ("Pass 1a - gather", ["~unchanged"], "Gather", "DEBUG", "plain", False),
-        ("Pass 1b / 1c - shading", ["~unchanged: halo + bloom"], "Scaled = Glow", "PUBLIC", "public", False),
-        ("Pass 1r - ring field bake", ["~unchanged cache"], "RingField", "DEBUG", "plain", False),
-        ("Pass 1t - the edge ring", ["from Gather (+ RingField): final colours", "redrawn only when something moved"],
-         "Ring", "PUBLIC", "public", True),
-        ("Pass 1s - flat texture", ["only if one plain texture is asked for", "COPIES fill + Glow + Ring; no shading"],
-         "Composite", "PUBLIC", "plain", False),
-    ]
-    centres, bottom = phase1_frame(s, rows)
-
-    passes = [
-        ("Pass 2a - fill", ["~the opaque fill, full res"], "plain"),
-        ("Pass 2b - blit", ["~Glow scaled up, edge mask"], "plain"),
-        ("Pass 2c - ring copy", ["~Ring atlas -> screen, a copy"], "public"),
-    ]
-    ys, px, pw, _ = phase2_frame(s, passes)
-
-    s.arrow([(BUF_X + BUF_W, centres[3]), (655, centres[3]), (655, ys[1] + 28), (px, ys[1] + 28)])
-    s.arrow([(BUF_X + BUF_W, centres[5] - 6), (668, centres[5] - 6), (668, ys[2] + 28), (px, ys[2] + 28)])
-    # The readers sit under the screen, fed by the same two lines that feed
-    # it: whatever the screen is drawn from, a reader gets too.
-    rx, rw = 690, 250
-    s.text(rx, 418, "Readers", size=14, weight="bold")
-    parts_y, flat_y, view_y = 430, 544, 640
-    s.box(rx, parts_y, rw, 76, "a parts reader", ["~neon-layer.glsl: Glow + Ring", "~free: nothing extra drawn"],
-          "renderer")
-    s.box(rx, flat_y, rw, 76, "a flat-texture reader", ["~a host, a compositor", "~one cheap copy pass (1s)"], "host")
-    s.box(rx, view_y, rw, 60, "debug buffer view", ["~any record"], "renderer")
-    s.arrow([(655, centres[3]), (655, parts_y + 24), (rx, parts_y + 24)])
-    s.arrow([(668, centres[5] - 6), (668, parts_y + 44), (rx, parts_y + 44)])
-    s.arrow([(BUF_X + BUF_W, centres[6]), (rx, centres[6])])
-
-    s.note(980, 440, "the screen and every reader\nsee the SAME two textures:\nGlow + Ring", size=12.5, italic=False)
-    s.legend(980, 510, [("public", "PUBLIC: shared, screen uses it"), ("debug", "DEBUG: internal caches")])
-    s.box(PASS_X, bottom + 18, 570, 60, "", ["~still frame: the ring is only copied (cheaper than today)",
-                                             "~moving frame: the ring is shaded once, then copied"], "plain",
-          center=True)
-    s.write("proposed.svg")
-
-
-# -----------------------------------------------------------------------------
-# 3. Now: what was built (steps 1-3 of the plan)
+# 1. Now: what was built (steps 1-3 of the shared-layer plan)
 # -----------------------------------------------------------------------------
 def current():
     s = Svg(1240, 720, "The neon's shared light now: two parts, read or assembled")
@@ -242,7 +145,7 @@ def current():
 
 
 # -----------------------------------------------------------------------------
-# 4. What runs, per kind of frame
+# 2. What runs, per kind of frame
 # -----------------------------------------------------------------------------
 def per_frame():
     cols = ["still frame", "something moved", "+ a parts reader", "+ a flat-texture reader"]
@@ -286,9 +189,202 @@ def per_frame():
     s.write("per-frame.svg")
 
 
+# -----------------------------------------------------------------------------
+# 3. One frame's decisions, as RenderOffscreen takes them
+# -----------------------------------------------------------------------------
+def decisions():
+    s = Svg(1200, 1100, "One frame's decisions about the ring atlas and the shared buffer")
+    s.text(30, 34, "One frame's decisions - RenderOffscreen, after it knows whether anything moved", size=16,
+           weight="bold")
+    s.rect(20, 52, 1160, 868, "phase1")
+    s.text(38, 78, "Phase 1 - Prepare", size=14, weight="bold")
+
+    # The three reasons to need the atlas.
+    s.box(40, 96, 340, 74, "nothing moved", ["~reuseOffscreen: passes 1a and 1b", "~are reused this frame"])
+    s.box(430, 96, 340, 74, "the Ring is read", ["`IsBufferWanted(RING_KEY)", "~a layer's read, or AddHostRead"])
+    s.box(820, 96, 340, 74, "the Composite is wanted", ["~compositeScale > 0, read, and", "~its two programs built"])
+
+    cx, cw = 300, 600
+    s.box(cx, 214, cw, 76, "the ring atlas is needed", [
+        "~possible: the glow drawn, a ring on screen, half float, and not a size",
+        "~whose allocation just failed - AND one of the three above"], center=True)
+    for x in (210, 600, 990):
+        s.arrow([(x, 170), (x, 192), (cx + cw / 2 if x == 600 else (cx + 60 if x < 600 else cx + cw - 60), 192),
+                 (cx + cw / 2 if x == 600 else (cx + 60 if x < 600 else cx + cw - 60), 214)])
+
+    s.box(40, 336, 230, 92, "no atlas this frame", ["~2c shades the ring on the", "~screen (or composites its", "~field), as before"],
+          "plain")
+    s.arrow([(cx, 252), (155, 252), (155, 336)], "no", label_at=0.35, label_dy=-8)
+
+    s.box(cx, 336, cw, 76, "reuse it?", [
+        "~nothing moved, it holds last frame's ring, it is EXACT (not a field scaled",
+        "~to a moving intensity), and the viewport and packing are the same"], center=True)
+    s.arrow([(cx + cw / 2, 290), (cx + cw / 2, 336)], "yes", label_dy=8)
+
+    s.box(cx, 458, 280, 76, "reuse the atlas", ["~no pass; its version holds"], "public", center=True)
+    s.box(cx + 320, 458, 280, 76, "pass 1t: draw it", ["~shaded, or from the ring's field;", "~sets exact"], "public",
+          center=True)
+    s.arrow([(cx + 140, 412), (cx + 140, 458)], "yes", label_dy=8)
+    s.arrow([(cx + 460, 412), (cx + 460, 458)], "no", label_dy=8)
+
+    s.box(cx, 580, cw, 76, "the shared light (SharedLight)", [
+        "~valid while the glow and the atlas hold this frame's light - or the glow",
+        "~alone, with no ring on screen; what pass 1s and GetSharedLight hand on"], center=True)
+    s.arrow([(cx + 140, 534), (cx + 140, 580)])
+    s.arrow([(cx + 460, 534), (cx + 460, 580)])
+
+    s.box(cx, 702, cw, 76, "reuse the shared buffer?", [
+        "~wanted, nothing moved, the atlas NOT drawn again this frame (it is",
+        "~assembled from it), and the same scale, viewport and region"], center=True)
+    s.arrow([(cx + cw / 2, 656), (cx + cw / 2, 702)])
+    s.arrow([(990, 170), (990, 192), (1150, 192), (1150, 740), (cx + cw, 740)], "wanted", label_at=0.62,
+            label_dx=-58, label_dy=-8)
+
+    s.box(cx, 824, 280, 76, "reuse it", ["~no pass; its version holds"], "public", center=True)
+    s.box(cx + 320, 824, 280, 76, "pass 1s: assemble it", ["~fill at s, then the light averaged", "~per texel (needs the light valid)"],
+          "public", center=True)
+    s.arrow([(cx + 140, 778), (cx + 140, 824)], "yes", label_dy=8)
+    s.arrow([(cx + 460, 778), (cx + 460, 824)], "no", label_dy=8)
+
+    s.note(40, 716, "not wanted:\nno pass 1s, and the\nComposite record is\nnot current", size=12)
+    s.note(940, 860, "then: publishBuffers marks\nRing and Composite current\nwhen they hold this frame's", size=12)
+
+    # Phase 2.
+    s.rect(20, 940, 1160, 140, "phase2")
+    s.text(38, 966, "Phase 2 - Render: the screen", size=14, weight="bold")
+    s.box(40, 984, 240, 76, "2a fill, 2b blit", ["~the blit reads the Glow"], "plain")
+    s.box(cx, 984, cw, 76, "pass 2c: the edge ring", [
+        "~mFramePlan.ringFromAtlas: COPY the atlas, dithered - else shade the",
+        "~ring on the screen, or composite its field, as before the atlas"], "public", center=True)
+    s.arrow([(280, 1022), (cx, 1022)])
+    s.write("decisions.svg")
+
+
+# -----------------------------------------------------------------------------
+# 4. The shared buffer among the neon's other components
+# -----------------------------------------------------------------------------
+def components():
+    s = Svg(1240, 920, "The shared buffer among the neon renderer's other components")
+    s.text(30, 34, "The shared buffer among the neon's other components", size=16, weight="bold")
+
+    # Left: what the screen needs anyway.
+    s.rect(20, 52, 420, 614, "phase1")
+    s.text(38, 78, "The neon's own pipeline (phase 1)", size=14, weight="bold")
+    s.note(38, 96, "drawn for the screen whether or not anyone shares", size=12)
+    lx, lw = 40, 380
+    s.box(lx, 112, lw, 56, "Tables - pass 0, 0b", ["~emission per sample; coverage per piece"])
+    s.box(lx, 184, lw, 56, "Gather - pass 1a", ["~the colour arriving at each point"])
+    s.box(lx, 256, lw, 92, "Glow - pass 1b, or 1c", ["~halo + bloom at resolutionScale,", "~or the glow field's composite",
+                                                       "`NeonRenderer.Glow"], "public")
+    s.box(lx, 364, lw, 74, "Ring field - pass 1r", ["~a cache of the ring on moving frames;", "~reads the gather"])
+    s.box(lx, 454, lw, 92, "Ring atlas - pass 1t", ["~the edge ring: final colours, packed,", "~undithered; reads the gather",
+                                                      "`NeonRenderer.Ring"], "public")
+    s.box(lx, 562, lw, 88, "Geometry (OnConfigChanged)", ["~mRingBounds: the ring's annulus", "~mBlitBounds: the light's whole box",
+                                                            "~mFillOuter: the fill's band"])
+    s.arrow([(lx + 190, 168), (lx + 190, 184)])
+    s.arrow([(lx + 190, 240), (lx + 190, 256)])
+    s.arrow([(lx + 190, 438), (lx + 190, 454)])
+
+    # Middle: the shared buffer.
+    mx, mw = 500, 280
+    s.box(mx, 300, mw, 170, "Shared buffer - pass 1s", [
+        "1. the fill, at scale s",
+        "~   (drawFill, its own program)",
+        "2. the light: neonLight at every",
+        "~   pixel, averaged per texel",
+        "~   (neon-assemble.frag)",
+        "`NeonRenderer.Composite"], "public")
+    s.arrow([(lx + lw, 302), (470, 302), (470, 340), (mx, 340)], "Glow", label_at=0.12, label_dy=-8)
+    s.arrow([(lx + lw, 500), (470, 500), (470, 410), (mx, 410)], "Ring", label_at=0.1, label_dy=-8)
+    s.arrow([(lx + lw, 606), (485, 606), (485, 450), (mx, 450)], "boxes", label_at=0.1, label_dy=-8)
+    # The one way it changes the rest: the ring goes through its atlas.
+    s.arrow([(mx + 40, 470), (mx + 40, 526), (lx + lw, 526)], dashed=True, color=RED)
+    s.note(mx + 50, 500, "while it is wanted, the ring\natlas is drawn on moving\nframes too", size=12, color=RED,
+           italic=False)
+
+    # Right: what steers it.
+    s.rect(820, 52, 400, 614, "context")
+    s.text(838, 78, "What steers it", size=14, weight="bold")
+    rx, rw = 840, 360
+    s.box(rx, 96, rw, 110, "Who reads it -> IsBufferWanted", [
+        "a layer's CollectReads", "a host's EdgeLightingEffect::AddHostRead", "the debug layer's buffer view",
+        "~nobody: pass 1s never runs"], "effect")
+    s.box(rx, 222, rw, 92, "NeonConfig::compositeScale", [
+        "~0: off, and the buffer released", "~else clamped to [max(res, 0.4), 1]",
+        "~a change alone: setupCompositeGeometry"])
+    s.box(rx, 330, rw, 92, "Reuse", [
+        "~nothing moved (reuseOffscreen), the ring", "~atlas not drawn again, same scale,",
+        "~viewport and region: pass 1s skipped"])
+    s.box(rx, 438, rw, 74, "Releases", ["~Update: 5 s unread", "~OnConfigChanged: scale 0, layer off"])
+    s.box(rx, 528, rw, 74, "Its programs", ["~mCompositeFillShader, mAssembleShader:", "~built the first frame it is wanted"])
+    s.arrow([(rx, 150), (800, 150), (800, 330), (mx + mw, 330)])
+    s.arrow([(rx, 268), (800, 268)])
+    s.arrow([(rx, 376), (mx + mw, 376)])
+    s.arrow([(rx, 475), (800, 475), (800, 430), (mx + mw, 430)])
+
+    # Phase 2.
+    s.rect(20, 690, 1200, 210, "phase2")
+    s.text(38, 716, "Phase 2 - the screen", size=14, weight="bold")
+    s.box(40, 734, 260, 66, "2a fill", ["~full resolution, its own program"])
+    s.box(320, 734, 260, 66, "2b blit", ["~the Glow, scaled up, edge mask"])
+    s.box(600, 734, 300, 66, "2c edge ring", ["~a COPY of the ring atlas when it", "~holds this frame's ring"], "public")
+    s.box(940, 734, 260, 66, "a reader", ["~samples Composite in its Render,", "~or after the frame"], "host")
+    s.arrow([(lx, 302), (30, 302), (30, 676), (400, 676), (400, 734)])
+    s.arrow([(lx + lw, 530), (432, 530), (432, 682), (750, 682), (750, 734)])
+    s.arrow([(760, 470), (760, 668), (1070, 668), (1070, 734)])
+    s.note(40, 834, "The screen is never drawn from the shared buffer. It is drawn from the same two textures the shared\n"
+                    "buffer is assembled from, so the two agree - the screen's own dither aside.", size=12.5)
+    s.write("components.svg")
+
+
+# -----------------------------------------------------------------------------
+# 5. The plan: the two parts as the product, no flat buffer in the neon
+# -----------------------------------------------------------------------------
+def parts_core():
+    s = Svg(1240, 660, "The neon's light as two parts, read by any reader in its own pass")
+    s.text(30, 34, "Planned - the two parts are the product; a flat texture is a reader's own pass", size=16,
+           weight="bold")
+    rows = [
+        ("Pass 0 / 0b / 1a", ["~tables and gather"], "Emission, Gather", "DEBUG", "plain", False),
+        ("Pass 1b / 1c - the glow", ["~halo + bloom at resolutionScale"], "Glow", "PUBLIC", "public", False),
+        ("Pass 1t - the ring atlas", ["~on a still frame's first, or while", "~the Ring is read"], "Ring", "PUBLIC",
+         "public", False),
+    ]
+    centres, bottom = phase1_frame(s, rows)
+    s.box(PASS_X, bottom + 16, 570, 92, "the neon's light: Glow + Ring, described (NeonLight)", [
+        "~the two textures, the glow's box, the ring's boxes and packing, the",
+        "~edge mask, the viewport and a version - found through the effect or",
+        "~the context, not a pointer to the neon"], "public")
+    s.arrow([(BUF_X + 120, centres[2] + 16), (BUF_X + 120, bottom + 16)])
+    s.arrow([(BUF_X + 60, centres[1] + 16), (BUF_X + 60, centres[2] - 16)])
+    passes = [
+        ("Pass 2a - fill", ["~unchanged"], "plain"),
+        ("Pass 2b - blit", ["~Glow scaled up, edge mask"], "plain"),
+        ("Pass 2c - edge ring", ["~copy of Ring, or shaded"], "public"),
+    ]
+    ys, px, pw, _ = phase2_frame(s, passes)
+    s.arrow([(BUF_X + BUF_W, centres[1]), (655, centres[1]), (655, ys[1] + 28), (px, ys[1] + 28)])
+    s.arrow([(BUF_X + BUF_W, centres[2] - 6), (668, centres[2] - 6), (668, ys[2] + 28), (px, ys[2] + 28)])
+
+    rx, rw = 990, 230
+    s.text(rx, 78, "Readers (their own passes)", size=14, weight="bold")
+    s.box(rx, 96, rw, 110, "a host shader", ["~NEON_LIGHT_GLSL:", "~neonLight(p) per pixel", "~declares a read of Ring"],
+          "host")
+    s.box(rx, 222, rw, 110, "a library layer", ["~the same chunk; its", "~CollectReads orders it", "~after the neon"], "renderer")
+    s.box(rx, 348, rw, 128, "a flat texture, if", ["~a reader wants one: its", "~own pass at its own scale,", "~neonLightOverSquare()",
+                                                      "~(today's pass 1s, moved)"], "host")
+    for y in (150, 276, 410):
+        s.arrow([(972, y), (rx, y)])
+    s.arrow([(PASS_X + 570, bottom + 62), (972, bottom + 62), (972, 150)])
+    s.note(rx, 510, "no pass in the neon exists\nfor readers but the ring\natlas on moving frames,\nand only while it is read",
+           size=12)
+    s.write("parts-core.svg")
+
+
 if __name__ == "__main__":
-    today()
-    proposed()
     current()
     per_frame()
-    print("wrote 4 diagrams to", OUT)
+    decisions()
+    components()
+    parts_core()
+    print("wrote 5 diagrams to", OUT)

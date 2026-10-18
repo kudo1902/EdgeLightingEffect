@@ -11,7 +11,7 @@ namespace EdgeLighting
 {
     class BaseRenderer;
 
-    /// When a renderer binds a buffer it reads (docs/resource-sharing-plan.md
+    /// When a renderer binds a buffer it reads (docs/plans/resource-sharing-plan.md
     /// 3.4).
     typedef enum class ReadPhase
     {

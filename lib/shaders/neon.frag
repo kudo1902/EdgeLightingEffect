@@ -599,7 +599,7 @@ void addCornerGlowFix(inout vec4 fix, vec2 signs, vec2 w, float kh, vec2 gathere
 // ONE ARC AT A TIME, AND THAT IS LOAD-BEARING. Developing all four arcs first
 // kept sixteen floats live across the block and made every scene slower,
 // sharp-cornered and fully lit ones included (measured history in
-// docs/neon-frag-notes.md, from when this program also carried the gather
+// docs/reference/neon-frag-notes.md, from when this program also carried the gather
 // loop). Keep the four calls whole.
 //
 // SKIPPED, whole, past uCornerSkip from the arc's circle: every developed point
@@ -735,7 +735,7 @@ void main() {
     // falloff, under what the caller asked for at a soft one. Gated to the
     // scaled path: at 1.0 the filament stays exactly the width it was asked
     // for. NeonRenderer::setupGeometry mirrors both the expression and the gate
-    // when it sizes the quad. See docs/corner-crease-and-filament-nyquist.md
+    // when it sizes the quad. See docs/reference/corner-crease-and-filament-nyquist.md
     // section 2.8.
     float nyquist   = (uResolutionScale < 1.0)
                         ? FILAMENT_NYQUIST_SAMPLE_PX /
@@ -909,7 +909,7 @@ void main() {
     // their calibration. What does move: a short edge's bloom is dimmer (it
     // emits less), and the interior settles on a floor rather than decaying
     // (capped by insideCutoff) - see
-    // docs/corner-crease-and-filament-nyquist.md.
+    // docs/reference/corner-crease-and-filament-nyquist.md.
     //
     // Per edge: the perpendicular distance is the per-axis offset, and the
     // segment runs the opposite axis's extent, TRIMMED TO THE TANGENT POINTS.
@@ -949,7 +949,7 @@ void main() {
     // there. Below 1.0 the same branch saves ~3%, which is not worth it.
     // (Measured while the loop ran inline at 1.0; a compile-time variant was
     // measured since, at 1.05-1.10x on intensity frames only -
-    // docs/neon-shader-cleanup-plan.md.)
+    // docs/history/neon-shader-cleanup-plan.md.)
     //
     // Decided ONCE, on the CPU (uUniformCover): the very test NeonRenderer
     // skips baking the coverage table on, so wherever the table may be stale

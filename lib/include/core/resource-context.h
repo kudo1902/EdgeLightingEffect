@@ -14,7 +14,7 @@ namespace EdgeLighting
     /// (@ref ShaderCache), the records of their offscreen buffers
     /// (@ref BufferRegistry), this frame's declared reads of them
     /// (@ref ReadList) and one fullscreen quad (@ref GetFullscreenQuad).
-    /// docs/resource-sharing-plan.md adds a render-target pool (its S7),
+    /// docs/plans/resource-sharing-plan.md adds a render-target pool (its S7),
     /// under the plan's rule: one owner writes a resource, everyone else only
     /// reads it.
     ///

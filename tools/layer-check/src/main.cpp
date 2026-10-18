@@ -1,4 +1,4 @@
-// layer-check - the five-layer baseline of docs/resource-sharing-plan.md (S0).
+// layer-check - the five-layer baseline of docs/plans/resource-sharing-plan.md (S0).
 //
 // neon-scale-check judges the neon alone, against images. This judges every
 // layer at once, against ITSELF: it renders a fixed set of scenes through all

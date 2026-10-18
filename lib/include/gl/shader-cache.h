@@ -13,12 +13,12 @@ namespace EdgeLighting
     /// Compiled shader stages, each compiled once and linked by every program
     /// that needs it - across renderers, which is what it is for: neon.vert
     /// went into up to 17 programs, each compiling its own copy, and neon.frag
-    /// into two (docs/resource-sharing-plan.md, section 1.2).
+    /// into two (docs/plans/resource-sharing-plan.md, section 1.2).
     ///
     /// Shares STAGES, never programs. Every pass keeps a program object of its
     /// own, since one program drawing an offscreen buffer unblended and the
     /// caller's framebuffer blended in the same frame measured 93-624x slower
-    /// on the AMD macOS driver (docs/neon-resolution-scale-plan.md section 7,
+    /// on the AMD macOS driver (docs/history/neon-resolution-scale-plan.md section 7,
     /// build AB). The program object is what such a driver keys its
     /// per-target state on; the stage is only the compile.
     ///

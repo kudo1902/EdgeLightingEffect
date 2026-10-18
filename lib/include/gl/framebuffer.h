@@ -377,7 +377,7 @@ namespace EdgeLighting
         ///       That is a breaking change to the renderer plugin API - six
         ///       renderers and both demos - and is deliberately not taken
         ///       without a profile showing this query on the critical path.
-        ///       See docs/review-findings.md I5.
+        ///       See docs/reference/review-findings.md I5.
         static GLuint GetBoundId()
         {
             GLint id = 0;

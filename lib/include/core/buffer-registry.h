@@ -19,7 +19,7 @@ namespace EdgeLighting
     /// capi-internal.h holds the two together).
     constexpr int BUFFER_KEY_CAPACITY = 64;
 
-    /// Who may bind a record's texture (docs/resource-sharing-plan.md 3.2).
+    /// Who may bind a record's texture (docs/plans/resource-sharing-plan.md 3.2).
     typedef enum class BufferVisibility
     {
         /// A product with a written contract - what its texels mean, which box

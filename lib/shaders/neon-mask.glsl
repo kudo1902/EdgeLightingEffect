@@ -16,7 +16,7 @@
 // Why COVERAGE, after the grade: above the tone map a half-covered pixel came
 // out near full brightness and its alpha occluded at ~0.94 instead of 0.5;
 // below it the ramp is the box filter and registers with the opaque fill.
-// See docs/glow-side-comparison.md.
+// See docs/reference/glow-side-comparison.md.
 //
 // The factors are separate functions, not only their product: the programs
 // multiply them into their colour in different orders - the ring and the

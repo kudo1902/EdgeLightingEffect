@@ -1,7 +1,7 @@
 # neon-guide-figures
 
 Renders every image in
-[`docs/neon-onboarding-guide.md`](../../docs/neon-onboarding-guide.md) into
+[`docs/guides/neon-onboarding-guide.md`](../../docs/guides/neon-onboarding-guide.md) into
 `docs/images/neon-onboarding/`, which
 [`docs/neon-shader-outputs.html`](../../docs/neon-shader-outputs.html) also
 reads its pass images from - plus two only that page shows, the edge ring's

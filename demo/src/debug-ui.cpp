@@ -334,7 +334,7 @@ namespace
     ///
     /// Without the note the sliders look live and move nothing, which is
     /// exactly the confusion that produced the report behind
-    /// docs/glow-side-comparison.md section 4.3. A note rather than a
+    /// docs/reference/glow-side-comparison.md section 4.3. A note rather than a
     /// BeginDisabled so the value can still be staged ahead of switching the
     /// glow side back.
     inline void CutoffRow(const char *label, const char *idSuffix,

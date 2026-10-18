@@ -8,6 +8,10 @@ The library is embeddable - a static C++ library (`libedge-lighting.a`) plus a
 `extern "C"` shared library (`libedge-lighting-c.dylib`) for FFI. The demo app
 under `demo/` drives it with a live ImGui control panel.
 
+Documentation: [`docs/README.md`](docs/README.md) indexes it - guides to learn
+the system, references for each part, open plans, and the history behind the
+code.
+
 ## Build & run
 
 Configure once, then rebuild from `build/`:
@@ -52,7 +56,7 @@ They composite in the order they are registered, which is the order below.
   one out: not a perimeter effect at all. Each lamp carries its own position,
   direction, beam angle, throw, softness, intensity and colour temperature,
   and gets a strip of geometry solved to hug exactly the region it lights.
-  See [`docs/spotlight-renderer.md`](docs/spotlight-renderer.md).
+  See [`docs/reference/spotlight-renderer.md`](docs/reference/spotlight-renderer.md).
 - **DebugRenderer** - the debug annotations in one layer: the baked ring as a
   LUT strip, a disc per colour stop, and a 1 px `GL_LINE_LOOP` bounding box.
   Registered **last**, because it annotates what the layers under it drew.
@@ -152,6 +156,12 @@ demo-capi/                  the same UI, compiled against only the C ABI
                             (its include path excludes lib/include/, which is
                             what proves the ABI is self-sufficient)
 
+docs/                       the documentation, indexed by docs/README.md:
+  guides/  reference/       learn the system; how each part works today
+  plans/   history/         open plans; finished plans, measurements, the log
+  *.html   images/          the neon explained in three depths; every figure
+
+tools/                      optional checks and figure renderers (see each README)
 external/                   GLFW binary, GLAD, GLM, ImGui, stb_image
 res/                        demo image assets (see res/CREDITS.md)
 ```

@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="920" viewBox="0 0 1240 920" role="img" aria-label="The shared buffer among the neon renderer's other components">
+<title>The shared buffer among the neon renderer's other components</title>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/></marker>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="1239" height="919" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="30" y="34" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1f2328" text-anchor="start">The shared buffer among the neon's other components</text>
+<rect x="20" y="52" width="420" height="614" rx="8" fill="#fff8c5" stroke="#9a6700" stroke-width="1.5"/>
+<text x="38" y="78" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">The neon's own pipeline (phase 1)</text>
+<text x="38" y="96" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">drawn for the screen whether or not anyone shares</text>
+<rect x="40" y="112" width="380" height="56" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="52" y="134" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Tables - pass 0, 0b</text>
+<text x="52" y="154" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">emission per sample; coverage per piece</text>
+<rect x="40" y="184" width="380" height="56" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="52" y="206" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Gather - pass 1a</text>
+<text x="52" y="226" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">the colour arriving at each point</text>
+<rect x="40" y="256" width="380" height="92" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="52" y="278" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Glow - pass 1b, or 1c</text>
+<text x="52" y="298" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">halo + bloom at resolutionScale,</text>
+<text x="52" y="316" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">or the glow field's composite</text>
+<text x="52" y="334" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">NeonRenderer.Glow</text>
+<rect x="40" y="364" width="380" height="74" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="52" y="386" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Ring field - pass 1r</text>
+<text x="52" y="406" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">a cache of the ring on moving frames;</text>
+<text x="52" y="424" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">reads the gather</text>
+<rect x="40" y="454" width="380" height="92" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="52" y="476" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Ring atlas - pass 1t</text>
+<text x="52" y="496" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">the edge ring: final colours, packed,</text>
+<text x="52" y="514" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">undithered; reads the gather</text>
+<text x="52" y="532" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">NeonRenderer.Ring</text>
+<rect x="40" y="562" width="380" height="88" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="52" y="584" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Geometry (OnConfigChanged)</text>
+<text x="52" y="604" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">mRingBounds: the ring's annulus</text>
+<text x="52" y="622" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">mBlitBounds: the light's whole box</text>
+<text x="52" y="640" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">mFillOuter: the fill's band</text>
+<path d="M 230 168 L 230 184" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 230 240 L 230 256" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 230 438 L 230 454" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="500" y="300" width="280" height="170" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="512" y="322" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Shared buffer - pass 1s</text>
+<text x="512" y="342" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">1. the fill, at scale s</text>
+<text x="512" y="360" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">   (drawFill, its own program)</text>
+<text x="512" y="378" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">2. the light: neonLight at every</text>
+<text x="512" y="396" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">   pixel, averaged per texel</text>
+<text x="512" y="414" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">   (neon-assemble.frag)</text>
+<text x="512" y="432" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">NeonRenderer.Composite</text>
+<path d="M 420 302 L 470 302 L 470 340 L 500 340" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="440.16" y="294.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">Glow</text>
+<path d="M 420 500 L 470 500 L 470 410 L 500 410" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="443.0" y="492.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">Ring</text>
+<path d="M 420 606 L 485 606 L 485 450 L 500 450" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="449.6" y="598.0" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#57606a" text-anchor="start">boxes</text>
+<path d="M 540 470 L 540 526 L 420 526" fill="none" stroke="#cf222e" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow-red)"/>
+<text x="550" y="500" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#cf222e" text-anchor="start">while it is wanted, the ring</text>
+<text x="550" y="516" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#cf222e" text-anchor="start">atlas is drawn on moving</text>
+<text x="550" y="532" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#cf222e" text-anchor="start">frames too</text>
+<rect x="820" y="52" width="400" height="614" rx="8" fill="#fbefff" stroke="#8250df" stroke-width="1.5"/>
+<text x="838" y="78" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">What steers it</text>
+<rect x="840" y="96" width="360" height="110" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="852" y="118" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Who reads it -&gt; IsBufferWanted</text>
+<text x="852" y="138" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">a layer's CollectReads</text>
+<text x="852" y="156" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">a host's EdgeLightingEffect::AddHostRead</text>
+<text x="852" y="174" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#1f2328" text-anchor="start">the debug layer's buffer view</text>
+<text x="852" y="192" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">nobody: pass 1s never runs</text>
+<rect x="840" y="222" width="360" height="92" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="852" y="244" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">NeonConfig::compositeScale</text>
+<text x="852" y="264" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">0: off, and the buffer released</text>
+<text x="852" y="282" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">else clamped to [max(res, 0.4), 1]</text>
+<text x="852" y="300" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">a change alone: setupCompositeGeometry</text>
+<rect x="840" y="330" width="360" height="92" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="852" y="352" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Reuse</text>
+<text x="852" y="372" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">nothing moved (reuseOffscreen), the ring</text>
+<text x="852" y="390" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">atlas not drawn again, same scale,</text>
+<text x="852" y="408" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">viewport and region: pass 1s skipped</text>
+<rect x="840" y="438" width="360" height="74" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="852" y="460" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Releases</text>
+<text x="852" y="480" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">Update: 5 s unread</text>
+<text x="852" y="498" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">OnConfigChanged: scale 0, layer off</text>
+<rect x="840" y="528" width="360" height="74" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="852" y="550" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Its programs</text>
+<text x="852" y="570" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">mCompositeFillShader, mAssembleShader:</text>
+<text x="852" y="588" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">built the first frame it is wanted</text>
+<path d="M 840 150 L 800 150 L 800 330 L 780 330" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 840 268 L 800 268" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 840 376 L 780 376" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 840 475 L 800 475 L 800 430 L 780 430" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="20" y="690" width="1200" height="210" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.5"/>
+<text x="38" y="716" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">Phase 2 - the screen</text>
+<rect x="40" y="734" width="260" height="66" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="52" y="756" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">2a fill</text>
+<text x="52" y="776" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">full resolution, its own program</text>
+<rect x="320" y="734" width="260" height="66" rx="8" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="332" y="756" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">2b blit</text>
+<text x="332" y="776" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">the Glow, scaled up, edge mask</text>
+<rect x="600" y="734" width="300" height="66" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5"/>
+<text x="612" y="756" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">2c edge ring</text>
+<text x="612" y="776" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">a COPY of the ring atlas when it</text>
+<text x="612" y="794" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">holds this frame's ring</text>
+<rect x="940" y="734" width="260" height="66" rx="8" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.5"/>
+<text x="952" y="756" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2328" text-anchor="start">a reader</text>
+<text x="952" y="776" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">samples Composite in its Render,</text>
+<text x="952" y="794" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start">or after the frame</text>
+<path d="M 40 302 L 30 302 L 30 676 L 400 676 L 400 734" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 420 530 L 432 530 L 432 682 L 750 682 L 750 734" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 760 470 L 760 668 L 1070 668 L 1070 734" fill="none" stroke="#57606a" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="40" y="834" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">The screen is never drawn from the shared buffer. It is drawn from the same two textures the shared</text>
+<text x="40" y="850" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#57606a" text-anchor="start" font-style="italic">buffer is assembled from, so the two agree - the screen's own dither aside.</text>
+</svg>
