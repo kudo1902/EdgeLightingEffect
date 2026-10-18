@@ -1,11 +1,5 @@
 precision highp float;
 
-// NEON_RING_COPY is the ring atlas's copy (pass 2c, docs/neon-shared-layer-plan.md
-// step 1): the ring's packing and strip lookup, and nothing of the field.
-#if defined(NEON_RING_COPY) && !defined(NEON_FIELD_RING)
-#define NEON_FIELD_RING
-#endif
-
 // ---------------------------------------------------------------------------
 // The hue-invariant field's composite (pass 1c).
 //
@@ -67,21 +61,32 @@ precision highp float;
 // NEON_RING_COPY copies the ring atlas onto the caller's framebuffer, in pass
 // 2c's place: the same strip lookup, the atlas's texel as it is, and the output
 // dither. A texel the ring's shading discarded is exactly 0 and is discarded
-// again, so it leaves the target as that discard did.
+// again, so it leaves the target as that discard did. It takes the packing and
+// nothing of the field - none of NEON_FIELD_RING's declarations, so neither
+// the mask chunk shaders.h.in injects for NEON_FIELD_RING alone.
 // ---------------------------------------------------------------------------
 
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uField;       ///< Fa (.r) and, with segments, Fs (.g): R16F or RG16F; NEAREST.
-#ifdef NEON_FIELD_RING
+#if defined(NEON_FIELD_RING) || defined(NEON_RING_COPY)
 uniform vec2      uRingLo;      ///< vPos (full-res px) of the ring box's lower-left pixel corner.
 uniform vec4      uRingHole;    ///< Box pixels the ring never draws: [x0, x1) x [y0, y1), as x0, y0, x1, y1.
 uniform vec2      uRingRows;    ///< First atlas row of the left strip and of the right strip.
-uniform int       uDither;      ///< 1 onto the caller's framebuffer, 0 into the ring atlas.
+
+// The atlas texel holding the ring pixel at vPos: neon-ring.glsl's lookup, the
+// one copy the ring atlas's readers share.
+ivec2 ringTexel() {
+    return neonRingTexel(vPos, uRingLo, uRingHole, uRingRows);
+}
+#endif
+
 #ifdef NEON_RING_COPY
 uniform sampler2D uRingAtlas;   ///< The ring atlas: final premultiplied colours, RGBA16F, NEAREST.
-#endif
+#else
+uniform sampler2D uField;       ///< Fa (.r) and, with segments, Fs (.g): R16F or RG16F; NEAREST.
+#ifdef NEON_FIELD_RING
+uniform int       uDither;      ///< 1 onto the caller's framebuffer, 0 into the ring atlas.
 
 // The one-sided cut and the cutoffs, as the ring's own shading takes them
 // (uploadNeonUniforms at scale 1.0): full-res px, a disabled cutoff at
@@ -104,13 +109,6 @@ uniform int       uFieldSegments; ///< 1 when the field carries Fs in .g (the co
 uniform float     uFieldGain;   ///< I / I0: the neon's intensity over the one the field was baked at; exactly 1 but while it moves (I56). Scales Fa only - the segments do not take the intensity.
 uniform vec2      uGatherUVScale;
 uniform vec2      uGatherUVOffset;
-
-#ifdef NEON_FIELD_RING
-// The atlas texel holding the ring pixel at vPos: neon-ring.glsl's lookup, the
-// one copy the ring atlas's readers share.
-ivec2 ringTexel() {
-    return neonRingTexel(vPos, uRingLo, uRingHole, uRingRows);
-}
 #endif
 
 void main() {

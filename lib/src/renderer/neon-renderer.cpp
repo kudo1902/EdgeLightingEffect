@@ -2270,6 +2270,7 @@ namespace EdgeLighting
         shader.SetUniform("uLightInsideCutoffSoftness", light.mask.insideCutoffSoftness);
         shader.SetUniform("uLightOutsideCutoff", light.mask.outsideCutoff);
         shader.SetUniform("uLightOutsideCutoffSoftness", light.mask.outsideCutoffSoftness);
+        shader.SetUniform("uLightViewport", light.viewport);
     }
 
     bool NeonRenderer::Initialize()
@@ -2601,12 +2602,6 @@ namespace EdgeLighting
             compositeOn && IsBufferWanted(mBufferRecords.composite) && ensureCompositePrograms();
         const CompositeRegion compositeRegion =
             compositeWanted ? getCompositeRegion(centerFull, viewportWidth, viewportHeight, config) : CompositeRegion{};
-        const bool compositeReused = compositeWanted && reuseOffscreen && mComposite.cache.drawn &&
-                                     mComposite.cache.scale == compositeScale &&
-                                     mComposite.cache.viewport == viewport &&
-                                     mComposite.cache.region == compositeRegion;
-        const bool compositeDraw = compositeWanted && !compositeReused;
-        bool compositeReady = compositeReused;
         mComposite.wanted = compositeWanted;
 
         // The edge ring as a texture (pass 1t, the ring atlas), copied to the
@@ -2622,8 +2617,8 @@ namespace EdgeLighting
         //     the ring is shaded into the atlas once, and every still frame
         //     after copies it;
         //   - any frame something reads it (IsBufferWanted), or the shared
-        //     buffer is assembled from it: the ring is shaded into the atlas
-        //     instead of onto the screen, and shared.
+        //     buffer is wanted, which is assembled from it: the ring is shaded
+        //     into the atlas instead of onto the screen, and shared.
         // A frame where something moved and nobody reads the ring draws it on
         // the screen directly, as before the atlas: measured on an Apple M2
         // Pro, routing every such frame through the atlas cost 5-26% on
@@ -2632,24 +2627,42 @@ namespace EdgeLighting
         const RingFieldLayout ringLayout =
             computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
         const bool ringAbsent = mRingMesh.count == 0 || ringLayout.atlas.x <= 0 || ringLayout.atlas.y <= 0;
-        const bool ringAtlasPossible = glowReady && !ringAbsent && !mRingAtlas.unavailable;
+        // Not at a size an allocation has just failed at (out of memory): the
+        // ring is drawn directly until the size moves (renderRingAtlasPass).
+        const bool ringAtlasPossible = glowReady && !ringAbsent && !mRingAtlas.unavailable &&
+                                       ringLayout.atlas != mRingAtlas.failedNeed;
         const bool ringAtlasWanted = ringAtlasPossible && IsBufferWanted(mBufferRecords.ringAtlas);
-        const bool ringAtlasNeeded = ringAtlasPossible && (reuseOffscreen || ringAtlasWanted || compositeDraw);
+        const bool ringAtlasNeeded = ringAtlasPossible && (reuseOffscreen || ringAtlasWanted || compositeWanted);
         // Its programs are built on the first frame of a config that can hold
         // still - one whose hue does not move with time alone - so a still
         // host pays the build with every other program on its first frame,
         // not as a ~5 ms hitch on its second (M2); and otherwise on the first
         // frame the atlas is needed, so a rotating hue (the default), which
         // never holds still while the clock runs, never builds them unread.
-        const bool ringAtlasOn = ringAtlasNeeded && ensureRingAtlasPrograms();
-        if (!ringAtlasOn && ringAtlasPossible && config.neon.hueRotationRate == 0.0f)
-        {
-            ensureRingAtlasPrograms();
-        }
-        const bool ringAtlasReused = ringAtlasOn && reuseOffscreen && mRingAtlas.drawn &&
+        // The hue is the one signal a first frame has, and it misses twice,
+        // each time once, by 5 ms: a still hue under an animation that never
+        // stops builds them for nothing, and a rotating hue whose clock is
+        // paused builds them on the first paused frame.
+        const bool ringAtlasBuilt = ringAtlasPossible && (ringAtlasNeeded || config.neon.hueRotationRate == 0.0f) &&
+                                    ensureRingAtlasPrograms();
+        const bool ringAtlasOn = ringAtlasNeeded && ringAtlasBuilt;
+        // Reused only while it is exact (RingAtlas::exact): one composited
+        // from a field scaled to a moving intensity is drawn again on the
+        // frame the intensity stops, as the ring was before the atlas.
+        const bool ringAtlasReused = ringAtlasOn && reuseOffscreen && mRingAtlas.drawn && mRingAtlas.exact &&
                                      mRingAtlas.viewport == viewport && mRingAtlas.layout == ringLayout;
         const bool ringAtlasDraw = ringAtlasOn && !ringAtlasReused;
         bool ringAtlasReady = ringAtlasReused;
+
+        // The shared buffer is reused only with the atlas it was assembled
+        // from: a frame that draws the atlas again assembles it again, so the
+        // two never disagree.
+        const bool compositeReused = compositeWanted && reuseOffscreen && !ringAtlasDraw && mComposite.cache.drawn &&
+                                     mComposite.cache.scale == compositeScale &&
+                                     mComposite.cache.viewport == viewport &&
+                                     mComposite.cache.region == compositeRegion;
+        const bool compositeDraw = compositeWanted && !compositeReused;
+        bool compositeReady = compositeReused;
 
         // The edge ring factored the same way (pass 1r bakes its field, which
         // the ring's pass composites - into the ring atlas (pass 1t) or onto
@@ -2843,6 +2856,7 @@ namespace EdgeLighting
                 light.glowSize = scaledRegion.size;
                 light.center = centerFull;
                 light.mask = GetEdgeMask(config, viewportHeight);
+                light.viewport = glm::vec2(viewport);
                 if (ringAtlasReady)
                 {
                     light.ringTexture = mRingAtlas.buffer.GetTextureId();
@@ -2900,6 +2914,7 @@ namespace EdgeLighting
         // reused, or nothing usable - cleared on a frame it was neither, so a
         // ring left undrawn while the config moved is never copied stale.
         mRingAtlas.drawn = glowReady && ringAtlasReady;
+        mRingAtlas.exact = mRingAtlas.exact && mRingAtlas.drawn;
         mRingAtlas.viewport = viewport;
         mRingAtlas.layout = ringLayout;
         // What the shared buffer holds from here on - the one place its cache
@@ -5067,13 +5082,50 @@ namespace EdgeLighting
         // Half float or nothing: the copy dithers what it reads, which needs
         // the tails unrounded (R7) - a driver without it draws the ring on
         // the screen directly, for good.
-        if (!mRingAtlas.buffer.Resize(layout.atlas.x, layout.atlas.y, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT,
-                                      GL_NEAREST))
+        //
+        // Allocated in steps of REGION_ALLOC_STEP and kept while it holds the
+        // layout and is at most two steps over, as the region buffers are:
+        // this pass runs on every moving frame something reads the ring, and
+        // a resizing rect, or one sliding across the viewport's edge, changes
+        // the layout's size on each. Every read finds its texel from the
+        // layout (texelFetch), so the texels past it are never read.
+        const glm::ivec2 step(REGION_ALLOC_STEP);
+        glm::ivec2 alloc = (layout.atlas + step - 1) / step * step;
+        if (mRingAtlas.buffer.IsValid())
         {
-            LOG_E("NeonRenderer: no half-float target for the ring atlas - the ring is drawn directly.");
-            mRingAtlas.unavailable = true;
+            const glm::ivec2 have(mRingAtlas.buffer.GetWidth(), mRingAtlas.buffer.GetHeight());
+            if (glm::all(glm::greaterThanEqual(have, layout.atlas)) &&
+                glm::all(glm::lessThanEqual(have, alloc + 2 * step)))
+            {
+                alloc = have;
+            }
+        }
+        if (!mRingAtlas.buffer.Resize(alloc.x, alloc.y, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST))
+        {
+            // A missing format fails here, and so do running out of memory and
+            // an oversized texture. A small target of the same format tells
+            // them apart: if that allocates too, the format renders and only
+            // this size failed - not tried again until the size moves.
+            const bool formatRenders =
+                mRingAtlas.buffer.Resize(REGION_ALLOC_STEP, REGION_ALLOC_STEP, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT,
+                                         GL_NEAREST);
+            mRingAtlas.buffer.Release();
+            if (formatRenders)
+            {
+                LOG_E("NeonRenderer: could not allocate the %dx%d ring atlas - the ring is drawn directly until "
+                      "its size changes.",
+                      alloc.x, alloc.y);
+                mRingAtlas.failedNeed = layout.atlas;
+            }
+            else
+            {
+                LOG_E("NeonRenderer: no half-float target for the ring atlas - the ring is drawn directly.");
+                mRingAtlas.unavailable = true;
+            }
+            mRingAtlas.exact = false;
             return false;
         }
+        mRingAtlas.failedNeed = glm::ivec2(0);
         // Cleared to 0: what the ring's shading discards stays an exact 0,
         // which the copy discards in turn.
         mRingAtlas.buffer.Bind();
@@ -5106,6 +5158,9 @@ namespace EdgeLighting
             bindGatherBuffer(program, gatherUV);
             drawRingStrips(program, layout, mRingAtlas.box, uploadBox);
             program.Unuse();
+            // Exact at gain 1 (within the field's level); scaled to a moving
+            // intensity it must not outlive the frame the intensity stops.
+            mRingAtlas.exact = ringField.gain == 1.0f;
         }
         else
         {
@@ -5120,6 +5175,7 @@ namespace EdgeLighting
             bindGatherBuffer(mRingAtlasShader, gatherUV);
             drawRingStrips(mRingAtlasShader, layout, mRingAtlas.box, uploadBox);
             mRingAtlasShader.Unuse();
+            mRingAtlas.exact = true;
         }
         return true;
     }

@@ -5,6 +5,69 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-18 - Second review of the shared layer, and its fixes
+
+A deep review of `c08639a..98be11a` found nine issues. All nine are dealt with:
+
+- **A scaled ring kept past the frame it should have been redrawn.** Under a
+  moving intensity, pass 1t could composite the ring atlas from the ring's
+  field scaled by I / I0. On the frame the intensity stopped, a thin band
+  reused that atlas, and so did the shared buffer. A thin band is one whose
+  glow does not use its own field, so `mOffscreen.reusable` held.
+  - The atlas is now reused only while `RingAtlas::exact`, and the shared
+    buffer only on a frame that does not redraw the atlas.
+  - A trace confirmed the path on `default@band` and `hairline@band`.
+  - The stale ring measured within 1 level of a fresh render on every gate
+    scene, so the effect was small. Only the trace shows it was real.
+- **Reads past the viewport.**
+  - `neonLight` tested the unclipped ring annulus. The atlas's packing is
+    clipped to the viewport, so a point past it read a texel outside its
+    strip.
+  - The shared buffer's region, rounded up to 16 texels, carried texels
+    past the viewport. There the light read 0 (the glow's region stops at
+    the viewport) wherever the edge was lit, so a filtered read darkened
+    the last rows: up to 245 levels against the edge's own light, on most
+    scenes at 0.5.
+  - `neonLightClampPx` now reads a point past the viewport at the nearest
+    pixel inside. The assemble pass's shortcut tests and reads there too.
+  - `SharedLight` and `UploadSharedLight` carry the viewport
+    (`uLightViewport`).
+- **The atlas reallocated whenever its size moved.** It is now allocated in
+  steps of `REGION_ALLOC_STEP` and kept within two steps, as the region
+  buffers are. This adds up to 15 texels each way (+0.05 MB on the default
+  scene).
+- **Any allocation failure disabled the atlas for good** and blamed half
+  float. A 16 x 16 probe of the format now tells them apart: a size that
+  failed (`RingAtlas::failedNeed`) is skipped until it moves.
+- **The atlas programs' build rule** is one expression now. It keeps the hue
+  test, the one signal a first frame has. Its two misses are written beside
+  it: a still hue under a never-ending animation, and a paused rotating hue.
+  Each costs the 5 ms once.
+- **`NEON_RING_COPY` no longer defines `NEON_FIELD_RING`** behind the mask
+  chunk's injection. The packing has its own guard, and `neon-ring.glsl` is
+  injected only into the two variants that read a packed ring.
+- Docs: `SharedLight::valid`'s glow-only case, and the demo's Shared Scale
+  tooltip (the screen's ring changes by up to a level while the buffer is
+  read).
+- **Gate coverage.** `parts` and `shared` now also run:
+  - an intensity that falls and holds, with the held frame compared to the
+    config drawn from nothing;
+  - `default` and `hairline` across the frame's top-right corner (`@edge`);
+  - `default`, `hairline` and `overdrive` as a thin band (`@band`).
+
+  `shared` adds scale 0.4, the floor, where squares land on no whole pixel.
+  It judges every texel, those past the viewport included, against the
+  screen averaged over its square.
+  - Against the previous library, the new `shared` fails on the reads past
+    the viewport (48 frames, up to 245 levels).
+  - On the fixed one it passes everywhere at max 1.
+
+Gates:
+- `check`, `partition` (the ring copied in 477 of 1000), `parts` and
+  `shared`: all pass.
+- `layer-check`: all 300 frames identical to `98be11a`; texture memory up by
+  the atlas's rounding.
+
 ## 2026-10-17 - Performance review of the shared layer
 
 [`neon-shared-layer-perf-review.md`](neon-shared-layer-perf-review.md),

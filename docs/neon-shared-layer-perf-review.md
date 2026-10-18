@@ -306,7 +306,10 @@ this review allocates anything.
 | shared buffer | while read | default scene: +1.88 MB at 0.5 (640 x 368 texels), +7.37 MB at 1 (1280 x 720). Its region there is the whole viewport |
 
 At 1080p the shared buffer is 4.1 MB at 0.5 and 16.6 MB at 1 when its region
-is the whole viewport, and the atlas is about 1 MB. A host that never holds
+is the whole viewport, and the atlas is about 1 MB. The review that followed
+this one rounded the atlas's allocation up to 16 texels, so a rect resizing
+while something reads it does not reallocate it every frame. That costs up to
+15 texels more each way: +0.05 MB on the default scene. A host that never holds
 still and reads nothing gets no new buffer.
 
 ---

@@ -934,7 +934,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
                               "can read - drawn only while one does (Debug > Buffer View\n"
                               "on NeonRenderer.Composite is one). 0 = off.\n"
                               "Clamped to [max(Res Scale, 0.4), 1]. Reused while nothing\n"
-                              "moves; the frame on screen never changes with it.");
+                              "moves. While it is read, the edge ring reaches the screen\n"
+                              "through the ring atlas on moving frames too - within a\n"
+                              "level of shading it there.");
         }
         if (cfg.neon.compositeScale > 0.0f)
         {

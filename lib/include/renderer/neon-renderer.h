@@ -410,8 +410,11 @@ namespace EdgeLighting
         /// covers it. The record is placed at that region: a caller pixel
         /// centre p reads uv = (p - origin) / size. RGBA16F, or RGBA8 where
         /// the driver will not render half float; LINEAR and clamp-to-edge,
-        /// which a reader must not change. Texels outside what the region
-        /// needs (the size is rounded up) are 0.
+        /// which a reader must not change. The size is rounded up: texels the
+        /// rounding adds inside the viewport are 0, and past the viewport's
+        /// edge they hold the light at that edge - what clamp-to-edge gives a
+        /// buffer that ended there - so a filtered read of the last pixels
+        /// does not darken.
         ///
         /// @par When
         /// Current on every frame it is made, made in the neon's @c Prepare -
@@ -479,10 +482,15 @@ namespace EdgeLighting
         /// caller's framebuffer px, y up, or rect-local full-res px.
         typedef struct SharedLight
         {
-            /// Both parts hold the light this frame's screen got. False on a
+            /// The parts hold the light this frame's screen got. False on a
             /// frame the glow was not drawn, or the ring atlas was neither
             /// drawn nor reused - declare a read of @ref RING_KEY to have it
-            /// on moving frames too.
+            /// on moving frames too. Also true on a frame with no ring on the
+            /// screen (none, or one wholly off the viewport): then the light is
+            /// the glow alone, @c ringOuter and the ring's packing are 0, so no
+            /// pixel reads the ring, @c ringTexture is the GLOW's texture, as a
+            /// stand-in at that unit, and the @ref RING_KEY record is not
+            /// current.
             bool valid = false;
             unsigned int glowTexture = 0; ///< @ref GLOW_KEY's texture.
             glm::vec2 glowOrigin{0.0f};   ///< Its box's lower-left corner, caller px.
@@ -495,6 +503,11 @@ namespace EdgeLighting
             glm::vec4 ringStrips{0.0f};   ///< The atlas layout's hole, box px, x0, y0, x1, y1.
             glm::vec2 ringRows{0.0f};     ///< The atlas layout's side-strip rows.
             EdgeMask mask;                ///< @ref GetEdgeMask's, for the glow's pixels.
+            /// The viewport, caller px: neonLight reads a point outside it at
+            /// the nearest pixel inside, as clamp-to-edge would read a screen
+            /// that ended there - there is no screen, and no ring packed, past
+            /// it.
+            glm::vec2 viewport{0.0f};
         } SharedLight;
 
         /// The neon's light as this frame left it (@ref SharedLight): read it after
@@ -1332,8 +1345,18 @@ namespace EdgeLighting
             Mesh box{"NeonRenderer.RingAtlasBox"};
             RingFieldLayout boxLayout{}; ///< The layout @c box was last uploaded for: re-uploaded only when it moves.
             bool drawn = false;          ///< It holds this frame's ring: drawn or reused last frame.
+            /// What it holds is the ring as its own shading gives it, within a
+            /// level: shaded, or composited from the ring's field at gain 1 -
+            /// what a frame where nothing moved may reuse. False when it was
+            /// composited from a field scaled to a moving intensity (I56),
+            /// which the frame the intensity stops on must not keep.
+            bool exact = false;
             glm::ivec2 viewport{0};      ///< The viewport it was drawn for.
             bool unavailable = false;    ///< No half-float target: the ring is drawn directly for good.
+            /// The layout size (@c RingFieldLayout::atlas) an allocation last
+            /// failed at although half float renders - out of memory, most
+            /// likely: not tried again until the size moves.
+            glm::ivec2 failedNeed{0};
             /// How long, in frame time, it has stayed allocated without being
             /// drawn or reused - a config that never holds still and that
             /// nothing reads; @ref Update releases it after
@@ -1569,7 +1592,9 @@ namespace EdgeLighting
         /// directly. Called on the first frame of a config whose hue does not
         /// rotate (one that can hold still, so its first frame pays, not its
         /// second) and on every frame the atlas is drawn - never before for a
-        /// rotating hue, which does not hold still while the clock runs.
+        /// rotating hue, which does not hold still while the clock runs. The
+        /// hue is the one signal there is on a first frame; what it misses is
+        /// in RenderOffscreen beside the call.
         bool ensureRingAtlasPrograms();
 
         /// Make sure @c mRingFieldAtlasShader - the ring field's composite into

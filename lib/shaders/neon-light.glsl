@@ -25,6 +25,7 @@ uniform vec2      uLightRingHole;    ///< The ring's hole, half extents; 0 on an
 uniform vec2      uLightRingLo;      ///< The atlas layout's box corner, rect-local px.
 uniform vec4      uLightRingStrips;  ///< The atlas layout's hole, box px [x0, x1) x [y0, y1).
 uniform vec2      uLightRingRows;    ///< The atlas layout's side-strip rows.
+uniform vec2      uLightViewport;    ///< The viewport, caller px: the screen the light is read from.
 
 // The edge mask, as GetEdgeMask gives it: full-res px.
 uniform vec2  uLightRectSize;
@@ -66,13 +67,24 @@ bool neonLightSquareTouchesRing(vec2 lo, vec2 hi)
     return solid || far.x >= uLightRingHole.x || far.y >= uLightRingHole.y;
 }
 
+// fragPx moved onto the viewport's nearest pixel centre: the screen ends at the
+// viewport, and so does the ring's packing (computeRingFieldLayout clips its
+// box there), while the ring's annulus runs on past it. A read past the edge
+// gets the light at the edge - what clamp-to-edge gives a screen that ended
+// there - never a ring texel the atlas does not hold.
+vec2 neonLightClampPx(vec2 fragPx)
+{
+    return clamp(fragPx, vec2(0.5), uLightViewport - 0.5);
+}
+
 // The neon's light at caller px fragPx (a pixel centre, y up), for a
 // destination whose pixel is px caller px wide - 1 at full resolution, which
 // is what the screen's own masks take. Exact on the ring's pixels (the atlas
 // holds them texel for pixel); on the glow's, the blit's bilinear read and
-// mask.
+// mask. Past the viewport, the light at its edge (neonLightClampPx).
 vec4 neonLight(vec2 fragPx, float px)
 {
+    fragPx = neonLightClampPx(fragPx);
     vec2 p = fragPx - uLightCenter;
     if (neonLightInRing(p))
     {

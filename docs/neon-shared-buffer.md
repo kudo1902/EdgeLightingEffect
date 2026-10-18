@@ -82,8 +82,16 @@ vec4 light = neonLight(gl_FragCoord.xy, 1.0);   // caller px, y up; 1 = full-res
 `neonLight` returns exactly the light the screen got at that pixel, before the
 dither: the ring's own pixels from the ring atlas, every other pixel from the
 glow with the same edge mask the blit applies. It does not include the fill.
-`neon-scale-check parts` checks this rebuild against the screen on every
-scene: within 1 level everywhere (that is the screen's dither).
+Asked for a point past the viewport, it returns the light at the nearest pixel
+inside (`neonLightClampPx`): there is no screen there, and the ring atlas
+stops at the viewport too. `neon-scale-check parts` checks this rebuild
+against the screen on every scene, rects across the frame's edge included:
+within 1 level everywhere (that is the screen's dither).
+
+If something reads the parts on frames where something moves, check `valid`
+on each frame. A rect wholly off-screen leaves the light as the glow alone:
+`valid` is true, `ringTexture` is the glow's texture as a stand-in, and the
+`NeonRenderer.Ring` record is not current.
 
 The ring atlas is **packed** - four thin strips, the side ones turned
 sideways - so it is not an image you can sample by position. `neonLight` (and
@@ -121,7 +129,10 @@ if (rec && reg.IsCurrent(*rec))
 
 It covers only the part of the screen the light and the fill can reach (the
 whole viewport only for a fill that covers it), so always use `origin` and
-`size`. `rec->version` changes only when the picture changed.
+`size`. Its size is rounded up to 16 texels: the extra texels inside the
+viewport are 0, and those past the viewport's edge hold the light at that edge,
+so a filtered read of the last row or column does not darken.
+`rec->version` changes only when the picture changed.
 
 What is in it:
 
@@ -129,8 +140,11 @@ What is in it:
 - each texel is the screen's light **averaged** over the square of screen
   pixels it covers - at scale 1 exactly the screen's pixel, below 1 the screen
   shrunk properly (a thin line keeps its width and brightness);
-- `neon-scale-check shared` checks it against the screen: within 1 level at 1
-  (with and without a fill) and against the screen averaged 2 x 2 at 0.5.
+- `neon-scale-check shared` checks it against the screen, within 1 level:
+  - at 1, with and without a fill;
+  - at 0.5 and 0.4, against the screen averaged over each texel's square;
+  - every texel, those past the viewport included;
+  - still, hue and intensity frames.
 
 **The scale** is clamped to `[max(resolutionScale, 0.4), 1]`
 (`NeonRenderer::GetCompositeScale(config)` tells you what is used). The 0.4

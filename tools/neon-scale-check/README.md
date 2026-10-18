@@ -144,12 +144,31 @@ property of the rasteriser, which only running on it can confirm.
 
 Checks that the neon's two shared parts - the glow (`NeonRenderer.Glow`) and
 the ring atlas (`NeonRenderer.Ring`) - are enough to rebuild what the screen
-got. For every scene at scales 1, 0.5 and 0.25, still and under a rotating
-hue, with no opaque fill, it declares host reads of both parts, draws three
-frames, then draws a reader's fullscreen pass - `ShaderSource::NEON_LIGHT_GLSL`
-and `neonLight(gl_FragCoord.xy, 1.0)`, uniforms from
-`NeonRenderer::UploadSharedLight` - over transparent black, and compares the
-two. The screen dithers and the reader does not, so 1 level is the floor.
+got. It runs:
+
+- every scene at scales 1, 0.5 and 0.25, with no opaque fill;
+- every gate scene: the page's twelve, plus `default` and `hairline` moved
+  across the frame's top-right corner (`@edge`), and `default`, `hairline` and
+  `overdrive` as a thin band round the whole frame (`@band`, where the glow's
+  field does not serve and the ring's does);
+- three motions:
+  - still;
+  - a rotating hue;
+  - an intensity falling for eight frames, then held for two.
+
+For each, it declares host reads of both parts and draws the frames. Then it
+draws a reader's fullscreen pass over transparent black and compares the two:
+- the reader is `ShaderSource::NEON_LIGHT_GLSL` with
+  `neonLight(gl_FragCoord.xy, 1.0)`;
+- its uniforms come from `NeonRenderer::UploadSharedLight`.
+
+The screen dithers and the reader does not, so 1 level is the floor.
+
+For the intensity motion it also compares the held frame against the same
+config drawn with no history (`held`: max 1). That is the frame the ring
+atlas, composited from a field scaled to the moving intensity, must not be
+kept past.
+
 Exits 1 when a frame exceeds `--max` or has fewer than `--within1` percent of
 its lit pixels within 1.
 
@@ -160,11 +179,23 @@ its lit pixels within 1.
 ```
 
 Checks the shared buffer (`NeonRenderer.Composite`), assembled from the parts,
-against the screen it came from: every scene, still and under a rotating hue,
-at shared scale 1 with no fill, an inside fill and a fill over the whole
-viewport (texel for pixel), and at 0.5 with no fill (each texel against the
-screen's 2 x 2 average; the fill is drawn at the scale, not averaged, so it is
-left out there). The screen is dithered and the buffer is not.
+against the screen it came from. Every gate scene and motion of `parts`, at:
+
+- shared scale 1, texel for pixel, with no fill, an inside fill, and a fill
+  over the whole viewport;
+- 0.5 and 0.4, the floor, with no fill. The fill is drawn at the scale, not
+  averaged, so it is left out there.
+
+Each texel is compared against the screen averaged over its square, as
+`neon-assemble.frag` averages it: each pixel weighted by how much of it the
+square covers, so 0.4's 2.5 px squares are judged exactly. EVERY texel of the
+record is compared, those the region's rounding carries past the frame
+included. Those hold the light at the frame's edge (`neonLightClampPx`): a
+filtered read of the last pixels must not darken.
+
+Under the intensity motion the held frame is also compared with a frame
+drawn from nothing, as in `parts`. The screen is dithered and the buffer is
+not.
 
 ## `generate`
 

@@ -42,11 +42,15 @@ void main() {
     // level a square's width away from the ring, which holds every steep part
     // of the light (right beside it, on a hairline, it reached 2). Not
     // where the edge mask is live: its ramps are a full-res pixel wide, and
-    // only the per-pixel average is their box filter.
+    // only the per-pixel average is their box filter. Tested, and read, where
+    // neonLight would read - the square moved onto the viewport - so a square
+    // past the viewport's edge takes the edge's light either way.
+    vec2 clo = neonLightClampPx(lo);
+    vec2 chi = neonLightClampPx(hi);
     if (!neonEdgeMaskLive(uLightGlowSide, uLightInsideCutoff, uLightOutsideCutoff) &&
-        !neonLightSquareTouchesRing(lo - uLightCenter - vec2(footprint), hi - uLightCenter + vec2(footprint)))
+        !neonLightSquareTouchesRing(clo - uLightCenter - vec2(footprint), chi - uLightCenter + vec2(footprint)))
     {
-        vec2 uv = (0.5 * (lo + hi) - uLightGlowOrigin) / uLightGlowSize;
+        vec2 uv = (neonLightClampPx(0.5 * (lo + hi)) - uLightGlowOrigin) / uLightGlowSize;
         bool inside = uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0;
         fragColor = inside ? textureLod(uLightGlow, uv, 0.0) : vec4(0.0);
         return;

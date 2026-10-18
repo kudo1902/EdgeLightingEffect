@@ -18,8 +18,9 @@
 // composite - after neon-sdf.glsl, whose distances it reads; into the field's
 // composite under NEON_FIELD_RING only, the ring's variant that applies it, so
 // the glow field's composite does not compile it for nothing.
-// neon-ring.glsl (the ring atlas's strip lookup) goes into the field's
-// composite, which reads a packed ring, and neon-light.glsl (the neon's light
+// neon-ring.glsl (the ring atlas's strip lookup) goes into the two variants
+// of the field's composite that read a packed ring - the ring's composite and
+// the ring atlas's copy - and neon-light.glsl (the neon's light
 // from its two shared parts) is exported, with the tuning header and the sdf,
 // mask and ring chunks ahead of it, as NEON_LIGHT_GLSL for a host's shader.
 // spotlight-dither.glsl (the spotlight's output noise) goes into the two
@@ -94,7 +95,9 @@ namespace EdgeLighting
 #ifdef NEON_FIELD_RING
 @NEON_MASK@
 #endif
+#if defined(NEON_FIELD_RING) || defined(NEON_RING_COPY)
 @NEON_RING@
+#endif
 @NEON_FIELD_FRAG_CONTENT@
 )shadersrc";
 
