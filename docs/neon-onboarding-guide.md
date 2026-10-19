@@ -1431,14 +1431,19 @@ ring texture without any config change, and P0 bakes from that texture; the
 upload moves the ring's upload count, which is part of P0's key, so the next
 `Render` re-bakes the table with nothing set here.
 
-### 5.5 `Render(w, h, time, config)`: the pass schedule
+### 5.5 `RenderOffscreen` and `Render`: the pass schedule
+
+The effect calls `RenderOffscreen` on every layer, then `Render` on every
+layer (Part 1.11): the neon's two phases are those two methods, and
+`mFrame` carries what the second needs of the first.
 
 ```
-Render
- |- return if !neon.enable
+RenderOffscreen
+ |- mFrame = {}                                  // empty: no blit, no ring, unless filled below
+ |- if !neon.enable: mScaled->MarkNotReady(); return
  |- scale = GetClampedResolutionScale()          // (0, 1]; at 1.0 the reduced buffer is full size
  |- centerFull = the rect's centre in full-res px, y flipped
- |- if debug.opaqueOnly: [blend over] fill (P2a); restore blend; return
+ |- if debug.opaqueOnly: mScaled->MarkNotReady(); return     // Render draws the fill alone
  |- glowReady = ensureGlowPrograms()             // compile on first use
  |      && (IsGlowCoverUnread()
  |          || (ensureGlowCoverProgram() && ensureGlowCoverFillProgram() && ensureGlowCoverBuffer()))
@@ -1450,7 +1455,6 @@ Render
  |- ringField = mRingField.schedule.Decide()     // if IsRingFieldEligible and the ring is not empty
  |- if !reuseOffscreen || field.bake || ringField.bake: prevTarget = RenderTargetState::Capture()
  |
- |  ===== phase 1: offscreen =====
  |- if glowReady:
  |    if emissionStale:  [blend off] P0 emission table
  |    if glowCoverStale: [blend off] P0b glow coverage table   // arcs only with a segment table
@@ -1459,27 +1463,34 @@ Render
  |    gatherRegion = mGather.cache.region if it still answers,
  |                   else GetBufferRegion(mGatherBounds.outer, ..., gatherScale, no cap)
  |    if !reuseOffscreen && it does not: [blend off] P1a gather -> mGather.buffer
- |    scaledRegion = GetBufferRegion(mScaledOuter, ..., scale, capped)
+ |    scaledRegion = GetViewportRegion(..., scale)  // the whole viewport: the shared buffer
  |    if !reuseOffscreen: [blend off]
  |       if field.bake: P1f field bake -> mGlowField.buffer
- |       field.use ? P1c field composite : P1b shade   -> mScaledBuffer
+ |       field.use ? P1c field composite : P1b shade   -> mScaled (SharedBuffer::BeginWrite)
  |    if ringField.bake: [blend off] P1r ring field bake -> mRingField.buffer
  |    if captured: prevTarget.Restore()          // back to the caller's FBO + viewport
  |- mOffscreen.reusable = glowReady && !field.use
- |
- |  ===== phase 2: the caller's framebuffer =====
+ |- glowReady ? mScaled->MarkReady(viewport) : mScaled->MarkNotReady()   // the shared buffer
+ |- mFrame = { glowReady, scaledUV, gatherUVFull, ringField }
+ '- leave GL_BLEND on with GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
+
+Render                                           // after every layer's RenderOffscreen
+ |- return if !neon.enable
+ |- if mFrame was not prepared for this viewport: RenderOffscreen()   // a host without the effect
+ |- if debug.opaqueOnly: [blend over] fill (P2a); restore blend; return
  |- [blend ON: GL_ONE, GL_ONE_MINUS_SRC_ALPHA]
  |- if opaqueMode != NONE: P2a fill
- |- if glowReady:
+ |- if mFrame.glowReady:
  |    fullResMvp = ortho(0, w, 0, h) * translate(centerFull)   // ONE transform, handed to both
  |    P2b blit
  |    ringField.use ? P2r ring field composite : P2c ring
  '- leave GL_BLEND on with GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 ```
 
-Every offscreen pass runs before anything touches the caller's framebuffer,
-so that target is drawn in one unbroken run (Part 1.11). `Render` owns the
-blend state; each pass owns its program, and the two table passes (P0, P0b)
+Every offscreen pass runs before anything touches the caller's framebuffer -
+across every layer, since the effect runs all the `RenderOffscreen`s first - so
+that target is drawn in one unbroken run (Part 1.11). The two phase methods own
+the blend state; each pass owns its program, and the two table passes (P0, P0b)
 restore the target they change. The rest of phase 1 binds one buffer after
 another and comes back once, through `prevTarget`.
 
@@ -1573,8 +1584,9 @@ gather's quad.** In full-res rect-local px, at every scale:
    7.1). `neon-scale-check partition` (Part 9.3) tests the result.
 4. **The gather quad** (scaled px): the union of the glow quad and the ring,
    padded by the gather's bilinear footprint. Stored as `mGatherBounds`.
-5. `mScaledOuter`: the blit's outer box plus its footprint, which sizes the
-   reduced buffer.
+5. The glow quad's window (`GetSubWindow` over `mGlowBounds.outer`): the part
+   of the reduced buffer's grid the glow quad writes, which is the glow
+   field's region and what a write to the reduced buffer clears.
 
 ![The ring and the blit area at scale 0.5](images/neon-onboarding/geometry-scaled.png)
 
@@ -1774,7 +1786,7 @@ scaled by its coverage.*
 | - | - |
 | **Purpose** | Shade the glow at `resolutionScale`, reading the gather's results instead of looping. |
 | **Runs** | At every scale, unless the offscreen buffers are reused or the field's composite (P1c) stands in for it (Part 5.5). |
-| **Target** | `mScaledBuffer`: RGBA16F (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has unrounded gradients to work on, one attachment, covering what the blit will read (`mScaledOuter`), capped per axis at the reduced viewport size. Cleared to 0. |
+| **Target** | `mScaled`, the neon's shared buffer: RGBA16F (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has unrounded gradients to work on, one attachment, covering the whole viewport at the scale (`GetViewportRegion`), since it is the neon's shared buffer. Cleared to 0 where it can hold anything else: the glow quad's window and the last write's (`SharedBuffer::BeginWrite`). |
 | **State** | Blend off: the buffer is fresh and the quad covers each texel once, so blending would only add a destination read. Scissor off. |
 | **Geometry** | `mGlowMesh` through `GetRegionProjection(scaledRegion)`. |
 | **Uniforms** | all of `uploadNeonUniforms` at the real scale with `uBlitOwnsCut` 1, plus `uQuadMargin = mGlowLimits.quadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
@@ -1783,12 +1795,14 @@ scaled by its coverage.*
 
 ![The reduced buffer after P1b](images/neon-onboarding/pass-p1b-reduced.png)
 
-*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the halo
-and the bloom, which hold up at this resolution, and no line. P1b does not
-compute the filament at all - the edge ring re-shades every pixel it can
-reach at full resolution, so nothing the blit shows would ever have come from
-it (D4 of [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)).
-Before that, the line was here too, visibly blocky.*
+*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the halo,
+the bloom and the line. The line is blocky at this resolution, and the blit
+never shows it: the edge ring re-shades every pixel it can reach at full
+resolution. It is here because this buffer is also the neon's SHARED BUFFER
+(`SharedBufferId::NEON`), which other renderers read without the ring. From
+D4 of [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)
+until the shared buffer, P1b skipped the filament and the figure showed no
+line; the frame is the same bits either way.*
 
 ### P2a: the opaque fill (`renderFillPass`, `black-rect.frag`)
 
@@ -2333,12 +2347,15 @@ except a small rect.
 
 ### 8.2 The buffers and their regions
 
-Neither offscreen buffer covers the whole viewport. `GetBufferRegion` sizes
-each to the box its readers can reach, clipped to the viewport:
+The two offscreen buffers are sized differently:
 
-- **`mScaledBuffer`** (RGBA16F, RGBA8 fallback) covers `mScaledOuter`, the blit area plus its
-  bilinear footprint, and is capped per axis at the reduced viewport's size:
-  a full-screen rect gets exactly the buffer it always had.
+- **`mScaled`** (a `SharedBuffer`; RGBA16F, RGBA8 fallback) covers the WHOLE viewport at
+  the scale (`GetViewportRegion`), because it is the neon's shared buffer and
+  a reader finds its pixel at `gl_FragCoord.xy / viewport`. It used to cover
+  only the blit area plus its footprint, capped at this size; a full-screen
+  rect had this buffer already. A write clears only the glow quad's window and
+  the last write's - everything outside both is 0 already - since clearing the
+  whole buffer on every hue frame cost a small rect up to 1.65x at 4K.
 - **`mGather.buffer`** (RGBA16F) covers the gather quad's box, and is never
   capped: a gather texel is about 10 px wide, and ending the buffer at the
   viewport edge made the last rows clamp to one value (measured 5/255 off).
@@ -2375,10 +2392,9 @@ from the same `PushAnnulus` strips as the blit area.*
 
 *Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what
 the blit would draw if it covered the line too, rebuilt by the figure tool from
-the real reduced buffer through the blit's own uv map - which no longer holds
-the line at all: pass 1b skips the filament, since the ring draws every pixel
-it reaches (D4). When it did, the line came out of the blit nearly three
-times as wide. Centre is the real frame at 0.25; right is 1.0.*
+the real reduced buffer through the blit's own uv map: the line comes out of
+the blit nearly three times as wide. Centre is the real frame at 0.25, where
+the ring draws the line at full resolution; right is 1.0.*
 
 ### 8.4 When not to lower the scale
 

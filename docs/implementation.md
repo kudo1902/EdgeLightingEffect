@@ -62,8 +62,13 @@ Two calls per frame, from the host:
    every renderer.
 4. Call `Update(dt, clockTime, active)` on every renderer.
 
-**`Render(w, h)`** - calls `Render(w, h, clockTime, active)` on every renderer,
-in registration order.
+**`Render(w, h)`** - in two phases, each over every renderer in registration
+order: `RenderOffscreen(w, h, clockTime, active)` - every layer's offscreen
+work (the neon's passes 0-1r) - then `Render(w, h, clockTime, active)` - every
+layer's composite onto the caller's framebuffer. So the caller's target is
+drawn in one unbroken run, and a layer reading another's shared buffer
+(`SharedBufferRegistry` / `SharedBuffer`, the neon's reduced buffer) sees this frame's
+wherever it sits in the order.
 
 The step-3 condition matters and is easy to misread: `SetConfig` returns early
 when the base is unchanged, and `refreshActiveConfig` returns early when the

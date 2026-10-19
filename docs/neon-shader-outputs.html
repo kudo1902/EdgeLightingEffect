@@ -617,10 +617,10 @@
       </dl>
     </div>
     <div class="body">
-      <p>Everything except the loop and the line, shaded at half resolution from the gather buffer. The glow holds up at this size; the line would come out blocky, and since the edge ring re-shades every pixel it reaches at full resolution, this pass does not compute it at all (D4 of the glow-cover plan) - the frame is the same bits. Shown 2&times; with nearest-neighbour scaling.</p>
+      <p>Everything except the loop, shaded at half resolution from the gather buffer. The glow holds up at this size; the line comes out blocky, and the blit never shows it - the edge ring re-shades every pixel it reaches at full resolution. The line is shaded here anyway because this buffer is also the neon&rsquo;s shared buffer (<code>SharedBufferId::NEON</code>), which other renderers read without the ring; from D4 of the glow-cover plan until then this pass skipped it, and the frame is the same bits either way. Shown 2&times; with nearest-neighbour scaling.</p>
       <div class="shots">
         <figure class="wide">
-          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow at half resolution, without the line" width="640" height="360">
+          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow and the line at half resolution" width="640" height="360">
           <figcaption>The reduced buffer, composited over the background.</figcaption>
         </figure>
       </div>
