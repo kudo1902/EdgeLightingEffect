@@ -46,6 +46,7 @@
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
+#include "shared-buffer.h"
 #include "scenes.h"
 #include "pass-recorder.h"
 // Compiled into libedge-lighting (lib/src/util/stb-image.cpp); declarations only.
@@ -982,6 +983,10 @@ int main(int argc, char **argv)
     {
         return Diff(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "shared-buffer") == 0)
+    {
+        return SharedBufferCheck(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -990,6 +995,7 @@ int main(int argc, char **argv)
                  "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] [--arcs N] [--segments M]\n"
                  "                        [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] [--passes] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
-                 "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n");
+                 "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n"
+                 "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n");
     return 2;
 }
