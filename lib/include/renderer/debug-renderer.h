@@ -11,14 +11,18 @@ namespace EdgeLighting
 {
     /// Debug annotations for the neon layer.
     ///
-    /// Three overlays, each behind its own flag in @ref DebugConfig, drawn over
+    /// Four overlays, each behind its own flag in @ref DebugConfig, drawn over
     /// whatever is already on the target:
     ///   - the baked colour ring as a horizontal STRIP at the rect centre
     ///     (@c showGradientLUT),
     ///   - one filled DISC per colour stop at its perimeter position
-    ///     (@c showColorStops), and
+    ///     (@c showColorStops),
     ///   - a 1 px sharp BOUNDING BOX around the rect (@c showWireframe), which
-    ///     was its own renderer until this absorbed it.
+    ///     was its own renderer until this absorbed it, and
+    ///   - the neon's SHARED BUFFER (@c showSharedBuffer) as an inset in the
+    ///     bottom-left corner - read from the effect's @ref SharedBufferRegistry as
+    ///     any other renderer reads it, so it shows exactly what a reader is
+    ///     handed.
     ///
     /// Together they answer "is what I configured what is actually being
     /// drawn?" - the strip shows the ring the shader samples, the markers show
@@ -91,14 +95,26 @@ namespace EdgeLighting
         ///      this is what the old WireframeRenderer did.
         void renderWireframe(const glm::mat4 &mvp, const Config &config);
 
+        /// The neon's shared buffer @p buffer as an opaque inset in the
+        /// bottom-left corner, sized by @c sharedBufferInsetSize, one block per
+        /// texel (shared-buffer-debug.frag, texelFetch: the shared texture's
+        /// filter is the neon's, not ours to change), in a 1 px frame. Drawn
+        /// through @p proj, the viewport's own ortho. Caller guards on
+        /// @c showSharedBuffer and a ready buffer.
+        /// @pre Blending disabled - the inset overwrites what is under it.
+        void renderSharedBuffer(const SharedBuffer &buffer, const glm::mat4 &proj, int viewportWidth,
+                                int viewportHeight, const Config &config);
+
     private:
         Config mCurrentConfig;
         ShaderProgram mLUTDebugShader;                                  ///< LUT strip (neon-lut-debug.frag).
         ShaderProgram mStopMarkerShader;                                ///< Per-stop marker (neon-stop-marker.frag).
         ShaderProgram mWireframeShader;                                 ///< Bounding box (wireframe.frag).
+        ShaderProgram mSharedBufferShader;                              ///< Shared-buffer inset (shared-buffer-debug.frag).
         VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};     ///< Small centred quad, sized to the rect.
         VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"}; ///< Unit quad ([-1,+1]), scaled per marker.
         VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
+        VertexArray mSharedBufferInsetVertexArray{"DebugRenderer.SharedBufferInset"}; ///< The inset quad, inset-local px; uploaded each frame it is drawn.
         glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
 
         /// This renderer's OWN copy of the baked colour ring, from the same

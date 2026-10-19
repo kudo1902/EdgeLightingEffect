@@ -1121,6 +1121,25 @@ void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
             ImGui::ColorEdit4("##WireColor", &cfg.debug.wireframeColor.x,
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         }
+        ImGui::Checkbox("Show Shared Buffer##Debug", &cfg.debug.showSharedBuffer);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The neon's shared buffer (SharedBufferId::NEON), as the other renderers\n"
+                              "are handed it: an inset in the bottom-left corner, one block per texel,\n"
+                              "over black. The line and the glow over the whole window at the\n"
+                              "resolution scale - no opaque fill, no one-sided cut or cutoffs.");
+        }
+        if (cfg.debug.showSharedBuffer)
+        {
+            ImGui::Indent();
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderFloat("Inset Size##Debug", &cfg.debug.sharedBufferInsetSize, 0.1f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("The inset's width as a share of the window's; 1 fills the window.");
+            }
+            ImGui::Unindent();
+        }
 
         // The strip and the markers annotate the GLOW, so they follow its
         // state - see DebugRenderer::Render, which skips both in either case.
@@ -1128,11 +1147,11 @@ void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
         // says which overlays are affected rather than implying all three.
         if (!cfg.neon.enable)
         {
-            ImGui::TextDisabled("Neon is off - LUT / stops have nothing to annotate.");
+            ImGui::TextDisabled("Neon is off - LUT / stops / shared buffer have nothing to show.");
         }
         else if (cfg.debug.opaqueOnly)
         {
-            ImGui::TextDisabled("Opaque Only is on - LUT / stops suppressed.");
+            ImGui::TextDisabled("Opaque Only is on - LUT / stops / shared buffer suppressed.");
         }
         ImGui::Unindent();
     }
