@@ -186,6 +186,39 @@ it, and that, after touching `filamentLit` in `neon.frag`, `SharedBuffer`, the
 shared buffer's `MarkReady` / `MarkNotReady` in `NeonRenderer::RenderOffscreen`,
 the glow window (`GetSubWindow`), or the edge ring's width (`GetRingWidth`).
 
+## `clock`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check clock [--frames K] [--dump DIR]
+```
+
+The effect's clock at a start time an edge device reaches by running for days:
+870400 s (~10.07 days), past 2^19 s, where the float clock the library used to
+keep stepped by 1/60 s did not move at all. It fails when:
+
+- `Clock`, set to that time, does not advance by the sum of 600 frame deltas
+  of 1/60 s to within a microsecond;
+- `GetCyclePhase` at that time does not step by `rate / 60` of a cycle every
+  frame, to within 1e-6;
+- K frames (default 30) of every layer whose shader reads a phase of time -
+  the neon with its hue rotating, the droplets, the lens flare with its rays
+  spinning and the debug layer's gradient strip - drawn by an effect whose
+  clock starts there differ by more than one level from the same frames drawn
+  by an effect starting at 0. The start time is a whole number of cycles of
+  every phase involved (hue 0.5 rev/s, rays 0.25 rev/s, the droplets'
+  `DROPLET_TIME_PERIOD` at speed 1), so the two runs are owed the same frames;
+- the last of those frames equals the first: the effect stood still.
+
+It also prints how far a float accumulator moves over the same 600 frames (0 s
+there). On an Apple M2 Pro the late run matches the early one byte for byte
+and its first and last frames differ by up to 154 levels; the library before the
+double clock fails all three (clock 0 s, frames up to 174 levels off, first
+and last frame within 1 level). It builds against an older checkout's headers
+too (the phase step is skipped where there is no `GetCyclePhase`), which is
+how that was measured. `--dump DIR` writes the run from 0 as
+`DIR/clock_NNN.png`, for `diff` against another build's - what a change does to
+frames at an ordinary uptime.
+
 ## `generate`
 
 ```bash

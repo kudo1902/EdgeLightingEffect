@@ -35,8 +35,7 @@ out vec4 fragColor;
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
-uniform float uTime;
-uniform float uHueRotationRate;
+uniform float uHuePhase; ///< fract(time * hueRotationRate), reduced on the CPU in double (GetCyclePhase).
 uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;
@@ -425,7 +424,7 @@ vec2 filamentCover(float sPos, float headF, float tailF) {
     float baseAlphaPt = 1.0;
     if (uPerimeterUnread == 0)
     {
-        baseAlphaPt = textureLod(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5), 0.0).a;
+        baseAlphaPt = textureLod(uGradientLUT, vec2(sPos - uHuePhase, 0.5), 0.0).a;
     }
     // The arcs' coverage at this point, per-arc intensity folded in: `col` is
     // gated-normalised, so intensity reaches the filament only through it.

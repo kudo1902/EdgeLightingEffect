@@ -62,6 +62,14 @@ Two calls per frame, from the host:
    every renderer.
 4. Call `Update(dt, clockTime, active)` on every renderer.
 
+`clockTime` is a `double` (`Clock`, and `BaseRenderer`'s `time` parameter):
+an effect may run for days, and a float clock stops moving at 60 fps past 2^19
+s (~6.07 days). No shader is handed it. Each renderer reduces it on the CPU, in
+double, to the bounded phase its shader reads (`GetCyclePhase`, `WrapPeriod`
+in `animation/clock.h`): the neon's `uHuePhase`, the flare's `uRotation`, the
+droplets' wrapped `uDropTime`. `neon-scale-check clock` checks the frames at a
+10-day start time against the same frames from 0.
+
 **`Render(w, h)`** - in two phases, each over every renderer in registration
 order: `RenderOffscreen(w, h, clockTime, active)` - every layer's offscreen
 work (the neon's passes 0-1r; below scale 1.0 the lens flare's and the
@@ -177,13 +185,13 @@ content rather than only adding light.
 
 Before that quad runs, the neon renderer executes an **emission pre-pass**.
 The gather's per-sample work - the arc winner-take-all, the segment bells, the
-LUT fetches - is a pure function of `(si, uTime, config)` and does not vary per
+LUT fetches - is a pure function of `(si, uHuePhase, config)` and does not vary per
 fragment, so it is baked into an `N x 2` RGBA16F table
 (`neon-emission.frag`) that the gather then reads with `texelFetch` - and
 only on the frames one of its inputs moved, since nothing else writes it.
 Per-fragment cost is `O(samples)` rather than `O(samples * (arcs + segments))`.
 The invariant that keeps the split honest: **a pure function of
-`(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
+`(si, uHuePhase, config)` belongs in the pre-pass; anything that reads `vPos`
 belongs in the main shader.**
 
 A second pre-pass bakes the **glow coverage table** (`neon-glow-cover.frag`):

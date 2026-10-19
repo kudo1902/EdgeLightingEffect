@@ -1,5 +1,6 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-tuning.h"
+#include "animation/clock.h"
 #include "util/geometry-utils.h"
 #include "util/segment-utils.h"
 #include "shaders.h"
@@ -23,8 +24,8 @@ namespace EdgeLighting
         // below and the member definitions spell them the same way.
         using NeonDetail::Annulus;
         using NeonDetail::BufferRegion;
-        using NeonDetail::UVMap;
         using NeonDetail::GlowCoverLayout;
+        using NeonDetail::UVMap;
 
         /// The size a disabled cutoff is handed to the shaders as, px. Disabled
         /// cutoffs collapse to this huge sentinel so the shader's smoothstep /
@@ -372,7 +373,7 @@ namespace EdgeLighting
         constexpr int SEGMENT_LUT_WIDTH = 128;
         /// Width of each arc's row in the arc gradient atlas. Same rationale
         /// as SEGMENT_LUT_WIDTH: an arc's LUT is sampled over the perimeter
-        /// hue coordinate (uTime * rate) which cycles slowly, so 128 texels
+        /// hue coordinate (shifted by the hue phase) which cycles slowly, so 128 texels
         /// look identical to 256.
         constexpr int ARC_LUT_WIDTH = 128;
 
@@ -2230,7 +2231,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float deltaTime, float, const Config &config)
+    void NeonRenderer::Update(float deltaTime, double, const Config &config)
     {
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // without any config change to announce it. Nothing here has to say
@@ -2270,7 +2271,7 @@ namespace EdgeLighting
         }
     }
 
-    void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         // A new frame. What Render reads of it is filled in at the end, and
         // stays empty - no blit, no ring - on every early return.
@@ -2287,6 +2288,10 @@ namespace EdgeLighting
         // false: that is the frame a scaled field is baked again exactly.
         const bool intensityMoving = mIntensityMoving;
         mIntensityMoving = false;
+        // The hue's phase, reduced from the clock in double here: the only
+        // form in which time reaches a neon program (uHuePhase).
+        const float huePhase = GetCyclePhase(time, config.neon.hueRotationRate);
+        mFrame.huePhase = huePhase;
 
         // The frame is a pass schedule and nothing else: derive the transform,
         // then one call per pass. Each pass owns its own shader and, where it
@@ -2394,7 +2399,7 @@ namespace EdgeLighting
         // isEmissionTableStale. A still ring therefore costs one FBO bind,
         // eight uniform sets, three texture binds and a draw on the frame its
         // inputs change, and nothing on the frames after.
-        const bool emissionStale = glowReady && isEmissionTableStale(time, config);
+        const bool emissionStale = glowReady && isEmissionTableStale(huePhase, config);
         // Pass 0b on a change to its inputs only. It never depends on time,
         // and nothing else writes the buffer. Nor on a ring lit uniformly,
         // which never reads it: the flag stays set, so the first change that
@@ -2467,7 +2472,7 @@ namespace EdgeLighting
                 // own blend mode, so leaving this off changes nothing
                 // downstream.
                 glDisable(GL_BLEND);
-                renderEmissionPass(viewportWidth, viewportHeight, time, config);
+                renderEmissionPass(viewportWidth, viewportHeight, huePhase, config);
             }
 
             // --- Pass 0b: the glow coverage table, when glowCoverStale says.
@@ -2488,7 +2493,7 @@ namespace EdgeLighting
             auto bakeFieldPass = [&](const BufferRegion &region, const UVMap &uv)
             {
                 const bool baked =
-                    renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, time, config);
+                    renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, huePhase, config);
                 field.use = field.use && baked;
                 mGlowField.schedule.OnBaked(baked, config.neon.intensity);
                 mGlowField.origin = region.origin * scale;
@@ -2574,7 +2579,7 @@ namespace EdgeLighting
                     else
                     {
                         glowReady =
-                            renderShadePass(scaledProj, scaledRegion.texels, glowWindow, gatherUV, time, config);
+                            renderShadePass(scaledProj, scaledRegion.texels, glowWindow, gatherUV, huePhase, config);
                     }
                 }
             }
@@ -2583,7 +2588,7 @@ namespace EdgeLighting
             if (ringField.bake && glowReady)
             {
                 glDisable(GL_BLEND);
-                const bool baked = renderRingFieldPass(gatherUVFull, time, config);
+                const bool baked = renderRingFieldPass(gatherUVFull, huePhase, config);
                 mRingField.schedule.OnBaked(baked, config.neon.intensity);
                 ringField.use = ringField.use && baked;
             }
@@ -2633,7 +2638,7 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.neon.enable)
         {
@@ -2709,7 +2714,7 @@ namespace EdgeLighting
             }
             else
             {
-                renderRingPass(fullResMvp, mFrame.gatherUVFull, time, config);
+                renderRingPass(fullResMvp, mFrame.gatherUVFull, mFrame.huePhase, config);
             }
         }
 
@@ -4016,11 +4021,10 @@ namespace EdgeLighting
 
     NeonRenderer::EmissionInputs NeonRenderer::getEmissionInputs(const Config &config) const
     {
-        // Exactly what renderEmissionPass uploads and binds, besides uTime.
-        // Add an input to that pass and it belongs here, or the table goes
-        // stale whenever that input alone moves.
+        // Exactly what renderEmissionPass uploads and binds, besides
+        // uHuePhase. Add an input to that pass and it belongs here, or the
+        // table goes stale whenever that input alone moves.
         EmissionInputs inputs;
-        inputs.hueRotationRate = config.neon.hueRotationRate;
         inputs.numSamples = GetClampedNumSamples(config);
         inputs.gradientUploads = mGradientLUT.GetUploadCount();
         inputs.segmentAtlasUploads = mSegmentLUT.GetUploadCount();
@@ -4030,24 +4034,25 @@ namespace EdgeLighting
         return inputs;
     }
 
-    bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
+    bool NeonRenderer::isEmissionTableStale(float huePhase, const Config &config) const
     {
         if (!mEmission.bake.baked || getEmissionInputs(config) != mEmission.bake.inputs)
         {
             return true;
         }
 
-        // uTime enters neon-emission.frag in exactly one place - `float ti =
-        // si - uTime * uHueRotationRate` - so at rate 0 it is multiplied out
-        // and the table is the same at every time. That is not a tolerance:
-        // the product is exactly zero, so the two bakes agree bit for bit.
+        // Time enters neon-emission.frag in exactly one place - `float ti =
+        // si - uHuePhase` - so the phase is the whole of its time key. At a
+        // hue rate of 0 GetCyclePhase is exactly 0 at every time, so the
+        // table is never re-baked for time. That is not a tolerance: the
+        // shader is handed the identical float, so the two bakes agree bit
+        // for bit.
         //
-        // The comparison is exact for the same reason it can be: `time` is
-        // fed straight back from the last bake, not recomputed, so an
-        // unchanged clock reproduces the identical float. A moving clock
-        // essentially never lands on the same value twice, and if it did the
-        // table it wants IS the one already in the buffer.
-        return config.neon.hueRotationRate != 0.0f && time != mEmission.bake.time;
+        // The comparison is exact for the same reason it can be: an unchanged
+        // clock reproduces the identical phase. A moving clock essentially
+        // never lands on the same phase twice, and if it did the table it
+        // wants IS the one already in the buffer.
+        return huePhase != mEmission.bake.huePhase;
     }
 
     NeonRenderer::GatherInputs NeonRenderer::getGatherInputs(const Config &config, int viewportWidth,
@@ -4089,7 +4094,7 @@ namespace EdgeLighting
     }
 
     void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
-                                          float time, const ShadeLimits &limits, bool blitOwnsCut,
+                                          float huePhase, const ShadeLimits &limits, bool blitOwnsCut,
                                           const Config &config)
     {
         uploadShapeUniforms(shader, mvp, scale, config);
@@ -4098,8 +4103,7 @@ namespace EdgeLighting
         shader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         shader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         shader.SetUniform("uIntensity", config.neon.intensity);
-        shader.SetUniform("uTime", time);
-        shader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        shader.SetUniform("uHuePhase", huePhase);
         shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         // The field bake ends at the grade, before the cut that reads the
@@ -4180,7 +4184,7 @@ namespace EdgeLighting
     }
 
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
-                                          float time, const Config &config)
+                                          float huePhase, const Config &config)
     {
         // The render target handed to this pass - framebuffer AND viewport,
         // both of which the bind below replaces. NOT necessarily the window's
@@ -4211,8 +4215,7 @@ namespace EdgeLighting
 
         mEmissionShader.Use();
         mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
-        mEmissionShader.SetUniform("uTime", time);
-        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mEmissionShader.SetUniform("uHuePhase", huePhase);
         // The SAME count the gather is given below - texel i here has to be
         // sample i there, or every fragment reads emission belonging to a
         // different perimeter position. Both go through GetClampedNumSamples
@@ -4235,7 +4238,7 @@ namespace EdgeLighting
         // staleness test upstream can never describe a bake that did not run.
         mEmission.bake.inputs = getEmissionInputs(config);
         mEmission.bake.baked = true;
-        mEmission.bake.time = time;
+        mEmission.bake.huePhase = huePhase;
         ++mEmission.bake.version;
     }
 
@@ -4453,7 +4456,7 @@ namespace EdgeLighting
     }
 
     bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV,
-                                       float scale, float time, const Config &config)
+                                       float scale, float huePhase, const Config &config)
     {
         // An offscreen target: the host's scissor is in the wrong coordinates
         // here - see renderShadePass.
@@ -4478,7 +4481,7 @@ namespace EdgeLighting
         // Every uniform pass 1b takes, from the same upload, so the bake shades
         // exactly what that pass would, with the hue at 1.
         mFieldBakeShader.Use();
-        uploadNeonUniforms(mFieldBakeShader, mvp, scale, time, mGlowLimits, true, config);
+        uploadNeonUniforms(mFieldBakeShader, mvp, scale, huePhase, mGlowLimits, true, config);
         bindGatherBuffer(mFieldBakeShader, gatherUV);
         mGlowMesh.Draw();
         mFieldBakeShader.Unuse();
@@ -4486,7 +4489,7 @@ namespace EdgeLighting
     }
 
     bool NeonRenderer::renderShadePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const glm::ivec4 &window,
-                                       const UVMap &gatherUV, float time, const Config &config)
+                                       const UVMap &gatherUV, float huePhase, const Config &config)
     {
         const float scale = GetClampedResolutionScale(config);
 
@@ -4509,7 +4512,7 @@ namespace EdgeLighting
         // draws the caller's framebuffer blended (see ensureGlowPrograms).
         // The blit applies the cut and the cutoffs to what this writes.
         mShadeShader.Use();
-        uploadNeonUniforms(mShadeShader, mvp, scale, time, mGlowLimits, true, config);
+        uploadNeonUniforms(mShadeShader, mvp, scale, huePhase, mGlowLimits, true, config);
         bindGatherBuffer(mShadeShader, gatherUV);
 
         // Tight glow quad - opaque's far region is covered by the fill pass,
@@ -4547,7 +4550,7 @@ namespace EdgeLighting
         return true;
     }
 
-    bool NeonRenderer::renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config)
+    bool NeonRenderer::renderRingFieldPass(const UVMap &gatherUV, float huePhase, const Config &config)
     {
         // An offscreen target: the host's scissor is in the wrong coordinates
         // here - see renderShadePass.
@@ -4572,7 +4575,7 @@ namespace EdgeLighting
         // exactly what pass 2c would - with the hue at 1. Only the transform
         // changes per strip.
         mFieldBakeShader.Use();
-        uploadNeonUniforms(mFieldBakeShader, glm::mat4(1.0f), 1.0f, time, mRingLimits, false,
+        uploadNeonUniforms(mFieldBakeShader, glm::mat4(1.0f), 1.0f, huePhase, mRingLimits, false,
                            config);
         bindGatherBuffer(mFieldBakeShader, gatherUV);
 
@@ -4928,7 +4931,7 @@ namespace EdgeLighting
         mBlitShader.Unuse();
     }
 
-    void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config)
+    void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float huePhase, const Config &config)
     {
         if (mRingMesh.count == 0)
         {
@@ -4945,7 +4948,7 @@ namespace EdgeLighting
         // the ring's own margin rather than pass 1b's. The segment and arc blocks are still bound from
         // packLightBlocks; the LUTs are bound by the upload.
         mRingShader.Use();
-        uploadNeonUniforms(mRingShader, mvp, 1.0f, time, mRingLimits, false, config);
+        uploadNeonUniforms(mRingShader, mvp, 1.0f, huePhase, mRingLimits, false, config);
 
         // What the gather pass produced, in place of running the loop here -
         // the same buffer pass 1 shaded from, through the same region, here

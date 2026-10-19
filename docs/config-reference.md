@@ -227,7 +227,7 @@ summed in HDR and tone-mapped together. Also owns the opaque fill pass
 | `outsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Glow exterior cap. Also sizes the draw quad (far-exterior rasteriser cull). Does not shape the fill (see `opaqueOutsideCutoff`). No-op under `glowSide = INSIDE` |
 | `blendSpace` | enum | `RGB` | - | Base-ring interpolation space |
 | `colorStops` | ring stops | R/G/B/Y at `0/.25/.5/.75` | `>= 1` stop, no cap | Base gradient. 1 = solid, 2 = gradient, 3+ = multi-stop circular. No cap measured - 64 stops still differ from 32, bounded in practice by `gradientLutSize` texels |
-| `hueRotationRate` | rev/sec | `0.5` | no cap; sign = direction | Gradient scroll around perimeter. `0` = static (and drops `uTime` out of the emission pre-pass entirely). `+` with winding |
+| `hueRotationRate` | rev/sec | `0.5` | no cap; sign = direction | Gradient scroll around perimeter. `0` = static (the hue phase `uHuePhase` is then 0 at every time, so time never re-bakes the emission pre-pass). `+` with winding |
 | `segmentBoosts` | transient pool | empty | first 8 entries | Index-addressed hotspots, freely overwritten |
 | `preservedSegmentBoosts` | id pool | empty | shares the same 8 | Id-addressed hotspots, override-proof. Merged with transient via `FillEffectiveSegments`, share `MAX_SEGMENT_BOOSTS = 8` slots |
 | `arcs` | slices | `{Arc{}}` full ring | first 8 entries | Gating. Cap `MAX_ARCS = 8` - entries 9+ are dropped byte-for-byte, with one logged warning |

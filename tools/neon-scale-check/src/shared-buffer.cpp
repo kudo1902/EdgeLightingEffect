@@ -61,8 +61,8 @@ namespace NeonScaleCheck
         {
         public:
             bool Initialize() override { return true; }
-            void Update(float, float, const Config &) override {}
-            void Render(int, int, float, const Config &) override
+            void Update(float, double, const Config &) override {}
+            void Render(int, int, double, const Config &) override
             {
                 const std::shared_ptr<const SharedBuffer> buffer = GetSharedBufferRegistry()->Find(SharedBufferId::NEON);
                 mSeen = Seen{};

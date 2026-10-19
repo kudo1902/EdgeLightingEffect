@@ -362,9 +362,9 @@ namespace EdgeLighting
         /// GLOW_COVER_RELEASE_SECONDS of frame time - here and not in
         /// @ref Render, which must not delete a framebuffer.
         /// @param deltaTime  Seconds since the last frame; the release timer's step.
-        /// @param time       Unused: the neon reads time in @ref Render.
+        /// @param time       Unused: the neon reads time in @ref RenderOffscreen.
         /// @param config     The active configuration.
-        virtual void Update(float deltaTime, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
 
         /// Phase 1 of the neon's frame: every pass that draws offscreen, each
         /// only when stale - the emission table (P0), the glow coverage table
@@ -383,7 +383,7 @@ namespace EdgeLighting
         /// only for its offscreen passes, and returns with @c GL_BLEND on and
         /// @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA, as @ref Render does.
         /// @pre As @ref Render's.
-        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time,
                                      const Config &config) override;
 
         /// Phase 2 of the neon's frame, onto the caller's framebuffer,
@@ -411,9 +411,12 @@ namespace EdgeLighting
         ///      it forwards @ref Update.
         /// @param viewportWidth  The caller's framebuffer width, px.
         /// @param viewportHeight Its height, px.
-        /// @param time           Seconds of animation time: what the hue rotates by.
+        /// @param time           Seconds of clock time: what the hue rotates by. Reduced
+        ///                       in double to the hue's phase (GetCyclePhase) in
+        ///                       @ref RenderOffscreen, the only form any neon
+        ///                       program is handed (@c uHuePhase).
         /// @param config         The active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
 
         /// The composited configuration changed. Records what moved and
         /// rebuilds only what that feeds: the loop samples (the geometry, the
@@ -499,13 +502,12 @@ namespace EdgeLighting
             int count = 0;           ///< Vertices in it; 0 when there is nothing to draw.
         } Mesh;
 
-        /// Everything pass 0 reads besides the time, AS THE PASS SEES IT: its
-        /// two value uniforms, and a version number for each texture and
+        /// Everything pass 0 reads besides the hue phase, AS THE PASS SEES IT:
+        /// its value uniform, and a version number for each texture and
         /// uniform block it binds. See @ref isEmissionTableStale.
         ///
         /// @par Two kinds of field
-        ///   - The VALUE uniforms, @c hueRotationRate and @c numSamples,
-        ///     compared by value.
+        ///   - The VALUE uniform, @c numSamples, compared by value.
         ///   - The GL objects the pass binds - the three LUTs and the two light
         ///     blocks - compared by their upload counts, a version number on
         ///     each object, not by their contents or by the config fields that
@@ -519,9 +521,9 @@ namespace EdgeLighting
         /// one of them.
         ///
         /// @par Left out
-        /// @c uTime, which @ref EmissionBake::time covers - and only while the
-        /// hue rotates, since at a rate of 0 it drops out of the table - and
-        /// @c uMVP, the identity on every frame.
+        /// @c uHuePhase, which @ref EmissionBake::huePhase covers - the hue
+        /// rate reaches the pass only through it, and at a rate of 0 it is 0
+        /// at every time - and @c uMVP, the identity on every frame.
         ///
         /// @par Lifetime
         /// Built by @ref getEmissionInputs, from exactly what
@@ -535,7 +537,6 @@ namespace EdgeLighting
         /// input alone moves.
         typedef struct EmissionInputs
         {
-            float hueRotationRate = 0.0f;     ///< uHueRotationRate.
             int numSamples = 0;               ///< uNumSamples, clamped as the pass uploads it.
             uint32_t gradientUploads = 0;     ///< mGradientLUT.GetUploadCount() - uGradientLUT.
             uint32_t segmentAtlasUploads = 0; ///< mSegmentLUT.GetUploadCount() - uSegmentLUT.
@@ -545,8 +546,7 @@ namespace EdgeLighting
 
             bool operator==(const EmissionInputs &o) const
             {
-                return hueRotationRate == o.hueRotationRate && numSamples == o.numSamples &&
-                       gradientUploads == o.gradientUploads && segmentAtlasUploads == o.segmentAtlasUploads &&
+                return numSamples == o.numSamples && gradientUploads == o.gradientUploads && segmentAtlasUploads == o.segmentAtlasUploads &&
                        arcAtlasUploads == o.arcAtlasUploads && segmentBlockUploads == o.segmentBlockUploads &&
                        arcBlockUploads == o.arcBlockUploads;
             }
@@ -570,9 +570,8 @@ namespace EdgeLighting
         ///   - @ref NeonRenderer::getEmissionInputs differs from @c inputs
         ///     - a value uniform, or the upload count of a LUT or a light
         ///     block the pass binds, moved;
-        ///   - the hue rotates (@c hueRotationRate non-zero) and the frame's
-        ///     time differs from @c time. At a rate of 0 the table does not
-        ///     depend on time, and @c time is not consulted.
+        ///   - the frame's hue phase differs from @c huePhase. At a rate of 0
+        ///     the phase is 0 at every time, so time alone never re-bakes it.
         ///
         /// And by @ref NeonRenderer::getGatherInputs, for @c version: the
         /// gather reads the table, so a fresh bake has to change the gather's
@@ -580,8 +579,8 @@ namespace EdgeLighting
         typedef struct EmissionBake
         {
             bool baked = false;    ///< Written at all: until then the buffer holds undefined texels, whatever @c inputs holds.
-            EmissionInputs inputs; ///< The inputs other than time it was baked from.
-            float time = 0.0f;     ///< The time it was baked at; consulted only while the hue rotates.
+            EmissionInputs inputs; ///< The inputs other than the hue phase it was baked from.
+            float huePhase = 0.0f; ///< The hue phase it was baked at (uHuePhase, GetCyclePhase).
             uint32_t version = 0;  ///< How many times it has been written - the table's version, for @ref GatherInputs. Only ever compared for equality.
         } EmissionBake;
 
@@ -1139,12 +1138,13 @@ namespace EdgeLighting
         /// buffers through.
         typedef struct FrameState
         {
-            bool prepared = false;          ///< RenderOffscreen ran for this frame and Render has not consumed it.
-            glm::ivec2 viewport{0};         ///< The viewport it ran for.
-            bool glowReady = false;         ///< Every offscreen pass the composites read succeeded: the blit and the ring draw.
-            UVMap scaledUV;                 ///< Full-res rect-local px -> the reduced buffer's uv, for the blit.
-            UVMap gatherUVFull;             ///< Full-res rect-local px -> the gather buffer's uv, for the ring.
-            LazyBake::Decision ringField;   ///< Whether the ring composites its field (P2r) and at what gain.
+            bool prepared = false;        ///< RenderOffscreen ran for this frame and Render has not consumed it.
+            glm::ivec2 viewport{0};       ///< The viewport it ran for.
+            bool glowReady = false;       ///< Every offscreen pass the composites read succeeded: the blit and the ring draw.
+            UVMap scaledUV;               ///< Full-res rect-local px -> the reduced buffer's uv, for the blit.
+            UVMap gatherUVFull;           ///< Full-res rect-local px -> the gather buffer's uv, for the ring.
+            LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) and at what gain.
+            float huePhase = 0.0f;        ///< The hue's phase this frame (GetCyclePhase), for the ring's uHuePhase.
         } FrameState;
 
         /// Whether the offscreen phase can be skipped on this frame, and the
@@ -1175,7 +1175,7 @@ namespace EdgeLighting
             /// buffer holds the field's composite rather than the shading (I56: the
             /// frame the intensity stops on redraws pass 1b exactly); and honoured
             /// only on a frame whose emission table is current
-            /// (@ref isEmissionTableStale, which carries the time and the ring's
+            /// (@ref isEmissionTableStale, which carries the hue phase and the ring's
             /// cross-fade), whose glow coverage table needs no bake, and whose
             /// viewport is @c viewport. Byte-identical. With the gather's own
             /// skip in place, a still frame without this flag is 4.2x slower
@@ -1390,7 +1390,7 @@ namespace EdgeLighting
                                                       int viewportWidth, int viewportHeight);
 
         // --- Skip keys: whether a pass has to run ----------------------------
-        /// The pass-0 inputs other than time, as @ref renderEmissionPass would
+        /// The pass-0 inputs other than the hue phase, as @ref renderEmissionPass would
         /// upload and bind them now: compared against the last bake's by
         /// @ref isEmissionTableStale, and recorded by the bake.
         /// @pre @ref packLightBlocks has run this frame: the blocks' upload
@@ -1410,8 +1410,8 @@ namespace EdgeLighting
         ///
         /// Stale when any of three things holds:
         ///   - the table was never baked (@c mEmission.bake);
-        ///   - an input other than time moved (@ref EmissionInputs): the two
-        ///     value uniforms compared by value, and the three LUTs and two
+        ///   - an input other than the hue phase moved (@ref EmissionInputs):
+        ///     the value uniform compared by value, and the three LUTs and two
         ///     light blocks by their upload counts. Version numbers on the GL
         ///     objects the pass binds, NOT a list of the config fields that
         ///     feed them - so a config change that moves none of them (an
@@ -1419,16 +1419,18 @@ namespace EdgeLighting
         ///     re-bakes nothing, and nothing that does move one can be missed
         ///     by a gate falling out of step with the shader. A cross-fade
         ///     frame moves the ring's count like a re-bake does.
-        ///   - @c uTime moved at a non-zero hue rate. It reaches the shader
-        ///     exactly once, as `si - uTime * uHueRotationRate`, so at a rate
-        ///     of 0 it drops out of the table altogether.
+        ///   - @p huePhase moved. It reaches the shader exactly once, as
+        ///     `si - uHuePhase`, and is the only form time takes there: the
+        ///     fractional part of `time * hueRotationRate`, reduced in double
+        ///     on the CPU (GetCyclePhase) so it keeps its precision at any
+        ///     uptime. At a rate of 0 it is 0 at every time.
         ///
         /// It used to be "any config change" (@c mEmissionDirty), deliberately
         /// wide because a field list would drift from the shader; the version
         /// numbers have no field list. See docs/emission-prepass.md section 3.
         /// @pre @ref packLightBlocks has run this frame: the blocks' counts
         ///      are part of the key, and only the pack moves them.
-        bool isEmissionTableStale(float time, const Config &config) const;
+        bool isEmissionTableStale(float huePhase, const Config &config) const;
 
         /// Pass 1a's inputs besides its region and quad, as
         /// @ref renderGatherPass would hand them over now, for a viewport of
@@ -1461,7 +1463,7 @@ namespace EdgeLighting
         /// one-sided cut and the cutoffs to it, false for the edge ring and its
         /// field bake, which apply both after the grade (uBlitOwnsCut).
         /// @pre @p shader is in use.
-        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float time,
+        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float huePhase,
                                 const ShadeLimits &limits, bool blitOwnsCut, const Config &config);
 
         /// Bind the gather loop's own inputs - the sample block, the count and
@@ -1516,7 +1518,7 @@ namespace EdgeLighting
         /// @pre @c mEmission.buffer is allocated, which @ref Initialize
         ///      guarantees for the renderer's lifetime - hence no failure to
         ///      report and nothing to allocate here.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        void renderEmissionPass(int viewportWidth, int viewportHeight, float huePhase, const Config &config);
 
         /// Pass 0b: bake the glow coverage table into @c mGlowCover.buffer -
         /// for each piece of the emitter, the arcs' and the segments' coverage
@@ -1567,7 +1569,7 @@ namespace EdgeLighting
         /// @return false if the buffer could not be allocated - the field is
         ///         then never used.
         bool renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV, float scale,
-                             float time, const Config &config);
+                             float huePhase, const Config &config);
 
         /// Pass 1b: the neon on the tight glow quad, shaded from the gather
         /// pass's result, so it must run after it - into @c mScaled,
@@ -1584,7 +1586,7 @@ namespace EdgeLighting
         ///         skipped too - they would otherwise composite a stale or
         ///         undefined buffer.
         bool renderShadePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const glm::ivec4 &window,
-                             const UVMap &gatherUV, float time, const Config &config);
+                             const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 1c: in pass 1b's place, the glow quad drawn with
         /// neon-field.frag - the field times the gathered hue, tone-mapped -
@@ -1621,7 +1623,7 @@ namespace EdgeLighting
         /// bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated.
-        bool renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config);
+        bool renderRingFieldPass(const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
@@ -1672,7 +1674,7 @@ namespace EdgeLighting
         /// shares its edges with what pass 2b drew, through the same @p mvp.
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored; pass 1 succeeded.
-        void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config);
+        void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 2r: in pass 2c's place, @c mRingMesh drawn through
         /// @p mvp - the matrix the blit drew with, so the partition holds -

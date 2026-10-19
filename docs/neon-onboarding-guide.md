@@ -1196,7 +1196,7 @@ deprecated shim. On `main` the fill was bounded by the glow's cutoffs; read
 | ----- | ------------- | ------------ | ---------- |
 | `colorStops` | `vector<ColorStop>`, red 0.0 / green 0.25 / blue 0.5 / yellow 0.75 | The base gradient around the ring. Positions are perimeter fractions from `t = 0`; the bake sorts them, so authored order does not matter (except between stops at the same position). Empty means white. | `GradientRingLUT::Bake` -> `uGradientLUT` (unit 0). RGB is read by P0 at the rotated position; alpha is read pointwise by `neon.frag`. |
 | `blendSpace` | `BlendSpace`, `RGB` | How the gradient blends between stops: `RGB` (straight mix), `HSV` or `HSL` (shortest way round the hue circle). Alpha always blends linearly. | Bake time only; never a uniform. |
-| `hueRotationRate` | float, 0.5 | Revolutions per second the base gradient scrolls around the ring; the sign is the direction; 0 is static. Arcs and segments with their own stops do not rotate. | `uHueRotationRate`: P0 reads the ring at `t - time x rate`; `neon.frag` reads alpha the same way. A non-zero rate re-runs P0 every frame. |
+| `hueRotationRate` | float, 0.5 | Revolutions per second the base gradient scrolls around the ring; the sign is the direction; 0 is static. Arcs and segments with their own stops do not rotate. | `uHuePhase` = `fract(time x rate)`, reduced on the CPU in double (`GetCyclePhase`): P0 reads the ring at `t - uHuePhase`; `neon.frag` reads alpha the same way. A non-zero rate re-runs P0 every frame. |
 | `colorTransitionDuration` | float, 0.3 s | Cross-fade time when `colorStops` or `blendSpace` change. 0 snaps. Runs on the host's raw `dt`, so it continues while the effect clock is paused. | `GradientRingLUT::Tick`, from `NeonRenderer::Update`; each fade frame re-uploads the ring and re-runs P0. |
 
 | `RGB` | `HSV` | `HSL` |
@@ -1687,7 +1687,7 @@ Part 7.3 walks through it.
 | **Target** | `mEmission.buffer`, 128 x 2 texels, RGBA16F (RGBA8 fallback), `GL_NEAREST`. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off (`NoScissorScope`: the host's scissor box is in window coordinates). No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
-| **Uniforms** | `uMVP` (identity), `uTime`, `uHueRotationRate`, `uNumSamples`. |
+| **Uniforms** | `uMVP` (identity), `uHuePhase`, `uNumSamples`. |
 | **Textures** | unit 0 `uGradientLUT`, unit 1 `uSegmentLUT`, unit 2 `uArcLUT`. |
 | **Blocks** | `SegmentBlock` (0), `ArcBlock` (2). |
 | **Output** | Texel `(i, 0)`: `rgb` = the winning arc's colour x its weight, `a` = that weight (`arcW` = arc mask x intensity). Texel `(i, 1)`: `rgb` = sum over segments of colour x bell, `a` = sum of bells. |
@@ -1906,7 +1906,7 @@ index, `gl_FragCoord.y` picks the row.
 
 ```
 si = floor(gl_FragCoord.x) / numSamples          // this sample's perimeter position
-ti = si - uTime * uHueRotationRate               // rotated position for the base gradient
+ti = si - uHuePhase                              // rotated position for the base gradient
 
 // Row 0: which arc owns this sample, and its colour
 for each arc a:  mask_a = arcInside(si, a) * a.intensity     // smoothstep-feathered by 1 sample
@@ -1938,7 +1938,7 @@ Notes:
   so each needs its own numerator and denominator.
 - The table is a pure function of (sample index, time, config). That purity
   is what lets the renderer skip the pass on frames where neither input moved.
-  The invariant for anyone editing: **a pure function of `(si, uTime, config)`
+  The invariant for anyone editing: **a pure function of `(si, uHuePhase, config)`
   goes in the pre-pass; anything that reads `vPos` stays in `neon.frag`.**
 
 ### 7.3 `neon-pieces.glsl` and `neon-glow-cover.frag` (P0b)
@@ -2139,8 +2139,7 @@ applies both itself at full resolution.
 | `uLineWidth` | float | scaled px | `lineWidth` x scale |
 | `uFilamentFalloff` | float | none | `filamentFalloff` |
 | `uIntensity` | float | none | `intensity` |
-| `uTime` | float | s | effect clock |
-| `uHueRotationRate` | float | rev/s | `hueRotationRate` |
+| `uHuePhase` | float | cycles, [0, 1) | `fract(clock time x hueRotationRate)`, in double on the CPU (`GetCyclePhase`) - the clock is a double and no shader sees an absolute time |
 | `uGlowRadius` | float | scaled px | `glowRadius` x scale |
 | `uBloomStrength` | float | none | `bloomStrength` |
 | `uGlowSide` | int | 0/1/2 | `glowSide` |
@@ -2531,7 +2530,7 @@ scaled path ships to.
    `mInitialized` rebuild gate, or the gather program's narrow uniform set
    (`uploadShapeUniforms`). Each has a comment saying why; each was measured.
 10. **Putting per-pixel work in the emission pre-pass**, or per-sample work in
-    `neon.frag`. The rule: a pure function of `(si, uTime, config)` goes in the
+    `neon.frag`. The rule: a pure function of `(si, uHuePhase, config)` goes in the
     pre-pass; anything that reads `vPos` stays in `neon.frag`.
 11. **Changing one side of the coverage table's layout.** Each map in
     `neon-pieces.glsl` has an inverse beside it, and the bake and `neon.frag`

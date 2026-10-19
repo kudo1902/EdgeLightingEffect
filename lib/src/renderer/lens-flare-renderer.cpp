@@ -1,5 +1,6 @@
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-tuning.h"
+#include "animation/clock.h"
 #include "shaders.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
@@ -187,11 +188,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float, float, const Config &)
+    void LensFlareRenderer::Update(float, double, const Config &)
     {
     }
 
-    void LensFlareRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+    void LensFlareRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double time,
                                             const Config &config)
     {
         // A new frame. What Render reads of it is set below, and stays
@@ -268,7 +269,7 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.lensFlare.enable)
         {
@@ -434,7 +435,7 @@ namespace EdgeLighting
     }
 
     void LensFlareRenderer::drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight,
-                                      float time, const Config &config)
+                                      double time, const Config &config)
     {
         mFlareShader.Use();
 
@@ -477,8 +478,13 @@ namespace EdgeLighting
         mFlareShader.SetUniform("uFlareCenter", config.lensFlare.flareCenter);
         mFlareShader.SetUniform("uSize", config.lensFlare.size);
 
+        // The rays' spin, in turns reduced to one turn in double before it
+        // becomes a float angle: the shader reads it only through
+        // mod(a, 2 PI) and sin(a * N / 2) with N whole, both periodic in a
+        // turn, so the wrap is seamless - and an absolute time * rate in a
+        // float stops turning after a few days of uptime.
         constexpr float TWO_PI = 6.28318530717958647692f;
-        mFlareShader.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
+        mFlareShader.SetUniform("uRotation", GetCyclePhase(time, config.lensFlare.rotationRate) * TWO_PI);
         // Quantise the [0, 1] density into an integer slot count for the
         // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
         // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so

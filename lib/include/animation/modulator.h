@@ -23,10 +23,15 @@ namespace EdgeLighting
     /// Usage pattern, per frame:
     /// @code
     ///     clock.Update(deltaTime);
-    ///     float t = clock.GetTime();
+    ///     float t = static_cast<float>(clock.GetTime());
     ///     cfg.neon.intensity  = pulse.Evaluate(t);
     ///     cfg.neon.glowRadius = glowSweep.Evaluate(t);
     /// @endcode
+    ///
+    /// The clock's time is a double for a reason (see @ref Clock): narrowed to
+    /// a float it loses the frame step after days of uptime. An
+    /// @ref Animation evaluates its modulators on its own elapsed time, which
+    /// LOOP mode keeps bounded, so prefer that to the absolute clock.
     ///
     /// No coupling to Config / no internal pointer state - modulators are pure
     /// functions of time, so they're trivially shareable, testable, and

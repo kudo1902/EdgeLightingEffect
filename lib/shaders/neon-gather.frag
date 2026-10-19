@@ -82,7 +82,7 @@ struct PerimeterGather
 // branch below takes the shorter body. What used to live here - the arc
 // winner-take-all scan over uArcCount, the segment loop over uSegmentCount,
 // and one to two FILTERED LUT fetches - was a pure function of
-// (si, uTime, config), so it did not belong in a loop that runs once per
+// (si, uHuePhase, config), so it did not belong in a loop that runs once per
 // fragment. Hoisting it also removed two dynamic inner loops (which blocked
 // unrolling), a serial reduction (`if (mask > bestMask)`), and the
 // loop-carried `si += dti` chain.

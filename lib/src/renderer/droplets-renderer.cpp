@@ -1,5 +1,6 @@
 #include "renderer/droplets-renderer.h"
 #include "renderer/droplets-tuning.h"
+#include "animation/clock.h"
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
@@ -93,11 +94,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void DropletsRenderer::Update(float, float, const Config &)
+    void DropletsRenderer::Update(float, double, const Config &)
     {
     }
 
-    void DropletsRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void DropletsRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.droplets.enable || viewportWidth <= 0 || viewportHeight <= 0)
         {
@@ -134,9 +135,12 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
         mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        mShaderProgram.SetUniform("uTime", time);
+        // The field's own time, wrapped in double before it becomes a float:
+        // see DROPLET_HASH_ROWS for why the wrap leaves no seam.
+        const double dropTime = WrapPeriod(time * DROPLET_TIME_SCALE * static_cast<double>(config.droplets.speed),
+                                           DROPLET_TIME_PERIOD);
+        mShaderProgram.SetUniform("uDropTime", static_cast<float>(dropTime));
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
-        mShaderProgram.SetUniform("uSpeed", config.droplets.speed);
         mShaderProgram.SetUniform("uLanes", std::max(config.droplets.lanes, 1));
         mShaderProgram.SetUniform("uBandWidth", config.droplets.bandWidth);
         mShaderProgram.SetUniform("uBandOffset", config.droplets.bandOffset);

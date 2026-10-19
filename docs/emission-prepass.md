@@ -35,7 +35,7 @@ position `si`, the clock, and the config - nothing else:
 ```glsl
 float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;  // si = i / N
 float bell = seg.z * exp(-e * e);                                 // rel = si - seg.x
-baseColI   = texture(uGradientLUT, vec2(ti, 0.5)).rgb;            // ti = si - uTime * rate
+baseColI   = texture(uGradientLUT, vec2(ti, 0.5)).rgb;            // ti = si - uHuePhase
 ```
 
 At the demo's defaults the quad covers a 3840x2160 viewport, so the loop body
@@ -140,14 +140,14 @@ them too, for the pointwise coverages.
 
 The pre-pass hoists the gather's fragment-invariant half out of every
 *fragment*. The same argument hoists it out of every *frame*: the table is a
-pure function of `(si, uTime, config)`, and `mEmission.buffer` is allocated once
+pure function of `(si, uHuePhase, config)`, and `mEmission.buffer` is allocated once
 for the renderer's lifetime and written by nothing else, so a frame that moves
 neither input can read the texels the last bake left. `isEmissionTableStale`
 is that test, and it has exactly two terms.
 
 - **What the pass binds**, compared against what the last bake bound
-  (`EmissionInputs`, built by `getEmissionInputs`): `uHueRotationRate` and
-  `uNumSamples` (clamped) by value, and the three LUT textures and the two
+  (`EmissionInputs`, built by `getEmissionInputs`): `uNumSamples` (clamped)
+  by value, and the three LUT textures and the two
   light blocks by **upload count** - `BaseLUT::GetUploadCount`, which every
   `Upload` moves, and `UniformBuffer::GetUploadCount`, which only an upload
   that changed the bytes moves. Version numbers on the GL objects, not a list
@@ -159,12 +159,15 @@ is that test, and it has exactly two terms.
   first bake and its stored key means nothing until then. The light blocks'
   counts are only current once `packLightBlocks` has run, so `Render` packs
   before it asks.
-- **`uTime`**, which reaches `neon-emission.frag` in exactly one place:
-  `float ti = si - uTime * uHueRotationRate`. At a rate of 0 the product is
-  exactly zero, so time drops out of the table altogether and a still ring
-  rebakes nothing however the clock runs. At any other rate the comparison is
-  `time != mEmission.bake.time`, exact rather than tolerant, because `time` is fed
-  straight back from the last bake rather than recomputed.
+- **`uHuePhase`**, which reaches `neon-emission.frag` in exactly one place:
+  `float ti = si - uHuePhase`. It is `fract(time * hueRotationRate)`, reduced
+  on the CPU in double (`GetCyclePhase`), and the only form time or the rate
+  takes in the pass. At a rate of 0 it is exactly 0 at every time, so a still
+  ring rebakes nothing however the clock runs. The comparison is
+  `huePhase != mEmission.bake.huePhase`, exact rather than tolerant, because an
+  unchanged clock reproduces the identical phase. (Until 2026-10-19 the pass
+  took `uTime` and `uHueRotationRate` and multiplied them in a float on the GPU;
+  an absolute time in a float loses the frame step after days of uptime.)
 
 The first term used to be `mEmissionDirty`, set by `OnConfigChanged` on **any**
 config change and from `Update` whenever `GradientRingLUT::Tick` re-uploaded.

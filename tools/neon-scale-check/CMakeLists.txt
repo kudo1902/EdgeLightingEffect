@@ -59,6 +59,7 @@ add_executable(neon-scale-check
     src/harness.cpp
     src/partition.cpp
     src/shared-buffer.cpp
+    src/clock-check.cpp
     ../common/pass-recorder.cpp
 )
 

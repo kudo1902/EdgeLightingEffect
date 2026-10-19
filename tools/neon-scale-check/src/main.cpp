@@ -40,9 +40,16 @@
 //       configs, the blit and the edge ring must cover every pixel they reach
 //       exactly once. Exits non-zero on any overlap or seam gap. See README.md.
 //
+//   neon-scale-check clock [--frames K] [--dump DIR]
+//       The effect's clock and the shader phases it feeds at a ~10-day start
+//       time: the clock advances by its frame deltas, and K frames of every
+//       layer that reads time match the same frames started at 0, and move.
+//       See clock-check.h.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
+#include "clock-check.h"
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
@@ -987,6 +994,10 @@ int main(int argc, char **argv)
     {
         return SharedBufferCheck(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "clock") == 0)
+    {
+        return ClockCheck(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -996,6 +1007,7 @@ int main(int argc, char **argv)
                  "                        [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] [--passes] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
                  "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n"
-                 "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n");
+                 "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n"
+                 "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n");
     return 2;
 }

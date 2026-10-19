@@ -5,6 +5,68 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-19 - The clock is a double; shaders get bounded phases
+
+Uncommitted. `Clock`, `BaseRenderer` and every renderer's time path, four
+shaders, `droplets-tuning.h`, and a `neon-scale-check clock` mode.
+
+- **The defect.** `Clock` accumulated `float mTime += deltaTime`, and that
+  float went to the shaders as `uTime`: the neon's hue (`si - uTime *
+  uHueRotationRate` in the emission pre-pass, the same in `neon.frag`'s
+  gradient alpha read and the debug strip), the droplets (`uTime * 0.2 *
+  uSpeed`) and the flare's ray spin (`time * rotationRate * 2 pi`). At 60 fps,
+  10 s of frames moved the clock 9.375 s after 0.5-2 days of uptime, 18.75 s
+  after 3.1-4 days, and 0 s past 2^19 s (~6.07 days): the hue, the drops and
+  the rays ran at the wrong speed, then stopped. Edge devices run the effect
+  for days. Per-animation elapsed time was never affected (LOOP wraps it).
+- **The clock.** `Clock::mTime`, `GetTime` and `SetTime` are `double`, and so
+  is the `time` every renderer is handed (`BaseRenderer::Update`,
+  `RenderOffscreen`, `Render`) - double rather than a wrapped float because the
+  wrap a phase needs depends on its rate, which only the renderer knows. A
+  host's own renderer has to change its overrides (`docs/upgrade-notes.md`
+  section 6); the C ABI has no clock-time function, so no export changed.
+- **The phases.** No shader is handed an absolute time any more; each renderer
+  reduces it in double on the CPU (`GetCyclePhase`, `WrapPeriod` in
+  `animation/clock.h`):
+  - neon and debug strip: `uHuePhase = fract(time * hueRotationRate)` replaces
+    `uTime` and `uHueRotationRate` in `neon-emission.frag`, `neon.frag` and
+    `neon-lut-debug.frag`. The emission table's key is now the phase itself
+    (`EmissionBake::huePhase`; `EmissionInputs` lost `hueRotationRate`, which
+    the pass no longer uploads) - still exact, and at rate 0 the phase is 0 at
+    every time, as the old key's rate test was. `RenderOffscreen` computes it
+    once and hands it to `Render`'s ring pass through `FrameState`.
+  - flare: `uRotation = GetCyclePhase(time, rotationRate) * 2 pi`. The shader
+    reads it only through `mod(a, 2 pi)` and `sin(a * N / 2)` with N whole, so
+    the wrap is seamless.
+  - droplets: `uDropTime = WrapPeriod(time * 0.2 * speed, 2048)`. The field is
+    not periodic on its own - the trickling layers scroll their grid and hash
+    each cell's row - so the shader now hashes the row modulo
+    `DROPLET_HASH_ROWS` (3072), the number of rows a 2048 wrap scrolls in both
+    layers. The wrap then lands every cell on one with the same hash and
+    sub-cell offset, and every `fract(t + n.z)` lines up: no seam. The modulo
+    is an identity until a row on screen reaches 3072, late in the first ~2.8 h
+    period at speed 1. Rows would repeat on screen only past ~3072 rows of the
+    fine layer, ~10,000 px at a 1 px cell (`droplets-tuning.h`).
+- **Verified** (Apple M2 Pro, Release). `neon-scale-check check`, `partition`
+  (1000 configs, 0 overlap, 0 gap) and `shared-buffer` pass; `generate
+  --images` against the build before is byte-identical on all 210 page images
+  (they draw at time 0). The new `neon-scale-check clock` sets the clock to
+  870400 s (~10.07 days, a whole number of cycles of every phase involved):
+  600 frames of 1/60 s advance it 10.000000522 s, exactly their sum (a float
+  accumulator: 0 s); the hue phase steps within 5.1e-8 of a cycle of rate / 60;
+  30 frames of neon (hue rotating), droplets, flare (rays spinning) and the
+  debug strip match the same frames from 0 byte for byte, and the first and
+  last differ by up to 154 levels. The same mode built against the library
+  before fails all three (clock 0 s, frames up to 174 levels off the run from
+  0, first and last within 1 level - frozen). At an ordinary uptime the phases'
+  rounding moved from the GPU to the CPU: 120 frames from 0 differ from the
+  old build by at most 2 levels on 0.015% of pixels (`clock --dump` + `diff`).
+- **Open.** The other time inputs are deltas (`Update`'s `deltaTime`, the
+  gradient ring's cross-fade, the glow coverage table's release timer) and
+  per-animation elapsed times, which stay float and stay bounded. A
+  `Modulator` evaluated on the absolute clock by a host would narrow it to a
+  float again; `modulator.h` now says to use an animation's own elapsed time.
+
 ## 2026-10-19 - C ABI: enum inputs validated, `OpaqueMode` parity pinned
 
 Uncommitted. `lib/capi` and `FieldBoundAnimation` only; no exported signature

@@ -91,9 +91,12 @@ out vec4 fragColor;
 uniform vec2  uRectSize;          ///< Rect size (px).
 uniform vec2  uRectCenter;        ///< Rect centre (px) in framebuffer space.
 uniform float uCornerRadius;
-uniform float uTime;
+/// The droplet field's own time: clock time * DROPLET_TIME_SCALE * speed,
+/// wrapped into [0, DROPLET_TIME_PERIOD) on the CPU in double, so it stays
+/// small enough for a float to step at any uptime. See DROPLET_HASH_ROWS for
+/// why the wrap leaves no seam.
+uniform float uDropTime;
 uniform float uAmount;
-uniform float uSpeed;
 uniform int   uLanes;             ///< Droplet lanes across the band (>= 1).
 uniform vec4  uTint;
 uniform int   uGlowSide;          ///< GLOW_SIDE_BOTH / INSIDE / OUTSIDE.
@@ -208,7 +211,12 @@ vec2 DropLayer(vec2 uv, float t, float uvToPx) {
     uv.y += colShift;
     id = floor(uv * grid);
 
-    vec3 n = N13(id.x * 35.2 + id.y * 2376.1);
+    // The row is hashed modulo DROPLET_HASH_ROWS: the uDropTime wrap scrolls
+    // both layers by exactly that many rows (see droplets-tuning.h), so the
+    // cells that scroll into view after it hash as the ones before it did.
+    // An exact identity while id.y is below it, which every row on screen is
+    // for most of a period.
+    vec3 n = N13(id.x * 35.2 + mod(id.y, DROPLET_HASH_ROWS) * 2376.1);
     vec2 st = fract(uv * grid) - vec2(0.5, 0.0);
 
     float x = n.x - 0.5;
@@ -344,7 +352,7 @@ void main() {
     float uvToPx = CELL_UV * cellPx;
     vec2 uv = gl_FragCoord.xy / uvToPx;
 
-    float t = uTime * 0.2 * uSpeed;
+    float t = uDropTime;
 
     // --- Orientation-aware layer mix -------------------------------------
     // How vertical the local run of band is. `q` is the per-axis distance to

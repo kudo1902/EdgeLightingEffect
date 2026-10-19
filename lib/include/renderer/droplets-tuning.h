@@ -39,6 +39,34 @@
 /// edge into a straight line along all four sides.
 #define DROPLET_BAND_GUARD 0.25
 
+/// The droplet field's time, uDropTime, is clock time * DROPLET_TIME_SCALE *
+/// DropletsConfig::speed wrapped into [0, DROPLET_TIME_PERIOD) - on the CPU,
+/// in double (droplets-renderer.cpp). Unwrapped it grew without bound, and a
+/// float time loses the frame step after enough uptime (the effect may run
+/// for days); wrapped, it never exceeds what the first ~2.8 h at speed 1
+/// already reached.
+///
+/// The field is not periodic in time on its own: the trickling layers scroll
+/// their cell grid down by `t * 0.75` uv, two rows per uv (DropLayer's
+/// `grid.y`), and every cell hashes its row, so a wrap would re-roll every
+/// drop at once. So the period is chosen to scroll by a WHOLE number of rows
+/// in both layers - 0.75 * 2 * DROPLET_TIME_PERIOD rows, in each layer's own
+/// cells, since the fine layer applies the scroll after its 1.85x scale - and
+/// the shader hashes the row modulo exactly that count. Then the wrap moves
+/// every cell onto one with the same hash and the same sub-cell offset, and
+/// every `fract(t + n.z)` cycle, the period being a whole number, lines up:
+/// the seam is invisible. The modulo is an identity until a row on screen
+/// reaches DROPLET_HASH_ROWS - late in the first period - so before that the
+/// field is the unwrapped one.
+///
+/// The hashed rows repeat on screen only if one layer shows more than
+/// DROPLET_HASH_ROWS rows at once: the fine layer has 2 * 1.85 rows per uv
+/// and a uv is CELL_UV (12) cell widths of at least a pixel each, so a 4320 px
+/// tall viewport shows at most ~1330. Change either constant only together.
+#define DROPLET_TIME_SCALE 0.2
+#define DROPLET_TIME_PERIOD 2048.0
+#define DROPLET_HASH_ROWS 3072.0 // 0.75 * 2 * DROPLET_TIME_PERIOD
+
 // clang-format on
 
 #endif // _EDGE_LIGHTING_DROPLETS_TUNING_H_

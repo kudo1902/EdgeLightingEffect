@@ -5,7 +5,8 @@ Six of the changes are silent - the host still compiles and links, and the
 picture moves - so read section 0 first (the default resolution scale is now
 0.5), the next two before upgrading anything that uses an opaque fill or a
 cutoff softness, and section 5 before upgrading anything that lights only part
-of the ring.
+of the ring. One is not silent: a host's own renderer stops compiling until it
+takes the clock's time as a `double` (section 6).
 
 ## 0. `NeonConfig::resolutionScale` defaults to 0.5, and 1.0 takes the same path
 
@@ -181,7 +182,32 @@ segments (0.17 and 0.55 ms before V21), everything a config change costs
 included - still worth measuring on a slower GPU before shipping an animated
 segment. See V20 and V21 for the measurements.
 
-## 6. Nothing else a host can see moved
+## 6. The clock is a `double`, and a host's own renderer must take `double time`
+
+`Clock::GetTime` / `SetTime` and the `time` parameter of `BaseRenderer::Update`,
+`RenderOffscreen` and `Render` are `double` now (they were `float`). A float
+clock stepped by 1/60 s ran slow after half a day of uptime (10 s of frames
+moved it 9.375 s) and stopped altogether past 2^19 s (~6.07 days), freezing
+the hue rotation, the droplets and the flare's rays.
+
+- **A host renderer (`RendererLayer::CUSTOM`) no longer compiles** until its
+  overrides take `double time` - with `override` the compiler says so; without
+  it the class is abstract. That is the only source break, and it is C++ only:
+  the C ABI has no clock-time function, and no exported signature changed.
+- Host code that reads `GetClock().GetTime()` into a `float` still compiles and
+  loses the precision again. Keep it in a `double`, and do not hand a shader an
+  absolute time: reduce it on the CPU to the phase the shader needs
+  (`GetCyclePhase(time, cyclesPerSecond)` or `WrapPeriod(value, period)`, in
+  `animation/clock.h`), as every library layer now does.
+- Pixels: none at time 0 (every `neon-scale-check` page image is byte-identical).
+  While time runs, the phases are rounded on the CPU instead of the GPU: up to
+  2 levels on 0.015% of pixels over the first two seconds of a scene with the
+  hue, the droplets and the flare's rays all moving (Apple M2 Pro). The droplets
+  hash their rows modulo `DROPLET_HASH_ROWS` so their wrapped time has no seam;
+  that is an identity until late in the first ~2.8 h period at speed 1, after
+  which the drops are a different (equally random) draw from before.
+
+## 7. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

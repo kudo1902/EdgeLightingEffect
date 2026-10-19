@@ -708,11 +708,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void SpotlightRenderer::Update(float, float, const Config &)
+    void SpotlightRenderer::Update(float, double, const Config &)
     {
     }
 
-    void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float, const Config &config)
+    void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double, const Config &config)
     {
         // A new frame. What Render reads of it is set below, and stays
         // "nothing to composite" on every early return.
@@ -776,7 +776,7 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void SpotlightRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void SpotlightRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.spotlight.enable || mVertexCount <= 0 ||
             viewportWidth <= 0 || viewportHeight <= 0)

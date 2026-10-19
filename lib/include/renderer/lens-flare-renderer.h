@@ -38,7 +38,7 @@ namespace EdgeLighting
         virtual ~LensFlareRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
 
         /// Phase 1: below scale 1.0, the flare into @c mScaledBuffer - sized,
         /// bound and cleared here, under no host scissor - and nothing on the
@@ -46,14 +46,14 @@ namespace EdgeLighting
         /// Restores the framebuffer and viewport it was handed, and leaves
         /// @c GL_BLEND on with @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA, as
         /// @ref Render does.
-        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time,
                                      const Config &config) override;
 
         /// Phase 2, onto the caller's framebuffer, premultiplied over: the
         /// scaled buffer blitted back below 1.0, the flare itself at 1.0. A
         /// host that calls it without RenderOffscreen for the same frame
         /// (EdgeLightingEffect never does) gets that phase run first, here.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::LENS_FLARE; }
 
@@ -83,7 +83,7 @@ namespace EdgeLighting
         /// @p viewportWidth x @p viewportHeight viewport, whose px the sun's
         /// position is in. Sets the program, its uniforms and the ghost block's
         /// binding; the caller sets the target and the blend.
-        void drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight, float time,
+        void drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight, double time,
                        const Config &config);
 
     private:

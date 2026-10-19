@@ -121,21 +121,21 @@ namespace EdgeLighting
         virtual ~SpotlightRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
 
         /// Phase 1: below scale 1.0, the lamps into @c mScaledBuffer - sized,
         /// bound and cleared here, under no host scissor - and nothing on the
         /// caller's framebuffer. At 1.0 (a clipped lamp pins it there), or
         /// with the layer off, nothing. Restores the framebuffer and viewport
         /// it was handed, and leaves the blend as @ref Render does.
-        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time,
                                      const Config &config) override;
 
         /// Phase 2, onto the caller's framebuffer, screened: the scaled buffer
         /// blitted back below 1.0, the lamps themselves at 1.0. A host that
         /// calls it without RenderOffscreen for the same frame
         /// (EdgeLightingEffect never does) gets that phase run first, here.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::SPOTLIGHT; }
 
