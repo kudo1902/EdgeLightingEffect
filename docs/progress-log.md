@@ -5,6 +5,47 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-19 - C ABI: enum inputs validated, `OpaqueMode` parity pinned
+
+Uncommitted. `lib/capi` and `FieldBoundAnimation` only; no exported signature
+changed.
+
+- **Asked for.** A review found the C boundary sound (no exception escapes,
+  handles and indices are checked) with two gaps: `OpaqueMode` was the one
+  mirrored enum without parity `static_assert`s, and enum-typed setters stored
+  any integer a foreign caller passed and returned `EL_SUCCESS`.
+- **Parity.** `capi-internal.h` now asserts all five `OpaqueMode` values against
+  `el_opaque_mode_e`. `EndAction` and `AnimationState` convert through switches
+  that name every enumerator on both sides (the default arm only catches
+  foreign integers), so they stay assert-free, as the comment there says.
+- **Validation.** One `isValid(el_*_e)` predicate per mirrored enum a setter
+  stores through `static_cast`, each a switch with no default (so `-Wswitch`
+  flags a new enumerator), behind `VALIDATE_ENUM`. Out-of-range values now log
+  and return `EL_ERROR_INVALID_PARAMETER`, leaving the config untouched, in
+  `el_effect_set_winding`, `_opaque_mode`, `_glow_side`, `_blend_space`,
+  `_segment_blend_space`, `_preserved_segment_blend_space`, `_arc` (blend
+  space), `_spotlight_clip_mode`, and every `el_animation_add_*field` binder
+  (config, segment, preserved segment and its stop, arc, spotlight, arc stop,
+  segment stop). `el_animation_from_modulator` returns null on a bad field.
+- **Negative indices.** `VALIDATE_INDEX` added to `add_segment_field`,
+  `add_arc_field`, `add_spotlight_field`, which cast to `size_t` unchecked
+  (a negative became ~2^64 and bound a slot that never exists), and to
+  `add_arc_stop_field` / `add_segment_stop_field`, which lacked it too.
+- **Log once.** `FieldBoundAnimation`'s write helpers logged an error on every
+  `Apply` while a binding's index was out of range, i.e. every frame after a
+  host shrank a pool. Each binding that can go out of range now carries a
+  `mutable outOfRangeLogged`: the first miss logs, later misses are silent, and
+  the next successful write re-arms it. Binding structs grew one field; the
+  `push_back({...})` aggregate inits are unchanged.
+- **Verified.** Both demos and the C library build. Through `ctypes` against
+  the built dylib: out-of-range winding / opaque mode (5, -1) / glow side /
+  blend space / clip mode / field enums and negative indices return -4
+  (`EL_ERROR_INVALID_PARAMETER`); valid values still return 0. No renderer
+  output is touched.
+- **Open.** `el_animation_set_end_action` and the playback setters still
+  coerce an unknown value to the default through their helpers instead of
+  rejecting it.
+
 ## 2026-10-19 - The neon's reduced buffer shared with the other renderers
 
 `17046b2` - `b4fe8c2`; the review's follow-up (the "Reviewed" item below)

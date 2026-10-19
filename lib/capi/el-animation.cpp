@@ -655,6 +655,11 @@ el_animation_handle_t el_animation_from_modulator(el_config_field_e field,
         LOG_E("el_animation_from_modulator: mod is null");
         return nullptr;
     }
+    if (!isValid(field))
+    {
+        LOG_E("el_animation_from_modulator: invalid el_config_field_e value %d", (int)field);
+        return nullptr;
+    }
     try
     {
         auto a = std::make_shared<EdgeLighting::FieldBoundAnimation>(
@@ -692,6 +697,7 @@ el_result_e el_animation_add_field(el_animation_handle_t anim,
     LOG_I("anim=%p, field=%d, mod=%p", (void *)anim, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_field");
+    VALIDATE_ENUM(el_config_field_e, field, "el_animation_add_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -708,6 +714,8 @@ el_result_e el_animation_add_segment_field(el_animation_handle_t anim,
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_segment_field");
+    VALIDATE_INDEX(index, "el_animation_add_segment_field");
+    VALIDATE_ENUM(el_segment_field_e, field, "el_animation_add_segment_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -725,6 +733,7 @@ el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
     LOG_I("anim=%p, id=%u, field=%d, mod=%p", (void *)anim, id, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_field");
+    VALIDATE_ENUM(el_segment_field_e, field, "el_animation_add_preserved_segment_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -747,6 +756,7 @@ el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t 
         LOG_E("el_animation_add_preserved_segment_stop_field: negative stopIndex");
         return EL_ERROR_INVALID_PARAMETER;
     }
+    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_preserved_segment_stop_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -764,6 +774,8 @@ el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_arc_field");
+    VALIDATE_INDEX(index, "el_animation_add_arc_field");
+    VALIDATE_ENUM(el_arc_field_e, field, "el_animation_add_arc_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -782,6 +794,8 @@ el_result_e el_animation_add_spotlight_field(el_animation_handle_t anim,
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_spotlight_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_spotlight_field");
+    VALIDATE_INDEX(index, "el_animation_add_spotlight_field");
+    VALIDATE_ENUM(el_spotlight_field_e, field, "el_animation_add_spotlight_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -800,6 +814,9 @@ el_result_e el_animation_add_arc_stop_field(el_animation_handle_t anim,
     LOG_I("anim=%p, arcIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, arcIndex, stopIndex, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_stop_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_arc_stop_field");
+    VALIDATE_INDEX(arcIndex, "el_animation_add_arc_stop_field");
+    VALIDATE_INDEX(stopIndex, "el_animation_add_arc_stop_field");
+    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_arc_stop_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -818,6 +835,9 @@ el_result_e el_animation_add_segment_stop_field(el_animation_handle_t anim,
     LOG_I("anim=%p, segmentIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, segmentIndex, stopIndex, (int)field, (void *)mod);
     VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_stop_field");
     VALIDATE_MOD_PTR(mod, "el_animation_add_segment_stop_field");
+    VALIDATE_INDEX(segmentIndex, "el_animation_add_segment_stop_field");
+    VALIDATE_INDEX(stopIndex, "el_animation_add_segment_stop_field");
+    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_segment_stop_field");
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {

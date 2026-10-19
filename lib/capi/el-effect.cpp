@@ -173,6 +173,7 @@ el_result_e el_effect_get_geometry(el_effect_handle_t effect,
 el_result_e el_effect_set_winding(el_effect_handle_t effect, el_winding_e winding)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_winding");
+    VALIDATE_ENUM(el_winding_e, winding, "el_effect_set_winding");
     SET_AND_LOG(effect->config.geometry.winding, static_cast<EdgeLighting::Winding>(winding),
                 "effect=%p, winding=%d", (void *)effect, (int)winding);
 }
@@ -207,6 +208,7 @@ el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bo
 el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
+    VALIDATE_ENUM(el_opaque_mode_e, mode, "el_effect_set_opaque_mode");
     SET_AND_LOG(effect->config.neon.opaqueMode,
                 static_cast<EdgeLighting::OpaqueMode>(mode),
                 "effect=%p, mode=%d", (void *)effect, static_cast<int>(mode));
@@ -409,6 +411,7 @@ el_result_e el_effect_get_bloom_strength(el_effect_handle_t effect, float *outSt
 el_result_e el_effect_set_glow_side(el_effect_handle_t effect, el_glow_side_e side)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side");
+    VALIDATE_ENUM(el_glow_side_e, side, "el_effect_set_glow_side");
     SET_AND_LOG(effect->config.neon.glowSide, static_cast<EdgeLighting::GlowSide>(side),
                 "effect=%p, side=%d", (void *)effect, (int)side);
 }
@@ -441,6 +444,7 @@ el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *o
 el_result_e el_effect_set_blend_space(el_effect_handle_t effect, el_blend_space_e space)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, space, "el_effect_set_blend_space");
     SET_AND_LOG(effect->config.neon.blendSpace, static_cast<EdgeLighting::BlendSpace>(space),
                 "effect=%p, space=%d", (void *)effect, (int)space);
 }
@@ -769,6 +773,7 @@ el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effec
                                                         uint32_t id, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_preserved_segment_blend_space");
     int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
     if (idx < 0)
     {
@@ -938,6 +943,7 @@ el_result_e el_effect_set_segment_blend_space(el_effect_handle_t effect,
                                               int32_t segmentIndex, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_segment_blend_space");
     if (segmentIndex < 0)
     {
         LOG_E("el_effect_set_segment_blend_space: negative segmentIndex");
@@ -1142,6 +1148,7 @@ el_result_e el_effect_set_arc(el_effect_handle_t effect, int32_t index,
                               float start, float length, float intensity, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_arc");
     if (index < 0)
     {
         LOG_E("el_effect_set_arc: negative index");
@@ -1625,6 +1632,7 @@ el_result_e el_effect_get_spotlight_clip_softness(el_effect_handle_t effect, flo
 el_result_e el_effect_set_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e mode)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_mode");
+    VALIDATE_ENUM(el_clip_mode_e, mode, "el_effect_set_spotlight_clip_mode");
     SET_AND_LOG(effect->config.spotlight.clipArea.mode,
                 static_cast<EdgeLighting::ClipMode>(mode),
                 "effect=%p, mode=%d", (void *)effect, (int)mode);
