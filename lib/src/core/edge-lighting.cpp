@@ -14,7 +14,8 @@ namespace EdgeLighting
 {
 
     EdgeLightingEffect::EdgeLightingEffect()
-        : mAnimationManager(std::make_unique<AnimationManager>())
+        : mAnimationManager(std::make_unique<AnimationManager>()),
+          mSharedBufferRegistry(std::make_shared<SharedBufferRegistry>())
     {
     }
 
@@ -60,6 +61,15 @@ namespace EdgeLighting
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
         float t = mClock.GetTime();
+        // Two phases: every layer's offscreen work first, then every layer's
+        // composite. A layer that reads another's shared image (SharedBufferRegistry)
+        // then sees this frame's wherever it sits in the order, and the
+        // caller's target is drawn in one unbroken run - see
+        // BaseRenderer::RenderOffscreen.
+        for (auto &renderer : mRenderers)
+        {
+            renderer->RenderOffscreen(viewportWidth, viewportHeight, t, mActiveConfig);
+        }
         for (auto &renderer : mRenderers)
         {
             renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);
@@ -90,6 +100,10 @@ namespace EdgeLighting
         {
             return;
         }
+
+        // The shared buffers first, so the renderer holds them from its
+        // Initialize on: a producer publishes into them, a reader reads them.
+        renderer->setSharedBufferRegistry(mSharedBufferRegistry);
 
         // Registering after Initialize used to leave the renderer with no
         // shaders: Initialize walks the list exactly once, so nothing would

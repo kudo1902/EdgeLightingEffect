@@ -2,6 +2,8 @@
 #define _EDGE_LIGHTING_BASE_RENDERER_H_
 
 #include "core/config.h"
+#include "core/shared-buffer-registry.h"
+#include <memory>
 
 namespace EdgeLighting
 {
@@ -49,7 +51,31 @@ namespace EdgeLighting
         /// @param config     Current active configuration.
         virtual void Update(float deltaTime, float time, const Config &config) = 0;
 
-        /// Draws the renderer's visual layer.
+        /// Phase 1 of a frame: draw whatever this layer draws OFFSCREEN - its
+        /// own buffers, and any @ref SharedBuffer it produces - and nothing on
+        /// the caller's framebuffer. @ref EdgeLightingEffect::Render runs it
+        /// for EVERY layer before it runs any layer's @ref Render, so:
+        ///   - a reader's Render sees this frame's shared images wherever it
+        ///     sits in the layer order;
+        ///   - every layer's offscreen work lands before the first draw to the
+        ///     caller's target, which a tile-based GPU then draws in one
+        ///     unbroken run instead of storing and reloading its tiles round
+        ///     each offscreen excursion.
+        /// Leaves the caller's framebuffer and viewport bound as it found them,
+        /// and the blend state as @ref Render does. Same arguments as
+        /// @ref Render, for the same frame. Does nothing by default: a layer
+        /// with no offscreen work, or one that keeps it in Render, need not
+        /// override it.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
+        {
+            (void)viewportWidth;
+            (void)viewportHeight;
+            (void)time;
+            (void)config;
+        }
+
+        /// Phase 2 of a frame: draws the renderer's visual layer onto the
+        /// caller's framebuffer, after every layer's @ref RenderOffscreen.
         ///
         /// @pre The GL viewport is @c (0, 0, viewportWidth, viewportHeight).
         ///      Renderers may rely on this and may restore it by reconstruction
@@ -87,6 +113,34 @@ namespace EdgeLighting
         /// unreachable by every layer call. A host's own renderer returns
         /// @ref RendererLayer::CUSTOM.
         virtual RendererLayer GetLayer() const = 0;
+
+    protected:
+        /// The shared-buffer registry of the effect this renderer is
+        /// registered with, or nullptr for one no effect holds. A producer
+        /// claims its slot there (from its Initialize); a reader takes another
+        /// layer's buffer there in its Render - see @ref SharedBufferRegistry.
+        /// Set before @ref Initialize and the first @ref OnConfigChanged.
+        const std::shared_ptr<SharedBufferRegistry> &GetSharedBufferRegistry() const
+        {
+            return mSharedBufferRegistry;
+        }
+
+    private:
+        /// Only the effect hands a renderer its registry, once, as it registers
+        /// it - so no renderer can be pointed at another effect's after it has
+        /// claimed a slot in its own.
+        friend class EdgeLightingEffect;
+
+        /// Called by @ref EdgeLightingEffect::AddRenderer, before Initialize.
+        /// Held by shared ownership, so a renderer that outlives its effect
+        /// still holds a live registry.
+        void setSharedBufferRegistry(const std::shared_ptr<SharedBufferRegistry> &registry)
+        {
+            mSharedBufferRegistry = registry;
+        }
+
+    private:
+        std::shared_ptr<SharedBufferRegistry> mSharedBufferRegistry; ///< See @ref GetSharedBufferRegistry.
     };
 
 } // namespace EdgeLighting
