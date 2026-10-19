@@ -665,7 +665,7 @@ were kept apart in scratch trees so each could be measured alone.
 | 2 | `GetGlowCoverWidth`, hysteresis of two steps | constants 0.8 / **1.6** / **5.0** (plan 0.8 / 1.0 / 4.0), from a 250-config sweep | max 2, 99.998% within 1 | pass; only the table's figure changes |
 | 3 | segment table (P0s), fill (P0f), `glowCoverTexel`, direct mode | **4** columns per sigma (plan 5); a 1.2x margin on leaving direct mode | max 2, 99.992% within 1 | pass; table figures only, new P0s figure |
 | 4 | `GLOW_COVER_BELL_REACH` 3 / invSigma, bake and mirror | **no 8-node rule**: alone 3 levels / 99.23%, with the support 2 / 99.57% - both fail | max 1 (1.6% of lit px at most) | pass |
-| D4 | pass 1b skips the filament (I62) | - | byte-identical | pass; four intermediate-buffer figures lose the line, captions updated |
+| D4 | pass 1b skips the filament (I62) | - | byte-identical | pass; four intermediate-buffer figures lose the line, captions updated. Reverted 2026-10-19 for the neon's shared buffer |
 
 Frame cost at 0.5, band and 960 x 540 rect, every light changing length every
 frame. GPU timer units first (comparable with section 6's estimates), then

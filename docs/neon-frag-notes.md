@@ -738,6 +738,16 @@ and every final-frame figure; the four figures of intermediate buffers lose
 the line. No measurable time on the AMD (0.988-0.997). Narrow the ring's guard
 below a texel and this stops holding.
 
+**Reverted for the shared buffer** (2026-10-19): `filamentLit` is again
+`core > 0.0 && lineGate > 0.0` in every pass. The reduced buffer became the
+neon's shared buffer (`SharedBufferId::NEON`), which other renderers read
+without the edge ring, so it has to hold the line. Byte-identical against the
+build before it on the `cover` set (306 frames) and all 210 page images; the
+four figures of intermediate buffers have the line again. No measurable time
+(geometric means 0.95-1.007 on arc-wipe, intensity and segment-travel frames at
+0.5 and 0.25, AMD). The ring's guard no longer carries this: the blit would
+read correct texels at any ring width.
+
 (The milliseconds above are `GL_TIME_ELAPSED` readings, which on this GPU are
 ~3.85x the wall-clock time - ratios, not costs.)
 
