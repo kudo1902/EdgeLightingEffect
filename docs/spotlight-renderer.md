@@ -625,7 +625,12 @@ the way animating a pure shader uniform is.
 `SpotlightConfig::resolutionScale` behaves as the flare's does - two paths,
 direct at 1.0 and a bilinear blit below it - and **no uniform that shapes the
 light differs between them**, so a scaled frame is the same picture at lower
-resolution rather than a differently shaped one.
+resolution rather than a differently shaped one. Below 1.0 the strips draw into
+the buffer in `SpotlightRenderer::RenderOffscreen` and `Render` blits it back,
+so the effect's two-phase frame keeps the caller's target in one run (a
+tile-based GPU stores and reloads it round every draw to another target in
+between); the frames are byte-identical to the one-phase `Render` this
+replaced.
 
 The one thing that moves is **where the output is dithered**. At 1.0 the strips
 dither their own write to the caller's 8-bit target. Below it they write a

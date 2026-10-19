@@ -156,7 +156,17 @@ when:
   viewport carries under 0.9 of the frame's light ON THE LINE (luma above the clear,
   over the pixels within the filament's half-width of the edge);
 - the hue variant never reaches the field's composite, or the buffer is ready
-  while the neon is off, or not ready once it is on again.
+  while the neon is off, or not ready once it is on again;
+- after a rect that moves and shrinks at one scale, the buffer differs by a
+  single texel from the moved rect's drawn on a fresh effect.
+
+The last is the windowed clear (`SharedBuffer::BeginWrite`: this write's
+window and the last write's). The scenes never reach it - every cell changes
+the scale, which reallocates the buffer and clears it whole - and no frame
+shows a stale texel, since the blit reads only where the write drew, so
+neither `check` nor the `cover` set can catch one. A scratch build that cleared
+only this write's window left 2790-218880 stale texels (scales 0.125-1.0, up
+to 47/255) and passed everything else; this check fails it at every scale.
 
 The light is measured on the line because the halo and the bloom carry most of
 a frame's: a scratch build that never shaded the filament into the buffer
@@ -164,7 +174,7 @@ still came back at 0.93-0.995 of the whole frame, and at 0.58-0.89 on the
 line: every unmasked scene failed but `overdrive`, whose line the bloom drives
 to white either way. With the filament, 0.94-1.24 on the line (1.24 is the
 hairline at a low scale, which the sampling floor widens). Measured on the AMD
-Radeon Pro 5300M, 2026-10-19: `PASS`, about 15 s. `--images` writes each buffer
+Radeon Pro 5300M, 2026-10-19: `PASS`, about 18 s. `--images` writes each buffer
 over black, top row first, as `DIR/<scene>_<variant>_<scale>.png`.
 
 It does not compare frames. That the filament in the buffer moves no pixel of
@@ -172,8 +182,9 @@ the frame rests on the edge ring covering the filament's reach (the blit never
 reads a texel it lights), and is checked the way any change that may move
 pixels is: `generate --set cover` and `generate --images` from a build before
 and after, then `diff A B --max 0` and a byte compare of the page images. Run
-it, and that, after touching `filamentLit` in `neon.frag`, the shared buffer's
-publish in `NeonRenderer::Render`, or the edge ring's width (`GetRingWidth`).
+it, and that, after touching `filamentLit` in `neon.frag`, `SharedBuffer`, the
+shared buffer's `MarkReady` / `MarkNotReady` in `NeonRenderer::RenderOffscreen`,
+the glow window (`GetSubWindow`), or the edge ring's width (`GetRingWidth`).
 
 ## `generate`
 

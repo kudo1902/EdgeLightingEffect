@@ -1927,7 +1927,7 @@ namespace EdgeLighting
         /// times the reduced buffer. (The reduced buffer had a region too until
         /// it became the shared buffer; it is the whole viewport now -
         /// GetViewportRegion - and the glow's field has a region of its grid,
-        /// GetSubRegion.)
+        /// GetSubWindow / GetWindowRegion.)
         ///
         /// NEVER capped at the viewport: ending the buffer AT the viewport's
         /// edge, as the reduced buffer does, leaves a reader's bilinear
@@ -4497,8 +4497,8 @@ namespace EdgeLighting
         // the box maps DOWN to, which is a different region again and one
         // nothing wrote this frame: last frame's pixels, blitted back under
         // the host's clip. See GLUtils::NoScissorScope. The blit and the ring
-        // get the host's clip back once this scope ends, which is before Render
-        // calls them.
+        // get the host's clip back once this scope ends, which is before
+        // Render calls them.
         GLUtils::NoScissorScope noScissor(true);
         if (!mScaled->BeginWrite(texels, window))
         {
@@ -4898,8 +4898,9 @@ namespace EdgeLighting
         // The area this pass covers is everything outside the edge ring that
         // can still be lit (setupRingGeometry) - mBlitMesh, in full-res
         // rect-local px. vPos is then rect-local px rather than NDC, and maps
-        // onto the reduced buffer through @p scaledUV - its
-        // region's map (GetBufferRegion), which Render derives with the region.
+        // onto the reduced buffer through @p scaledUV - the map of its region,
+        // the whole viewport (GetViewportRegion), which RenderOffscreen derives
+        // and leaves in mFrame.
         // The ring finds its gather texels the same way.
         mBlitShader.SetUniform("uMVP", mvp);
         mBlitShader.SetUniform("uUVScale", scaledUV.scale);
@@ -4917,8 +4918,9 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
         mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
 
-        // Just bind it. The filter is requested through Resize in pass 1b
-        // (renderShadePass), so this pass sets no texture parameters at all.
+        // Just bind it. The filter is requested when pass 1b or 1c sizes the
+        // buffer (SharedBuffer::BeginWrite), so this pass sets no texture
+        // parameters at all - nor may any other reader of the shared buffer.
         mScaled->BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 

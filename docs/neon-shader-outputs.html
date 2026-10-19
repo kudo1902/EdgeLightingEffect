@@ -407,7 +407,7 @@
       <text class="t-file" x="399" y="1066">within 1/255 of P1b.</text>
       <rect class="fbo" x="740" y="900" width="310" height="222" rx="1"/>
       <text class="t-dim" x="754" y="920">FBO</text>
-      <text x="796" y="920">mScaledBuffer</text>
+      <text x="796" y="920">mScaled</text>
       <text class="t-file" x="754" y="938">320 &#215; 180 RGBA16F, scale 0.5</text>
       <text class="t-dim" x="1036" y="938" text-anchor="end">read: bilinear</text>
       <image href="images/neon-onboarding/pass-p1b-reduced.png" x="752" y="950" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
@@ -610,7 +610,7 @@
       <dl class="spec">
         <div><dt>Program</dt><dd><code>mShadeShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon.frag</code></dd></div>
-        <div><dt>Target</dt><dd><code>mScaledBuffer</code></dd></div>
+        <div><dt>Target</dt><dd><code>mScaled</code></dd></div>
         <div><dt>Grid</dt><dd>320 &times; 180 texels, scale 0.5</dd></div>
         <div><dt>Format</dt><dd>RGBA16F (RGBA8 where the driver will not render to it), so the blit&rsquo;s dither has unrounded gradients to work on (R7)</dd></div>
         <div><dt>Runs</dt><dd>On a frame whose config changed - P1c in its place while the glow&rsquo;s field holds</dd></div>
@@ -633,7 +633,7 @@
       <dl class="spec">
         <div><dt>Program</dt><dd><code>mField<wbr>CompositeShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon-field.frag</code></dd></div>
-        <div><dt>Target</dt><dd><code>mScaledBuffer</code></dd></div>
+        <div><dt>Target</dt><dd><code>mScaled</code></dd></div>
         <div><dt>Grid</dt><dd>320 &times; 180 texels, scale 0.5</dd></div>
         <div><dt>Runs</dt><dd>In P1b&rsquo;s place while the field holds, under a rotating hue or a moving intensity</dd></div>
       </dl>

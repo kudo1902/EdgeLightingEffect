@@ -456,9 +456,12 @@ fast on-chip memory, and only write a tile out to main memory when the pass
 ends. Switching to another render target and back forces a store and a reload
 of the whole target, which costs bandwidth.
 
-**In this code.** `NeonRenderer::Render` runs in two phases: first every pass
-that draws into its own buffers, then everything that draws onto the caller's
-framebuffer, in one unbroken run. That ordering exists for tilers.
+**In this code.** A frame runs in two phases: first every pass that draws into
+its own buffers (`NeonRenderer::RenderOffscreen`), then everything that draws
+onto the caller's framebuffer (`NeonRenderer::Render`), in one unbroken run.
+The effect runs every layer's first phase before any layer's second - the lens
+flare's and the spotlight's draws into their scaled buffers included - so the
+run holds across the layers too. That ordering exists for tilers.
 
 ### 1.12 Resolution scaling and smoothness
 
@@ -1359,8 +1362,8 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mGlowCover.buffer` | `GetGlowCoverWidth` x 128 - 256 to 1024 columns, from the rect and the halo width (448 for a 960 x 540 rect at the default glow, 704 for 1840 x 1000, 1024 for a thin glow on a large rect) - four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`); its layout is stored with it (`mGlowCover.layout`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`), reallocated when the wanted width rises past it or falls two steps below; never on a ring lit uniformly |
 | `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | every frame it gathers; resized then (no-op if unchanged) |
-| `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | every frame that draws P1b or P1c; resized then |
-| `mGlowField.buffer` | the reduced buffer's region and texel grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback | only on configs the field serves (Part 5.5) |
+| `mScaled` | the neon's shared buffer (`SharedBuffer`, `SharedBufferId::NEON`): the whole viewport at `resolutionScale` (`GetViewportRegion`), what the blit and any other renderer read | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | every frame that draws P1b or P1c, through `BeginWrite` - resized then, and cleared only over the glow quad's window and the last write's |
+| `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback | only on configs the field serves (Part 5.5) |
 | `mRingField.buffer` | the edge ring's four strips, packed (`RingFieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
 
 `OnConfigChanged` releases the reduced buffer, the gather buffer and the
@@ -1664,7 +1667,7 @@ The data flow between them:
               .-----------+-----------.                             |
               v                       v                             v
  P1b shade at resolutionScale      P2c edge ring at full res     every pass that
-   -> mScaledBuffer                  -> caller's FB              shades: P1b, P2c
+   -> mScaled                        -> caller's FB              shades: P1b, P2c
               |  texture (bilinear)  (the line and every          and the two field
               v                       edge near it)               bakes
  P2b blit at full res, outside the ring, + one-sided cut + cutoffs  -> caller's FB
@@ -1827,7 +1830,7 @@ line; the frame is the same bits either way.*
 | **State** | Blend on, premultiplied-over. |
 | **Geometry** | `mBlitMesh`, full-res, `ortho * translate(centerFull)`. |
 | **Uniforms** | `uMVP`, `uUVScale` / `uUVOffset` (the reduced buffer's region map), `uRectSize`, `uCornerRadius`, `uRectCenter`, `uGlowSide`, `uGlowSideSoftness`, the glow's four cutoff values: all **unscaled**, because this pass measures destination pixels. |
-| **Textures** | unit 0 `uSource` = `mScaledBuffer`. |
+| **Textures** | unit 0 `uSource` = `mScaled` (`SharedBuffer::BindTexture`). |
 | **Output** | `texture(uSource, uv) * cut`, premultiplied, its colour dithered by +/- half an 8-bit level (`neonDither`, R7) so the glow's slow tails do not round into contour rings. |
 
 ![The caller's framebuffer after the blit](images/neon-onboarding/pass-after-blit.png)

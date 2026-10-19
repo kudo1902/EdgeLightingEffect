@@ -7,7 +7,8 @@ hold the detail.
 
 ## 2026-10-19 - The neon's reduced buffer shared with the other renderers
 
-Uncommitted. AMD Radeon Pro 5300M.
+`17046b2` - `b4fe8c2`; the review's follow-up (the "Reviewed" item below)
+uncommitted. AMD Radeon Pro 5300M.
 
 - **Asked for.** The neon's scaled buffer - line and glow, no opaque fill -
   shared with the library's other renderers, with no extra draw: the buffer
@@ -90,22 +91,48 @@ Uncommitted. AMD Radeon Pro 5300M.
 - **Rechecked.** `core/edge-lighting.h` had started pulling in glad and the
   log macros (through `base-renderer.h` -> `shared-buffer-registry.h` ->
   `gl/framebuffer.h`), which collides with a host's own GL headers; the
-  registry now only declares `Framebuffer`, as at `HEAD`. A probe walking one
+  registry now only declares `SharedBuffer`. A probe walking one
   effect through a moved, shrunk, rescaled, resized, off-screen and one-sided
   rect found no stale texel left by the windowed clear (every step within
   0.25/255 of a fresh effect - the gather's reuse, I55), and a reader drawn
-  before the neon seeing the previous frame's version, as documented.
+  before the neon seeing the previous frame's version, which the two-phase
+  frame (above) has since ended.
 - **Debug view.** `DebugConfig::showSharedBuffer` (with `sharedBufferInsetSize`):
   `DebugRenderer` draws the buffer as an inset in the bottom-left corner, one
   block per texel (`texelFetch`, `shared-buffer-debug.frag`), and a frame round
   where its map puts it - read through `GetSharedBufferRegistry()`, so it is the first
   internal reader. Toggled from the C++ demo's Debug section; no C ABI setter,
   so the C ABI demo has no toggle.
-- **Open.** No renderer but the debug view reads the buffer yet. A reader drawn before the neon
-  gets the previous frame's buffer; making every layer see this frame's would
-  need an offscreen phase in `BaseRenderer` ahead of the layers' draws. The
-  four figures should be re-rendered on the M2 with the rest at the next full
-  `neon-guide-figures` run.
+- **Reviewed.** A review of the branch found two claims the code fell short
+  of. No gate exercised the windowed clear's second half, the last write's
+  window: every `shared-buffer` cell changes the scale, which reallocates the
+  buffer and clears it whole, and no frame shows a stale texel. A scratch build
+  that cleared only this write's window left 2790-218880 stale texels (scales
+  0.125-1.0, up to 47/255) and passed `check`, `partition` and
+  `shared-buffer`. The gate now moves and shrinks the rect at every scale and
+  compares the buffer with a fresh effect's texel for texel: 0 here, and the
+  scratch build fails at every scale. And "every layer's offscreen work lands
+  before the first draw to the caller's target" held for the neon only: the
+  lens flare and the spotlight still drew their scaled buffers inside
+  `Render`, 4 offscreen clears and draws after the first composite on a frame
+  with every layer at 0.5 (counted by hooking `glDrawArrays` /
+  `glClearBufferfv`). Both now draw in `RenderOffscreen` and blit in `Render`
+  (a `FrameState` between them, and a `Render` with no `RenderOffscreen`
+  before it runs that phase itself, as the neon's does): 0 such draws on every
+  scene, and 48 captures - flare, spotlight and all-layer scenes at scales
+  1.0-0.25, an odd viewport, a host scissor, a reordered stack, a host calling
+  `Render` directly, a rotating hue - byte-identical to the build before.
+  The spotlight's screen blend, which all three of its draws take, is set in
+  one place (`UseScreenBlend`). Plus the stale names it found in comments and
+  docs (`GetSubRegion`, `mScaledBuffer` for the neon's buffer).
+- **Open.** No renderer but the debug view reads the buffer yet. The buffer is
+  the viewport's size whatever the rect's, so a window drag reallocates it on
+  every frame, and at scale 1.0 a 4K viewport holds 66 MB of RGBA16F. A reader
+  that has to process the buffer offscreen (a blur, a downsample) has no slot
+  for it: in its own `RenderOffscreen` it sees this frame's buffer only when
+  it sits after the neon in the order, and in its `Render` it splits the
+  caller's run. The four figures should be re-rendered on the M2 with the rest
+  at the next full `neon-guide-figures` run.
 
 ## 2026-10-15 - V27: the spotlight's dark tail below scale 1.0
 

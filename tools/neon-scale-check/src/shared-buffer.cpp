@@ -229,6 +229,38 @@ namespace NeonScaleCheck
             return seen.viewport == glm::ivec2(FRAME_WIDTH, FRAME_HEIGHT) && seen.texels == texels &&
                    seen.texture != 0;
         }
+
+        /// @p from's rect at half its size and moved off its centre, so most of
+        /// the glow @p from drew lies outside the window the moved rect's write
+        /// draws into.
+        Config MovedRect(const Config &from)
+        {
+            Config to = from;
+            to.geometry.width *= 0.5f;
+            to.geometry.height *= 0.5f;
+            to.geometry.position.x += from.geometry.width * 0.4f;
+            to.geometry.position.y += from.geometry.height * 0.3f;
+            return to;
+        }
+
+        /// How many texels of @p seen differ at all from @p reference's, both
+        /// read back with ReadBuffer; -1 when either is not ready or the two
+        /// are not the same size.
+        long CountDifferingTexels(const Seen &seen, const Seen &reference)
+        {
+            if (!seen.ready || !reference.ready || seen.texels != reference.texels)
+            {
+                return -1;
+            }
+            const std::vector<float> a = ReadBuffer(seen);
+            const std::vector<float> b = ReadBuffer(reference);
+            long differ = 0;
+            for (size_t i = 0; i < a.size(); i += 4)
+            {
+                differ += a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] || a[i + 3] != b[i + 3];
+            }
+            return differ;
+        }
     }
 
     int SharedBufferCheck(int argc, char **argv)
@@ -374,6 +406,38 @@ namespace NeonScaleCheck
         std::printf("neon disabled: buffer %s; enabled again: %s\n", withdrawn ? "not ready" : "STILL READY",
                     republished ? "ready" : "NOT READY");
         failures += !withdrawn || !republished;
+
+        // The windowed clear (SharedBuffer::BeginWrite) across a rect that
+        // moves and shrinks at one scale and viewport, so the buffer is NOT
+        // reallocated and only the clear of the last write's window keeps the
+        // old glow out of it. The scenes above never reach that case - every
+        // cell changes the scale, which reallocates the buffer and clears it
+        // whole - and no frame shows a stale texel, since the blit reads only
+        // where this write drew: only a reader sees one. Measured against the
+        // moved rect drawn on a fresh effect, texel for texel. Still frames
+        // only: the hue's would compare two effects' clocks.
+        std::printf("moving rect, texels that differ from a fresh effect:");
+        int movingMisses = 0;
+        for (int s = 0; s < SCALE_COUNT; ++s)
+        {
+            Config from = BaseConfig();
+            from.neon.resolutionScale = SCALES[s];
+            const Config to = MovedRect(from);
+            Render(effect, from);
+            Render(effect, to);
+            const Seen moved = probe->Last();
+
+            EdgeLightingEffect fresh;
+            CreateEffect(fresh);
+            const std::shared_ptr<SharedBufferProbe> freshProbe = std::make_shared<SharedBufferProbe>();
+            fresh.AddRenderer(freshProbe);
+            Render(fresh, to);
+            const long differ = CountDifferingTexels(moved, freshProbe->Last());
+            std::printf(" %s %ld%s", SCALE_TAGS[s], differ, differ != 0 ? "!" : "");
+            movingMisses += differ != 0;
+        }
+        std::printf("\n");
+        failures += movingMisses;
 
         if (failures)
         {

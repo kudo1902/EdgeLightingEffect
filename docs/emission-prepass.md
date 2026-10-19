@@ -117,10 +117,10 @@ and each pass's inputs, state and outputs.
 | 0b, 0s, 0f | `renderGlowCoverPass` | `mGlowCover.buffer`, and `mGlowCover.segBuffer` when the segments have a table of their own | the pieces a config change reached; never on a ring lit uniformly |
 | 1a | `renderGatherPass` | `mGather.buffer`, at `GetGatherScale` | `neon-gather.frag`, the table's only reader; skipped while what it last drew still answers (`mGather.cache`) |
 | 1f | `renderFieldPass` | `mGlowField.buffer` | the hue-invariant field, on `LazyBake`'s schedule |
-| 1b or 1c | `renderShadePass` or `renderFieldCompositePass` | `mScaledBuffer` | the shading (`mShadeShader`), or the field's composite in its place |
+| 1b or 1c | `renderShadePass` or `renderFieldCompositePass` | `mScaled` | the shading (`mShadeShader`), or the field's composite in its place |
 | 1r | `renderRingFieldPass` | `mRingField.buffer` | the edge ring's field, on its own `LazyBake` |
 | 2a | `renderFillPass` | caller's framebuffer | opaque modes only |
-| 2b | `renderBlitPass` | caller's framebuffer | `mScaledBuffer`, bilinear, everywhere the glow can be lit outside the edge ring |
+| 2b | `renderBlitPass` | caller's framebuffer | `mScaled`, bilinear, everywhere the glow can be lit outside the edge ring |
 | 2c or 2r | `renderRingPass` or `renderRingFieldCompositePass` | caller's framebuffer | the edge ring at full resolution (`mRingShader`), or its field's composite |
 
 On a frame where nothing moved, passes 1a-1c do not run at all

@@ -103,9 +103,10 @@ namespace EdgeLighting
         ///   - GetViewportRegion, the reduced buffer: the whole viewport,
         ///     @c size the viewport and @c texels <tt>floor(viewport *
         ///     scale)</tt>.
-        ///   - GetSubRegion, the glow's field: a window of whole texels of
-        ///     that grid holding a box (the glow quad's), so pass 1c writes
-        ///     each texel of the reduced buffer from the field texel under it.
+        ///   - GetSubWindow and GetWindowRegion, the glow's field: a window of
+        ///     whole texels of that grid holding a box (the glow quad's), so
+        ///     pass 1c writes each texel of the reduced buffer from the field
+        ///     texel under it.
         ///   - GetBufferRegion, the gather buffer: a box's half-extents (an
         ///     @ref Annulus's @c outer) at a scale, clipped to the viewport and
         ///     grown past its edge by the bilinear footprint, the corner
@@ -1498,7 +1499,7 @@ namespace EdgeLighting
         // relies on are stated in its @pre below.
         //
         // The passes take the pieces of the frame transform they actually use.
-        // @ref Render derives them once, in SCALED space, so the gather quad
+        // @ref RenderOffscreen derives them once, in SCALED space, so the gather quad
         // and the sample positions agree; the opaque fill is the exception and
         // takes the viewport height, since it always draws at full resolution
         // on the caller's framebuffer.
@@ -1537,7 +1538,7 @@ namespace EdgeLighting
         /// gather region's projection from pass 1's scaled rect-local space.
         /// Takes no time:
         /// the loop reads time only through the emission table. Leaves the
-        /// buffer bound; @ref Render restores the target.
+        /// buffer bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled - the buffer is data.
         /// @return false if the buffer could not be allocated, in which case
         ///         every later glow pass must be skipped.
@@ -1561,7 +1562,7 @@ namespace EdgeLighting
         /// reading the gather through
         /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
         /// with segments (GetFieldFormat). Leaves the buffer bound;
-        /// @ref Render restores the target.
+        /// @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
         ///         then never used.
@@ -1573,8 +1574,8 @@ namespace EdgeLighting
         /// @p texels drawn through @p mvp (its region's projection), the quad
         /// landing in @p window (see SharedBuffer::BeginWrite), with
         /// @c mShadeShader, reading @c mGather.buffer through @p gatherUV. Clears that
-        /// buffer and leaves it bound; @ref Render restores the target before
-        /// pass 2a.
+        /// buffer and leaves it bound; @ref RenderOffscreen restores the target
+        /// before phase 2.
         /// @pre Blending DISABLED: the buffer was just cleared and the quad
         ///      covers each texel once, so over would only have added zero, for
         ///      a destination read per texel.
@@ -1617,7 +1618,7 @@ namespace EdgeLighting
         /// box quad @c mRingField.box, not the ring, so every texel of every
         /// strip is baked. Reads
         /// the gather through the full-res map @p gatherUV. Leaves the buffer
-        /// bound; @ref Render restores the target.
+        /// bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated.
         bool renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config);

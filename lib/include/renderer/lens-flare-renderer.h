@@ -19,7 +19,9 @@ namespace EdgeLighting
     /// @c LensFlareConfig::resolutionScale: at 1.0 the flare draws straight
     /// onto the framebuffer it was handed (no offscreen buffer, no blit);
     /// below 1.0 it draws into a buffer of that fraction of the viewport and
-    /// is bilinear-blitted back.
+    /// is bilinear-blitted back. That draw is @ref RenderOffscreen's - the
+    /// effect runs it for every layer before any layer composites, so the
+    /// caller's target is drawn in one run - and the blit is @ref Render's.
     ///
     /// Only TWO uniforms differ between the paths - @c uResolution and
     /// @c uSunPos - because the fragment shader normalises every term by
@@ -37,11 +39,33 @@ namespace EdgeLighting
 
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float time, const Config &config) override;
+
+        /// Phase 1: below scale 1.0, the flare into @c mScaledBuffer - sized,
+        /// bound and cleared here, under no host scissor - and nothing on the
+        /// caller's framebuffer. At 1.0, or with the layer off, nothing.
+        /// Restores the framebuffer and viewport it was handed, and leaves
+        /// @c GL_BLEND on with @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA, as
+        /// @ref Render does.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+                                     const Config &config) override;
+
+        /// Phase 2, onto the caller's framebuffer, premultiplied over: the
+        /// scaled buffer blitted back below 1.0, the flare itself at 1.0. A
+        /// host that calls it without RenderOffscreen for the same frame
+        /// (EdgeLightingEffect never does) gets that phase run first, here.
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::LENS_FLARE; }
 
     private:
+        /// What @ref RenderOffscreen leaves for @ref Render in the same frame.
+        typedef struct FrameState
+        {
+            bool prepared = false;    ///< RenderOffscreen ran for this frame and Render has not consumed it.
+            glm::ivec2 viewport{0};   ///< The viewport it ran for.
+            bool scaledReady = false; ///< @c mScaledBuffer holds this frame's flare: the blit draws.
+        } FrameState;
+
         bool setupShaders();
         void setupGeometry();
 
@@ -54,6 +78,14 @@ namespace EdgeLighting
         /// ghost.
         void bakeGhostBlock(const LensFlareConfig &flare);
 
+        /// The flare's own draw, into whatever is bound: @p target px - the
+        /// scaled buffer's size, or the viewport's at 1.0 - at @p scale of the
+        /// @p viewportWidth x @p viewportHeight viewport, whose px the sun's
+        /// position is in. Sets the program, its uniforms and the ghost block's
+        /// binding; the caller sets the target and the blend.
+        void drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight, float time,
+                       const Config &config);
+
     private:
         ShaderProgram mFlareShader; ///< The flare itself (lens-flare.frag).
         /// Scaled path only: composites the scaled buffer back at full res.
@@ -63,11 +95,12 @@ namespace EdgeLighting
         /// (Reuses the neon blit shader - identical job.)
         ShaderProgram mBlitShader;
         /// Allocated only when the scaled path first runs; at scale 1.0 this
-        /// stays empty and costs nothing.
+        /// stays empty and costs nothing. Drawn by @ref RenderOffscreen, read
+        /// by @ref Render.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
-        /// frame by @ref Render.
+        /// frame by @ref drawFlare.
         UniformBuffer mGhostBlock{"LensFlare.GhostBlock"};
         VertexArray mVertexArray{"LensFlare"};
 
@@ -84,6 +117,9 @@ namespace EdgeLighting
         /// false so the first bake is unconditional however the renderer is
         /// brought up - @ref Initialize and @ref OnConfigChanged both honour it.
         bool mGhostsBaked = false;
+        /// What this frame's @ref RenderOffscreen left for @ref Render - see
+        /// @ref FrameState.
+        FrameState mFrame;
     };
 }
 
