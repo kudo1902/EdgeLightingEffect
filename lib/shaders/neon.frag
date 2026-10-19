@@ -859,14 +859,16 @@ void main() {
     // of this gate. The LUT reads are explicit-LOD for the same reason: they
     // now sit in non-uniform control flow, and every LUT has a single level.
     //
-    // And never in a pass the blit composites (pass 1b and its field bake):
-    // the edge ring re-shades every pixel within the filament's reach, as pass
-    // 1 drew it, plus RING_GUARD_TEXELS (NeonRenderer's GetRingWidth), so the
-    // blit's bilinear footprint never reaches a texel the filament lights -
-    // the frame is the same bits without it (measured on the cover set,
-    // check's scenes and the guide's figures). Shrink that guard and this has
-    // to go.
-    bool filamentLit = !blitOwnsCut && core > 0.0 && lineGate > 0.0;
+    // In EVERY pass, the ones the blit composites included (pass 1b and its
+    // field bake): the reduced buffer is the neon's shared buffer
+    // (SharedBufferId::NEON), which other renderers read without the edge
+    // ring, so it has to hold the line. The blit never reads those texels -
+    // the ring re-shades every pixel within the filament's reach, plus
+    // RING_GUARD_TEXELS - so the frame is the same bits as when pass 1b
+    // skipped the filament (I62, reverted for the shared buffer). Factored
+    // like everything else (two maxes, linear in the hues), so the field bake
+    // carries it too.
+    bool filamentLit = core > 0.0 && lineGate > 0.0;
     // Inward feathers: convert pixel widths to perimeter fractions at the
     // current geometry (`peri` is computed above the gather). `peri` is derived
     // from uRectSize and so is in SCALED px, while the two constants are

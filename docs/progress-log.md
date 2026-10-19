@@ -5,6 +5,108 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-19 - The neon's reduced buffer shared with the other renderers
+
+Uncommitted. AMD Radeon Pro 5300M.
+
+- **Asked for.** The neon's scaled buffer - line and glow, no opaque fill -
+  shared with the library's other renderers, with no extra draw: the buffer
+  the neon already renders, handed out as a `Framebuffer`.
+- **What changed.** A core registry, `SharedBufferRegistry`
+  (`core/shared-buffer-registry.h`), owned by `EdgeLightingEffect` and handed to every
+  renderer it registers (`BaseRenderer::GetSharedBufferRegistry`). The neon publishes
+  `SharedBufferId::NEON` on every frame that draws the glow - its own
+  `mScaledBuffer`, the uv map from `gl_FragCoord`, the viewport and a version
+  that moves when it redraws - and a reader takes it with `Get` in its Render.
+  Internal only: no C ABI, no host accessor. A first version published only
+  while a reader requested it; made unconditional the same day, which removed
+  the request counting, the demand-change invalidation and a uniform, for no
+  measurable cost.
+- **The one thing in the shader.** I62 reverted: pass 1b and its field bake
+  shade the filament again (`filamentLit` no longer reads `uBlitOwnsCut`), so
+  the buffer holds the line; the blit still never reads those texels. The cut
+  and the cutoffs stay out of the buffer - only the blit can apply them at full
+  resolution - and a reader applies them itself if it wants them.
+- **Measured.** Every final frame byte-identical against the build before:
+  the `cover` set (306 frames, 1080p and 4K) and all 210 page images. Frame
+  time after / before, geometric mean over the twelve scenes: 1.006 / 1.007
+  (arc-wipe, 0.5 / 0.25), 0.949 / 1.001 (intensity), 0.983 / 1.000
+  (segment-travel) - noise. No memory. `neon-scale-check shared-buffer` (new):
+  a probe renderer is handed the buffer on every scene and scale, still and
+  through the field's composite (66 of 72 hue cells), with 0.94-1.24 of the
+  frame's light on the line, against 0.58-0.89 for a scratch build without the
+  filament, which the gate fails. `check` and `partition` pass. Four guide
+  figures of intermediate buffers have the line again; re-rendered on the AMD,
+  the other 65 left as committed (rendering them here moves nearly all of them
+  by the GPU alone).
+- **The whole viewport.** The reduced buffer, and so the shared buffer, now
+  covers the whole viewport at the scale (`GetViewportRegion`), so a reader's
+  uv is `gl_FragCoord.xy / viewport`; it used to be a region round the rect,
+  capped at exactly this. The glow's field keeps a region of its own - the
+  glow quad's box as a window of the same grid (`GetFieldRegion`,
+  `GetSubWindow`) - so it is used where it was (66 of 72 hue cells, as before),
+  and a write clears only that window and the last write's (`mScaledDirty`),
+  every other texel being 0 already. 4.1 MB at 1080p and 0.5 whatever the rect;
+  `mScaledOuter` and `GetBufferRegion`'s viewport cap are gone, unused.
+  Measured on the AMD at 4K against the region build: hue frames 1.00-1.01x,
+  still frames 1.00-1.03x (12 rounds on the worst scene), arc-wipe frames
+  1.01x over the twelve scenes, intensity frames 1.03-1.13x with identical GPU time (the scissored clear
+  costs the driver CPU time, and those frames are CPU-bound - with no clear at
+  all they ran 0.93x, the old region's full clear being ~7%), a full clear of
+  the viewport-sized buffer 1.2-1.65x, which is why the clear is windowed.
+  Frames within 1 level of the region build: the blit's uv map and pass 1b's
+  projection take other constants, so a few bilinear weights and texel
+  positions round differently (306 `cover` frames pass `diff`, max 1; 97 of
+  144 buffer dumps texel-identical, the rest within 1 but 2 texels of
+  `bounded_band` at 0.75 that sit on a discard boundary past the outside
+  cutoff, where the blit masks them to 0). The windowed clear is
+  byte-identical to a full clear.
+- **Cleaner architecture.** The buffer is now a core object, `SharedBuffer`
+  (`core/shared-buffer.h`): it owns the GL buffer, its format tier, the
+  windowed clear, the version and a ready flag, where `NeonRenderer` held four
+  loose members and three methods for them. `SharedBufferRegistry` is two calls -
+  `Register` (once, from `Initialize`; a second producer is refused) and `Find`
+  (a `shared_ptr<const SharedBuffer>`, which never dangles: a reader holding it
+  past the effect's life finds a released, not-ready shell) - with no
+  per-frame publish or withdraw (five withdraw sites and a `published` flag
+  gone). The registry reaches renderers privately (`friend
+  EdgeLightingEffect`), and the frame has two phases: the effect runs every
+  layer's `RenderOffscreen` before any layer's `Render`, so a reader sees this
+  frame's buffer wherever it sits in the layer order (the gate now checks a
+  reader before the neon against one after it), and every layer's offscreen
+  work lands before the first draw to the caller's target. `NeonRenderer`'s
+  `Render` split at its old phase boundary, with `FrameState mFrame` between
+  the two. Byte-identical to the build before (306 `cover` frames, 210 page
+  images, 144 buffer dumps); timing within noise (0.99-1.07x at 4K); `check`,
+  `partition` and `shared-buffer` pass. The debug inset lost its outline,
+  which only ever traced the viewport now.
+- **Names.** One noun for one concept: the object is `SharedBuffer`, its slot
+  key `SharedBufferId`, and the directory of them `SharedBufferRegistry` (it
+  allocates and draws nothing, so not "the buffers"), with `Register` /
+  `Unregister` / `Find` and `BaseRenderer::GetSharedBufferRegistry`; files
+  `core/shared-buffer.h` and `core/shared-buffer-registry.h`. They were
+  `SharedTarget`, `SharedBuffers`, `Produce` / `Read` - two nouns, "buffer"
+  and "target", for the one thing, and the only plural class name in `lib/`.
+- **Rechecked.** `core/edge-lighting.h` had started pulling in glad and the
+  log macros (through `base-renderer.h` -> `shared-buffer-registry.h` ->
+  `gl/framebuffer.h`), which collides with a host's own GL headers; the
+  registry now only declares `Framebuffer`, as at `HEAD`. A probe walking one
+  effect through a moved, shrunk, rescaled, resized, off-screen and one-sided
+  rect found no stale texel left by the windowed clear (every step within
+  0.25/255 of a fresh effect - the gather's reuse, I55), and a reader drawn
+  before the neon seeing the previous frame's version, as documented.
+- **Debug view.** `DebugConfig::showSharedBuffer` (with `sharedBufferInsetSize`):
+  `DebugRenderer` draws the buffer as an inset in the bottom-left corner, one
+  block per texel (`texelFetch`, `shared-buffer-debug.frag`), and a frame round
+  where its map puts it - read through `GetSharedBufferRegistry()`, so it is the first
+  internal reader. Toggled from the C++ demo's Debug section; no C ABI setter,
+  so the C ABI demo has no toggle.
+- **Open.** No renderer but the debug view reads the buffer yet. A reader drawn before the neon
+  gets the previous frame's buffer; making every layer see this frame's would
+  need an offscreen phase in `BaseRenderer` ahead of the layers' draws. The
+  four figures should be re-rendered on the M2 with the rest at the next full
+  `neon-guide-figures` run.
+
 ## 2026-10-15 - V27: the spotlight's dark tail below scale 1.0
 
 Uncommitted. AMD Radeon Pro 5300M. V27 in

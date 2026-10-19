@@ -5077,6 +5077,13 @@ means 0.988-0.997, wall-clock), as expected of the review's 0.03-0.05 timer
 units. It stays because it is exact and removes work; narrowing the ring's
 guard would end it, which the shader says at the gate.
 
+**Reverted 2026-10-19** for the neon's shared buffer (`SharedBufferId::NEON`):
+the reduced buffer is read by other renderers without the edge ring, so pass
+1b and its field bake shade the filament again. Every final frame
+byte-identical against the build before (the `cover` set and all page
+images), no measurable time, and the four intermediate-buffer figures show the
+line again.
+
 ---
 
 ## Twenty-ninth pass (the arc wipe's tail on a sharp corner)
@@ -5459,7 +5466,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I59 | changed | the glow coverage table was 1024 columns for every rect; its layout is now a parameter stored with the table and its width follows the rect and the halo width (256-1024, calibrated on 250 configs) - 0.25-0.69 MB for a default glow, 1024 still for a thin one on a large rect; within 2 levels, 99.998% within 1; 8 segments on the band 0.84x |
 | I60 | changed | the segments' bells were integrated at the arcs' resolution; they have a narrow table of their own (pass 0s, 4 columns per sigma from 128) copied into the main one by a fill pass (0f), `neon.frag` unchanged - within 2 levels, 99.992% within 1; 8 segments on the band 0.87 -> 0.56 ms (0.64x), 960 x 540 0.83x |
 | I61 | changed | each bell was integrated, and its moves tracked, out to 5 sigma; 4.24 now (`GLOW_COVER_BELL_REACH`), at most 1 level on up to 1.6% of lit pixels, segment-table bake 0.75 -> 0.58 timer units; the plan's 8-node rule was measured (3 levels) and not taken |
-| I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
+| I62 | changed, then reverted | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line. Reverted 2026-10-19: the reduced buffer is the neon's shared buffer and has to hold the line - frames byte-identical, figures with the line again |
 | V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |

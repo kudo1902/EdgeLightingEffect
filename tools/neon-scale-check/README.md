@@ -131,6 +131,50 @@ exactly even where they meet at T-junctions. Run this after touching any of
 those, and on every GPU the scaled path ships to: the last of them is a
 property of the rasteriser, which only running on it can confirm.
 
+## `shared-buffer`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check shared-buffer [--images DIR]
+```
+
+The neon's shared buffer (`SharedBufferId::NEON`, a `SharedBuffer`):
+`mScaled`, ready on every frame that draws the glow, with the filament in it
+although the blit never shows it. The command reads it the way an internal
+renderer does - probe renderers, one registered after the neon and one moved
+before it, each taking the buffer with `SharedBufferRegistry::Find` in its `Render` -
+on every scene at every scale, still and with the hue rotating (the clock moved
+across each config change, so the field's composite fills the buffer: 66 of
+the 72 hue cells; `bounded_band` is too thin a band for the field). It fails
+when:
+
+- the probe is handed no ready buffer, or one that is not the whole frame's
+  viewport at the scale (`floor(viewport * scale)` texels);
+- the probe before the neon sees another image than the one after it - the
+  effect runs every layer's offscreen phase before any composites;
+- a still frame drawn with nothing changed moves the buffer's version;
+- on a scene with no cut, cutoff or fill, the buffer blitted back through its
+  viewport carries under 0.9 of the frame's light ON THE LINE (luma above the clear,
+  over the pixels within the filament's half-width of the edge);
+- the hue variant never reaches the field's composite, or the buffer is ready
+  while the neon is off, or not ready once it is on again.
+
+The light is measured on the line because the halo and the bloom carry most of
+a frame's: a scratch build that never shaded the filament into the buffer
+still came back at 0.93-0.995 of the whole frame, and at 0.58-0.89 on the
+line: every unmasked scene failed but `overdrive`, whose line the bloom drives
+to white either way. With the filament, 0.94-1.24 on the line (1.24 is the
+hairline at a low scale, which the sampling floor widens). Measured on the AMD
+Radeon Pro 5300M, 2026-10-19: `PASS`, about 15 s. `--images` writes each buffer
+over black, top row first, as `DIR/<scene>_<variant>_<scale>.png`.
+
+It does not compare frames. That the filament in the buffer moves no pixel of
+the frame rests on the edge ring covering the filament's reach (the blit never
+reads a texel it lights), and is checked the way any change that may move
+pixels is: `generate --set cover` and `generate --images` from a build before
+and after, then `diff A B --max 0` and a byte compare of the page images. Run
+it, and that, after touching `filamentLit` in `neon.frag`, the shared buffer's
+publish in `NeonRenderer::Render`, or the edge ring's width (`GetRingWidth`).
+
 ## `generate`
 
 ```bash

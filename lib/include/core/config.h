@@ -719,7 +719,7 @@ namespace EdgeLighting
         /// did. This is the mute for turning the whole layer off without
         /// disturbing which overlays were selected.
         ///
-        /// Applies to the three overlays only. @c opaqueOnly is a mode of the
+        /// Applies to the four overlays only. @c opaqueOnly is a mode of the
         /// neon renderer, not something this layer draws, so it is not gated
         /// by this flag.
         bool enable = true;
@@ -748,6 +748,22 @@ namespace EdgeLighting
         /// dark backdrop and against most glow colours, and it is obviously
         /// not part of the effect.
         glm::vec4 wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+        /// Draw the neon's shared buffer (@c SharedBufferId::NEON - the
+        /// reduced buffer the other renderers read) as an inset in the
+        /// bottom-left corner: its texels as they are, one block per texel,
+        /// over black, in a 1 px frame. Shows what a reader of the buffer is
+        /// handed - the line and the glow over the whole viewport at the
+        /// resolution scale, no opaque fill, no cut or cutoffs. Nothing is
+        /// drawn while the buffer is not ready (the neon off, or
+        /// @c opaqueOnly). Still gated by @c enable. Not exposed through the C
+        /// API.
+        bool showSharedBuffer = false;
+
+        /// The inset's width as a share of the viewport's, its height following
+        /// the buffer's aspect - and shrunk to fit the viewport's height if
+        /// that would not. Clamped to [0.1, 1].
+        float sharedBufferInsetSize = 0.35f;
 
         /// Render ONLY the @c NeonConfig::opaqueMode fill and skip the neon
         /// emission entirely - no filament, no halo, no bloom. Isolates the
@@ -782,6 +798,8 @@ namespace EdgeLighting
                    showColorStops == o.showColorStops &&
                    showWireframe == o.showWireframe &&
                    wireframeColor == o.wireframeColor &&
+                   showSharedBuffer == o.showSharedBuffer &&
+                   sharedBufferInsetSize == o.sharedBufferInsetSize &&
                    opaqueOnly == o.opaqueOnly;
         }
         bool operator!=(const DebugConfig &o) const { return !(*this == o); }

@@ -31,9 +31,10 @@ precision highp float;
 //
 // The texel a fragment wants is floor((vPos - uFieldOrigin) * uFieldTexelScale),
 // rect-local, and so independent of where the host's viewport starts. The
-// field IS the reduced buffer's region and grid, vPos is in scaled px, and the
-// scale is that buffer's texels per scaled px - 1 but where the region is the
-// whole viewport, whose texel count is truncated. Not gl_FragCoord: a select
+// field is a window of whole texels of the reduced buffer's grid (the buffer
+// covers the whole viewport; the field the glow quad's box), vPos is in scaled
+// px, and the scale is that buffer's texels per scaled px - just under 1,
+// since its texel count is the viewport's truncated. Not gl_FragCoord: a select
 // between the two cost the old full-resolution composite ~30% on an AMD Radeon
 // Pro 5300M. A texel neon.frag discarded holds 0, which composites to nothing,
 // as the discard did.
