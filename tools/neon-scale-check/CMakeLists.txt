@@ -63,6 +63,19 @@ add_executable(neon-scale-check
     ../common/pass-recorder.cpp
 )
 
+# `sequence` needs NeonRenderer::SetBypass, which a checkout from before it
+# does not have: built standalone against one, the tool is built without it.
+if(EL_ROOT)
+    set(_el_neon_header "${EL_ROOT}/lib/include/renderer/neon-renderer.h")
+else()
+    set(_el_neon_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/renderer/neon-renderer.h")
+endif()
+file(STRINGS "${_el_neon_header}" _el_has_bypass REGEX "NeonBypass")
+if(_el_has_bypass)
+    target_sources(neon-scale-check PRIVATE src/sequence.cpp)
+    target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_SEQUENCE=1)
+endif()
+
 # `partition` watches the renderer's draws through the pass recorder shared
 # with neon-guide-figures. It needs the generated shaders.h (the recorder
 # replays draws through the library's own neon.vert), which is why the

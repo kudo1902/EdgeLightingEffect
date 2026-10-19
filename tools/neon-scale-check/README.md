@@ -219,6 +219,83 @@ how that was measured. `--dump DIR` writes the run from 0 as
 `DIR/clock_NNN.png`, for `diff` against another build's - what a change does to
 frames at an ordinary uptime.
 
+## `sequence`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate] [--dump DIR]
+```
+
+A differential check of the neon's skips and reuses. `NeonRenderer` keeps
+about a dozen keyed caches - the emission table (`isEmissionTableStale`), the
+glow coverage table's per-piece dirty masks, the offscreen reuse
+(`mOffscreen.reusable`), the gather's held region (`GatherInputs`,
+`AnnulusCovers`), the two fields' `LazyBake` schedules, the windowed clear of
+the shared buffer, and the gates in `OnConfigChanged` that decide what to
+rebuild - and each is correct only while its key holds every input its pass
+reads. `check`, `partition` and `shared-buffer` draw steady frames of fixed
+scenes, where no key is ever tested; this mode drives the renderer through
+what a host's frame loop does to it.
+
+It runs N seeded random config sequences (16 by default) of F frames (90),
+each through effects that differ only in `NeonRenderer::SetBypass`
+(`NeonBypass` in `renderer/neon-renderer.h` - a verification hook, not a
+config field, with no C ABI mirror; 0, the default, is the renderer as
+shipped):
+
+| run | bypassed | bound against `forced` |
+| --- | -------- | ---------------------- |
+| `forced` | everything (`NeonBypass::ALL`): every pass every frame, every pass 0b piece, every `OnConfigChanged` gate open, the shared buffer cleared whole, no field | - (the reference) |
+| `exact` | the reuses documented approximate (`APPROXIMATE`: the gather's held region, both fields) | byte-identical: every frame and every shared-buffer texel |
+| `normal` | nothing | 2 levels on any channel of the frame or the shared buffer (I55's held region within 1, a field's composite within 1); 6 on a frame whose intensity moved (I56's gain, up to 6 at bloom 1.5, the generator's ceiling) |
+
+A sequence starts from a random page scene, viewport, scale, rect, arcs and
+segments, and each frame either holds (stretches of 1-6 unchanged frames,
+where the skips take over) or steps whatever animations are running - an
+arc's length or start, a segment's position and length, intensity, bloom,
+glow radius, the rect moving (whole and fractional px) or resizing - and
+applies a few random changes: hue on and off, scale, viewport (an odd size
+included), layer and `opaqueOnly` toggles, glow side, cutoffs, fill mode and
+its cutoffs, colour stops (some below full alpha), transition time, blend
+space, arcs and segments added, removed or edited, preserved segments, line
+width, filament falloff, corner radius, winding, sample count, LUT size, the
+rect jumping to a frame edge. One field per change wherever it can be: a gate
+that misses one field is hidden on any frame another field it does read moved
+with it. Each frame is drawn by every effect at the same clock (`Update(1/60)`)
+over transparent black, and compared with its alpha; each effect's shared
+buffer is read by a probe renderer after the neon and compared as floats.
+
+Each failing frame prints the run, the sequence and frame, the worst level and
+the pixel count, the frame's events and its config; the exit code is 1 if
+`exact` or `normal` failed. Sequence K is seeded `S + K`, so `--only K`
+replays it alone. `--isolate` adds `normal` and `exact` again, each with ONE
+more skip bypassed, and every failing frame lists which of those pass it: the
+skips whose bypass clears the failure. ("Only that skip active" does not work:
+the skips depend on each other - the gather's key holds the emission table's
+version, the offscreen reuse needs that table current - so a skip alone among
+bypassed ones is never reached.) `--dump DIR` writes each failing frame and
+`forced`'s, and both shared buffers, as PNG.
+
+Tested against a scratch build with two planted key omissions - `lineWidth`
+taken out of `geometryDirty` (the "outer glow dropped at glowRadius 0" bug)
+and the rect's centre out of `GatherInputs` - on the default 16 x 90: `exact`
+failed 26 frames, every one cleared by `rebuild`, and `normal` 14 levels off,
+cleared by `gather` (and by `emission`, whose bypass moves the gather's key
+every frame). On this tree it found V28 and I76 in
+[`docs/review-findings.md`](../../docs/review-findings.md) on the default run,
+and with V28's one-line fix applied, V29 in a 100 x 150 run (`exact` failed 1
+frame of 15,000; `normal` only on I76). Apple M2 Pro: the default run takes
+about 14 s; 100 x 150 with `--isolate` (16 effects per frame) took most of an
+hour.
+
+Run it after adding an input to any offscreen pass, after touching a skip key
+or a gate in `OnConfigChanged`, or a `LazyBake` schedule. A new skip belongs in
+`NeonBypass` - its bypass in the renderer, its name in `sequence.cpp`'s
+`BypassName` - or this mode cannot see it. Not covered: the LUTs' own
+self-guards (`GradientRingLUT::Bake` and the atlases decide for themselves),
+and the hysteresis choices (the coverage table's width, the segment table's
+direct mode), which depend on history by design and evolve identically in
+every run, since all of them see the same sequence.
+
 ## `generate`
 
 ```bash

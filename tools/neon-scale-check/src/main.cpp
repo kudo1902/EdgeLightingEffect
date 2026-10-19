@@ -40,6 +40,13 @@
 //       configs, the blit and the edge ring must cover every pixel they reach
 //       exactly once. Exits non-zero on any overlap or seam gap. See README.md.
 //
+//   neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K]
+//                             [--isolate] [--dump DIR]
+//       A differential gate for the neon's skips and reuses: seeded random
+//       config sequences drawn by a renderer with every skip bypassed
+//       (NeonRenderer::SetBypass) and by renderers with some or all of them
+//       active, compared frame by frame. See sequence.h and README.md.
+//
 //   neon-scale-check clock [--frames K] [--dump DIR]
 //       The effect's clock and the shader phases it feeds at a ~10-day start
 //       time: the clock advances by its frame deltas, and K frames of every
@@ -53,6 +60,9 @@
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
+#ifdef NEON_SCALE_CHECK_SEQUENCE
+#include "sequence.h"
+#endif
 #include "shared-buffer.h"
 #include "scenes.h"
 #include "pass-recorder.h"
@@ -994,6 +1004,12 @@ int main(int argc, char **argv)
     {
         return SharedBufferCheck(argc, argv);
     }
+#ifdef NEON_SCALE_CHECK_SEQUENCE
+    if (argc >= 2 && std::strcmp(argv[1], "sequence") == 0)
+    {
+        return SequenceCheck(argc, argv);
+    }
+#endif
     if (argc >= 2 && std::strcmp(argv[1], "clock") == 0)
     {
         return ClockCheck(argc, argv);
@@ -1008,6 +1024,8 @@ int main(int argc, char **argv)
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
                  "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n"
                  "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n"
+                 "  neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate]\n"
+                 "                            [--dump DIR] [--verbose]\n"
                  "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n");
     return 2;
 }

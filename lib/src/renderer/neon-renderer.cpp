@@ -2399,7 +2399,15 @@ namespace EdgeLighting
         // isEmissionTableStale. A still ring therefore costs one FBO bind,
         // eight uniform sets, three texture binds and a draw on the frame its
         // inputs change, and nothing on the frames after.
-        const bool emissionStale = glowReady && isEmissionTableStale(huePhase, config);
+        const bool emissionStale =
+            glowReady && (bypasses(NeonBypass::EMISSION) || isEmissionTableStale(huePhase, config));
+        // NeonBypass::GLOW_COVER: every piece, on every frame that reads the
+        // table.
+        if (glowReady && bypasses(NeonBypass::GLOW_COVER))
+        {
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
         // Pass 0b on a change to its inputs only. It never depends on time,
         // and nothing else writes the buffer. Nor on a ring lit uniformly,
         // which never reads it: the flag stays set, so the first change that
@@ -2411,7 +2419,8 @@ namespace EdgeLighting
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
         // either.
-        const bool reuseOffscreen = glowReady && mOffscreen.reusable && !emissionStale &&
+        const bool reuseOffscreen = glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) &&
+                                    !emissionStale &&
                                     !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight);
         // The shading factored into the hue-invariant field (1f) and its
         // composite (1c), in pass 1b's place where the config allows it, on
@@ -2426,7 +2435,7 @@ namespace EdgeLighting
         const glm::ivec4 glowWindow = GetSubWindow(scaledRegion, mGlowBounds.outer);
         const BufferRegion fieldRegion = GetWindowRegion(scaledRegion, glowWindow);
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
-        if (glowReady && !mGlowField.schedule.unavailable &&
+        if (glowReady && !mGlowField.schedule.unavailable && !bypasses(NeonBypass::GLOW_FIELD) &&
             IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
             FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && ensureFieldPrograms() &&
             !reuseOffscreen)
@@ -2441,7 +2450,7 @@ namespace EdgeLighting
         // every frame.
         LazyBake::Decision ringField;
         if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
-            IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
+            !bypasses(NeonBypass::RING_FIELD) && IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
         {
             const RingFieldLayout layout =
                 computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
@@ -2519,7 +2528,8 @@ namespace EdgeLighting
             // and no texel of it: the quad settles on the widest one the
             // animation reaches, and the gather stops running.
             const GatherInputs gatherInputs = getGatherInputs(config, viewportWidth, viewportHeight);
-            const bool gatherCurrent = mGather.cache.drawn && mGather.buffer.IsValid() &&
+            const bool gatherCurrent = !bypasses(NeonBypass::GATHER) && mGather.cache.drawn &&
+                                       mGather.buffer.IsValid() &&
                                        gatherInputs == mGather.cache.inputs &&
                                        AnnulusCovers(mGather.cache.bounds, mGatherBounds);
             const BufferRegion gatherRegion =
@@ -2765,7 +2775,10 @@ namespace EdgeLighting
         // the samples are stored pre-scaled, and only the first numSamples of
         // them are filled. Both therefore reach the quad as well, through
         // samplesDirty.
-        const bool samplesDirty = config.geometry != mCurrentConfig.geometry ||
+        //
+        // NeonBypass::REBUILD sets every one of these gates, below too.
+        const bool rebuildAll = bypasses(NeonBypass::REBUILD);
+        const bool samplesDirty = rebuildAll || config.geometry != mCurrentConfig.geometry ||
                                   config.neon.resolutionScale != mCurrentConfig.neon.resolutionScale ||
                                   config.neon.numSamples != mCurrentConfig.neon.numSamples;
         const bool geometryDirty = samplesDirty ||
@@ -2806,7 +2819,7 @@ namespace EdgeLighting
         // the ring but not the glow quad, and glowRadius / bloomStrength / the
         // glow cutoffs move the glow quad but not the ring. Only the geometry
         // moves both.
-        const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
+        const bool fillDirty = rebuildAll || config.geometry != mCurrentConfig.geometry ||
                                config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
                                config.neon.opaqueInsideCutoff != mCurrentConfig.neon.opaqueInsideCutoff ||
                                config.neon.opaqueOutsideCutoff != mCurrentConfig.neon.opaqueOutsideCutoff;
@@ -2817,9 +2830,9 @@ namespace EdgeLighting
         // colorStops vector, so clear() + push_back frees and reallocates one
         // heap block per stopped segment each time, to reproduce a list that
         // in a segment-less animation never differs.
-        const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
+        const bool segmentsDirty = rebuildAll || config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
                                    config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
-        const bool arcsDirty = config.neon.arcs != mCurrentConfig.neon.arcs;
+        const bool arcsDirty = rebuildAll || config.neon.arcs != mCurrentConfig.neon.arcs;
         // The glow coverage table's inputs, exactly: the two light blocks
         // (segmentsDirty and arcsDirty, as for mLightBlocks.dirty below) and
         // what renderGlowCoverPass reads off the config - the perimeter, the
@@ -2832,7 +2845,7 @@ namespace EdgeLighting
         // blocks move only the pieces a changed light reaches, worked out
         // below once the merged segment list is current
         // (GetGlowCoverDirtyArcPieces, GetGlowCoverDirtySegmentPieces).
-        const bool glowCoverShapeDirty = config.geometry.width != mCurrentConfig.geometry.width ||
+        const bool glowCoverShapeDirty = rebuildAll || config.geometry.width != mCurrentConfig.geometry.width ||
                                          config.geometry.height != mCurrentConfig.geometry.height ||
                                          config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
                                          config.geometry.winding != mCurrentConfig.geometry.winding ||
@@ -2878,7 +2891,7 @@ namespace EdgeLighting
         // rather than on the two lists: a segment travelling round the ring
         // changes its list every frame and the number never. Miss it and a
         // boost raised under a hole cut for a dimmer glow clips its halo.
-        const bool emissionDirty = GetGlowEmissionBound(config, mEffectiveSegments) != mGlowEmission;
+        const bool emissionDirty = rebuildAll || GetGlowEmissionBound(config, mEffectiveSegments) != mGlowEmission;
 
         // The emission table needs nothing from here. It is keyed on what its
         // pass binds - two uniforms by value, three LUTs and two light blocks
@@ -4503,6 +4516,10 @@ namespace EdgeLighting
         // get the host's clip back once this scope ends, which is before
         // Render calls them.
         GLUtils::NoScissorScope noScissor(true);
+        if (bypasses(NeonBypass::CLEAR))
+        {
+            mScaled->ForgetContents();
+        }
         if (!mScaled->BeginWrite(texels, window))
         {
             return false;
@@ -4529,6 +4546,10 @@ namespace EdgeLighting
         // scissor lifted, the reduced buffer sized, bound and cleared - for
         // the same reasons, given there.
         GLUtils::NoScissorScope noScissor(true);
+        if (bypasses(NeonBypass::CLEAR))
+        {
+            mScaled->ForgetContents();
+        }
         if (!mScaled->BeginWrite(texels, window))
         {
             return false;

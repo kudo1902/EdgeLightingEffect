@@ -5322,6 +5322,111 @@ V26 corner sweep byte-identical to the build before; `check` identical.
 
 ---
 
+## Thirty-third pass (the skip keys, against a renderer that skips nothing)
+
+`neon-scale-check sequence` (see its README) drives seeded random config
+sequences through a renderer with every skip and reuse bypassed
+(`NeonRenderer::SetBypass(NeonBypass::ALL)`) beside one with only the skips
+documented exact, which must match it byte for byte, and the renderer as
+shipped, which must stay within 2 levels (6 where the intensity moved). Its
+first runs, on an Apple M2 Pro at `c042e6e`, found V28 and I76; a longer run with V28 fixed found V29. Every
+other skip held: the emission table, the coverage table's dirty pieces, the
+offscreen reuse and the windowed clear byte-identical over every frame, and
+the gather's held region and the ring's field inside their bounds.
+
+### V28. A resized rect keeps its arcs' abutment flags from the old perimeter - OPEN
+
+**Found** by `exact` on `sequence --seed 1 --only 11` (frame 17 on): 24 of
+1440 frames up to 3 levels off a renderer that recomputes everything, on 2-6k
+pixels, and every one cleared by bypassing `NeonBypass::REBUILD` alone. It
+starts on a frame where the rect's size moves under four arcs and lasts, held
+frames included, until the arcs themselves change.
+
+**Cause.** `PackArcBlock(arcs, GetPerimeter(config))` packs each arc's
+abutment amounts (`PackArcFlags`: how far another arc covers the perimeter
+beside each end, falling to 0 over the end's feather width of open gap). The
+feather is in px and the arc positions in perimeter fractions, so the amounts
+move with the perimeter - the rect's width, height and drawn corner radius.
+`OnConfigChanged` repacks the light blocks only on `segmentsDirty || arcsDirty`,
+so a resize with the arcs held leaves the old amounts in `ArcBlock`. And since
+the emission table is keyed on the block's upload count and the coverage table
+re-bakes from the block, both are baked from the stale flags too.
+`GetGlowCoverDirtyArcPieces` already packs both sides with their own
+perimeter; only the pack gate missed it. Only arcs within a feather of
+another arc's end are touched, which is why a lone arc never shows it.
+
+**Fix**, verified in a scratch worktree, not applied (another session was
+editing `neon-renderer.cpp`): in `OnConfigChanged`,
+
+```cpp
+mLightBlocks.dirty = mLightBlocks.dirty || segmentsDirty || arcsDirty ||
+                     GetPerimeter(config) != GetPerimeter(mCurrentConfig);
+```
+
+With it `exact` is byte-identical over the same 16 x 90 frames, and over 100 x
+150 but for one frame, V29. A resize animation then repacks the arc block every frame, which re-bakes
+the emission table every frame - one draw of 128 x 2 texels; the coverage table
+re-bakes on every resize already.
+
+### V29. A segment move leaves a one-level stale texel that only an arc re-bake clears - OPEN
+
+**Found** by `exact` on `sequence --sequences 100 --frames 150 --only 70`
+(seed 1), frame 45, with V28's fix applied: 1 level on 1 frame pixel and 38
+shared-buffer texels, the only `exact` failure in 15,000 frames. Cleared by
+bypassing `GLOW_COVER` or `REBUILD` - both of which re-bake every piece of the
+coverage table, arc channels included.
+
+The frame: 960 x 540, a 189.7 x 70.4 rect with sharp corners, scale 0.75, no
+arcs at all, one segment (length 0.206, two stops) beside a preserved one
+(length 0.045), glow radius 38.6, bloom 1.5, intensity 3, outside glow. The
+segment steps 0.871 -> 0.841; nothing else moves. The next frame moves the rect
+and re-bakes everything, so here it lasted one frame - but a segment that
+moved once and then held would keep it.
+
+**What it is not**, each tested in the scratch worktree: the segment piece
+mask (`GetGlowCoverDirtySegmentPieces`) - mirrored by hand, the old and new
+bells reach every piece but the zero-length corner at 0.5, and dirtying all
+four corners, or all eight segment pieces, still fails. **What clears it**:
+setting `dirtyArcPieces` to every piece whenever a segment piece is dirty. So
+on this config the table's ARC channels (.r / .g), or something that bake
+writes, depend on the segments, which the per-type split (I42) rests on never
+happening. `pieceCover` in `neon-glow-cover.frag` integrates the two kinds
+independently, so the dependency is likely on the CPU side or in the
+segment-table path (pass 0s / 0f, `segDirect`); not pinned down. Only 1 level, but
+the split is documented exact and verified byte for byte against a full bake,
+so this is a hole in that verification, not a tolerance.
+
+### I76. Under a field the shared buffer carries glow past pass 1b's discard edge - OPEN
+
+**Found** by `normal` on `sequence --seed 1` (sequences 13 and 15): on held
+frames with the hue rotating and a one-sided glow or a cutoff, the frame within
+1 level of `forced` but the shared buffer up to 213 levels off, on one column
+or row of reduced texels (48-12k texels). Cleared by bypassing
+`NeonBypass::GLOW_FIELD` alone; never on a frame.
+
+**Cause.** Pass 1b (`uBlitOwnsCut` 1) discards past `BLIT_SIDE_GUARD_PX` beyond
+the one-sided cut and past `BLIT_CUTOFF_GUARD_PX` beyond each cutoff's ramp,
+leaving 0 there. Its field bake runs the same discards, but the field is half
+the reduced buffer's resolution, read NEAREST, and the composite (pass 1c)
+draws the whole glow quad with no discard of its own: a composite texel just
+past the discard edge reads a field texel whose centre was inside it, and
+writes glow where pass 1b writes 0. In the dumped buffers (`--dump`): one
+column of lit texels, alpha up to 0.5, where `forced` has none.
+
+**Why it matters, and not more.** No frame changes: the blit applies the cut
+and the cutoffs at full resolution and reads nothing past them. But the
+buffer's contract (`NeonRenderer`'s header, CLAUDE.md) is "the glow
+`BLIT_SIDE_GUARD_PX` / `BLIT_CUTOFF_GUARD_PX` past them", and a reader that
+does not multiply the cut in itself sees an extra column of glow appear when
+the hue starts rotating and vanish when it stops. A reader that masks as the
+blit does sees no difference. The likely fix is the same discards in
+`neon-field.frag`'s glow composite (the ring field's composite already
+recomputes the mask from the pixel's position, I53); it moves no frame pixel,
+so `check` and `cover` should stay byte-identical, and this mode's `normal`
+buffer column then falls to the field's 1-level bound.
+
+---
+
 ## Thirty-second pass (the spotlight below scale 1.0)
 
 ### V27. Below `resolutionScale` 1.0 the spotlight's dark tail bands into blocky contours - FIXED
@@ -5407,7 +5512,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence` and all open. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5471,6 +5576,9 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
+| V28 | open | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels, until the arcs next change; a one-line fix to the pack gate is verified, not applied |
+| V29 | open | a segment step on a sharp-cornered, arc-less rect left a 1-level stale texel that only re-baking the coverage table's ARC pieces clears - the per-type split (I42) is not exact there; cause not pinned down |
+| I76 | open | under the glow field the shared buffer holds one texel column of glow past pass 1b's discard edge (the field is half resolution and read NEAREST) - up to 213 levels, no frame pixel; fix: the same discards in the composite |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

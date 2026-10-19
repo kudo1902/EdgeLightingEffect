@@ -206,6 +206,36 @@ namespace EdgeLighting
         } GlowCoverLayout;
     }
 
+    /// Which of @ref NeonRenderer's skips and reuses to bypass, as bits of
+    /// @ref NeonRenderer::SetBypass. A VERIFICATION hook, not a host setting:
+    /// every bit only makes the renderer redo work it would otherwise have
+    /// kept, so a renderer with all of them set draws each frame the way a
+    /// fresh one would from the same history - and tools/neon-scale-check
+    /// `sequence` drives one beside a plain renderer through random config
+    /// sequences, so that a skip key missing an input shows up as a stale
+    /// frame. Not in the config, so nothing compares it and no C ABI mirrors
+    /// it; 0 (the default) is the renderer as shipped, unchanged.
+    ///
+    /// The first group are the skips documented EXACT - with only those
+    /// active the frame is byte-identical to @c ALL. The second are reuses
+    /// documented within a level or two (the held gather region, I55; the
+    /// fields' composites, I46 / I52, and their intensity gain, I56).
+    typedef enum class NeonBypass : uint32_t
+    {
+        NONE = 0,
+        EMISSION = 1u << 0,   ///< P0 every frame (isEmissionTableStale).
+        GLOW_COVER = 1u << 1, ///< P0b re-bakes every piece on every frame that reads it (the dirty masks).
+        OFFSCREEN = 1u << 2,  ///< P1a and P1b never reused (@c mOffscreen.reusable).
+        CLEAR = 1u << 3,      ///< The shared buffer cleared whole on every write, not windowed (SharedBuffer::BeginWrite).
+        REBUILD = 1u << 4,    ///< OnConfigChanged rebuilds everything it gates (samples, quads, fill, segment list, light blocks).
+        GATHER = 1u << 5,     ///< P1a never reused from a held region (GatherInputs, AnnulusCovers).
+        GLOW_FIELD = 1u << 6, ///< P1f / P1c never used: P1b shades.
+        RING_FIELD = 1u << 7, ///< P1r / P2r never used: P2c shades.
+        EXACT = 0x1fu,        ///< EMISSION | GLOW_COVER | OFFSCREEN | CLEAR | REBUILD.
+        APPROXIMATE = 0xe0u,  ///< GATHER | GLOW_FIELD | RING_FIELD.
+        ALL = 0xffu,
+    } NeonBypass;
+
     /// The neon renderer.
     ///
     /// Draws a tight quad over the rect + glow-reach margin and runs one
@@ -445,7 +475,18 @@ namespace EdgeLighting
         /// @return @ref RendererLayer::NEON.
         virtual RendererLayer GetLayer() const override { return RendererLayer::NEON; }
 
+        /// Bypass the skips and reuses @p mask names (bits of @ref NeonBypass)
+        /// from the next frame on - a verification hook; see @ref NeonBypass.
+        /// @ref NeonBypass::REBUILD acts in @ref OnConfigChanged, so on the
+        /// next config change.
+        void SetBypass(uint32_t mask) { mBypass = mask; }
+        /// @return The mask @ref SetBypass last set; 0 by default.
+        uint32_t GetBypass() const { return mBypass; }
+
     private:
+        /// Whether @ref SetBypass named @p bit.
+        bool bypasses(NeonBypass bit) const { return (mBypass & static_cast<uint32_t>(bit)) != 0; }
+
         // --- Types -----------------------------------------------------------
         typedef NeonDetail::Annulus Annulus;
         typedef NeonDetail::BufferRegion BufferRegion;
@@ -1812,6 +1853,10 @@ namespace EdgeLighting
         GlowField mGlowField;      ///< P1f, read by P1c - see @ref GlowField.
         RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
         OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
+
+        /// The skips and reuses to bypass - see @ref NeonBypass. 0 outside
+        /// tools/neon-scale-check.
+        uint32_t mBypass = 0;
 
         /// Pass 1b's target and the neon's shared buffer (@ref SharedBuffer,
         /// claimed as SharedBufferId::NEON): the composited colour, one
