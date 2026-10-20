@@ -36,7 +36,7 @@ namespace NeonTools
         P0F,      ///< The segment table's fill into the glow coverage table (neon-glow-cover-fill.frag).
         P1A,      ///< Gather pass (neon-gather.frag).
         P1B,      ///< Reduced-scale shading (neon.frag, offscreen, below scale 1.0).
-        P1F,      ///< Field bake (neon.frag + NEON_FIELD_BAKE, offscreen): the glow's field, then the ring's (P1r).
+        P1F,      ///< Field bake (neon-field-bake.frag, offscreen): the glow's field, then the ring's (P1r).
         P1C,      ///< Field composite (neon-field.frag, into the reduced buffer in P1B's place).
         P2A,      ///< Opaque fill (black-rect.frag).
         P2B,      ///< Blit (neon-blit.frag).

@@ -34,8 +34,9 @@ void main() { fragColor = uColor; }
         }
 
         /// Name the pass from what its program declares. Every neon fragment
-        /// shader has a uniform no other one has, except the three built from
-        /// neon.frag's source - those differ by target, and offscreen by the
+        /// shader has a uniform no other one has, except the three built over
+        /// neon-shade.glsl (neon.frag twice, and the field bake) - those differ
+        /// by target, and offscreen by the
         /// scale they were uploaded at.
         PassKind Classify(GLuint program, bool ontoCaller)
         {
@@ -48,7 +49,7 @@ void main() { fragColor = uColor; }
                 return PassKind::P2A;
             }
             // Before uGather: the field's composite reads the gather too. The
-            // edge ring's composite (NEON_FIELD_RING) draws the ring's pixels
+            // edge ring's composite (neon-ring-field.frag) draws the ring's pixels
             // in pass 2c's place, so it is filed as the ring.
             if (HasUniform(program, "uRingHole"))
             {
@@ -64,7 +65,7 @@ void main() { fragColor = uColor; }
                 {
                     return PassKind::P2C;
                 }
-                // Offscreen, one source twice over: pass 1b, into the RGBA
+                // Offscreen, one shading twice over: pass 1b, into the RGBA
                 // reduced buffer, or the field bake, into its R16F / RG16F
                 // field - at either scale, so told apart by the target. By its
                 // ALPHA, not by float: the reduced buffer is half float too
