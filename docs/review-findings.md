@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I81, I82, I83, I84, I86, I88 |
+| open | V9, V16, V18, V29, V32, I13, I18, I82, I83, I84, I86, I88 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -5800,7 +5800,7 @@ factories - as b692d63 did for enum values.
 
 **Fixed** at the C ABI. Every entry point that takes a float or double by value - 78 of them: 51 effect setters, 12 animation factories, 5 animation setters, 6 modulator functions and 4 deprecated shims - now opens with `REQUIRE_FINITE` (`capi-internal.h`), after its handle check, and returns `EL_ERROR_INVALID_PARAMETER` (`nullptr` from a factory) with an error log, leaving the staging config untouched. Durations: the preset animation factories require a duration above 0 (`IntensityPulse(0)` built an oscillator of frequency 1 / 0); `el_animation_set_duration`, `el_modulator_sequence_append` and `el_modulator_create_ease` require at least 0, since 0 is meaningful there (an animation that never wraps; an ease that is already at its end). Verified with a C probe against the Release dylib: NaN and infinity refused on scalar, colour and point setters, the value read back unchanged, a null handle still `EL_ERROR_INVALID_HANDLE`, 0 and negative durations refused or accepted as above. The C++ API is unchanged: `SetConfig` still takes any float.
 
-### I81. Every uniform lookup builds a `std::string` - OPEN
+### I81. Every uniform lookup builds a `std::string` - FIXED
 
 **Found** by reading `ShaderProgram::getLocation`: its cache is an
 `std::unordered_map<std::string, GLint>`, looked up with the `const char *`
@@ -5815,6 +5815,8 @@ which is why nothing measured here saw it. It works against the zero-allocation
 goal `EdgeLightingEffect::mScratchConfig` was built for. The fix is to resolve
 each location once after the link (a member per uniform), or to key the cache
 on the literal's address, which is stable.
+
+**Fixed.** `ShaderProgram`'s location cache is keyed on `std::string_view`s into `mNames`, a `std::deque<std::string>` that stores each name once on its first lookup; `getLocation` looks up `std::string_view(name)` and builds no string. Not keyed on the literal's address, since the `UNIFORM_ARRAY_DIRECT 0` fallback passes names built on the stack. A deque never moves its elements on `push_back` and a move hands its storage over whole, so the views stay valid. Measured with a probe counting `operator new` over 1000 frames of two `SetUniform` calls, one with a 29-character name (long enough to allocate under libc++ too): 1000 allocations before, 0 after, and 0 for a lookup on a moved-from-into program. `check`, `shared-buffer`, `clock` and `sequence --seed 1` pass, with no uniform-not-found log.
 
 ### I82. The output dither is added where the glow is 0 - OPEN
 
@@ -6268,7 +6270,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I79 | fixed | eleven C ABI entry points dereferenced the null effect a created, uninitialised handle holds (SIGSEGV); they return `EL_ERROR_INVALID_HANDLE` - or an empty answer for the two queries - before init |
 | V32 | open | the lens flare writes undithered, into RGBA8 below 1.0 - the mechanism R7 and V27 fixed elsewhere, on the smoothest layer; not measured |
 | I80 | fixed | the C ABI refuses non-finite float arguments and non-positive preset durations |
-| I81 | open | `ShaderProgram::getLocation` builds a `std::string` per `SetUniform`; under libstdc++ 8 of 88 names allocate, ~7 heap allocations per neon upload per frame, invisible on macOS |
+| I81 | fixed | uniform lookups key on a string_view into names stored once; no allocation per call |
 | I82 | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
 | I83 | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
 | I84 | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size and driver lexing, and clear MSVC's 16 KB literal limit |
