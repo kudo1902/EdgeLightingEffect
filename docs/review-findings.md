@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, V34, I13, I18, I76, I80, I81, I82, I83, I84, I85, I86, I87, I88, I89 |
+| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I85, I86, I87, I88, I89 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -6015,7 +6015,7 @@ by it.
 
 **Fixed** on 2026-10-20 in `ColorUtils::BlendStops`: an endpoint whose saturation is at most 1e-6 - or, in HSV, whose value is - takes the other endpoint's hue, so only the saturation and the value or lightness move. Midpoints after: blue -> white (0.500, 0.500, 1.000) HSV and (0.625, 0.625, 0.875) HSL; blue -> black (0.250, 0.250, 0.500) and (0.125, 0.125, 0.375); green -> grey (0.375, 0.750, 0.375) and (0.250, 0.750, 0.250); cyan -> white (0.500, 1.000, 1.000) and (0.625, 0.875, 0.875). RGB-space blends are untouched, so `check` passes unchanged.
 
-### V34. A colour stop edited every frame drags the ring far behind it - OPEN
+### V34. A colour stop edited every frame drags the ring far behind it - FIXED
 
 **Found** by reading `GradientRingLUT::Bake`. With `colorTransitionDuration`
 above 0 (default 0.3 s), a bake whose inputs changed starts a cross-fade from
@@ -6046,6 +6046,8 @@ progress and blend from the ring on screen toward the new target over what is
 left of the duration - or to treat the duration as a rate limit (the ring
 moves at most `dt / duration` of a full change a frame). `DebugRenderer`'s ring
 shares the class and the behaviour.
+
+**Fixed** on 2026-10-20 in `GradientRingLUT`: a bake that arrives while a fade is in flight no longer restarts the smoothstep; it sets the ring CHASING the new target, `display += (target - display) * (1 - exp(-3 dt / duration))`, continuous across every retarget, landing on the target within a quarter of a level. A change made from rest still fades with the smoothstep, so a single edit looks as it did. Same drag probe: the lag when the drag ends is 0.09 (was 0.77) at the default 0.3 s, 0 at 0; `check` and `clock` pass. `DebugRenderer`'s ring shares the class.
 
 ### I85. `CaptureUtil::ReadRegion` refuses a single-sample read when the window is multisampled - OPEN
 
@@ -6261,7 +6263,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I83 | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
 | I84 | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size and driver lexing, and clear MSVC's 16 KB literal limit |
 | V33 | fixed | an HSV or HSL blend toward an achromatic stop took its hue as 0 and swept toward red; an achromatic endpoint (saturation 0, or HSV value 0) now takes the other stop's hue - blue -> white HSV mid (1.0, 0.5, 1.0) -> (0.5, 0.5, 1.0); RGB unchanged |
-| V34 | open | the colour cross-fade restarts on every bake, so a stop edited each frame (the demo's gradient editor, a host animating stops) lags: 23% of a one-second drag shown when it ends, at the default 0.3 s; fix: retarget a fade in flight rather than restart it |
+| V34 | fixed | the colour cross-fade restarted on every bake, so a stop edited each frame lagged (23% of a one-second drag shown at its end); a fade retargeted in flight now chases the new target exponentially at a time constant of a third of the duration - lag 0.77 -> 0.09; a change from rest keeps the smoothstep |
 | I85 | open | `CaptureUtil::ReadRegion` tests `GL_SAMPLES`, the DRAW framebuffer's, so a single-sample capture read after `End` is refused when the window is multisampled (measured at 4x); and it ignores a bound pack buffer |
 | I86 | open | on Linux / Tizen `LOG_D` stays live in the C ABI, so 74 of 82 getters log on every call; `el_animation_update` / `apply` log at INFO on every call everywhere (120 lines per 60 frames); no level filter or platform sink |
 | I87 | open | V30's fix left seven descriptions of `uHuePhase` as `fract(time * rate)` - three shader comments, four places in three docs |

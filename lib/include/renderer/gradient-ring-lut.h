@@ -5,6 +5,7 @@
 #include "renderer/base-lut.h"
 #include "util/color-utils.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace EdgeLighting
@@ -98,6 +99,7 @@ namespace EdgeLighting
                 mDisplay = mTarget;
                 upload(); // sets HasUploaded(), which is what the guards above read
                 mFading = false;
+                mChasing = false;
                 return;
             }
 
@@ -105,6 +107,14 @@ namespace EdgeLighting
             // toward the new target. The first blended upload happens in this
             // same frame's Tick, since SetConfig -> OnConfigChanged runs before
             // Update.
+            // A new target while a fade is still in flight - stops edited on
+            // every frame, a dragged colour picker - is CHASED rather than
+            // faded to afresh: restarting the smoothstep each frame moved the
+            // ring 0.9% of the way a frame, and a one-second drag ended with
+            // 23% of it on screen (V34). The chase closes the gap at a time
+            // constant of a third of the duration, continuous across every
+            // retarget. A change made from rest still gets the smoothstep.
+            mChasing = mFading;
             mFrom = mDisplay;
             mElapsed = 0.0f;
             mDuration = fadeDuration;
@@ -129,6 +139,28 @@ namespace EdgeLighting
             if (!mFading)
             {
                 return false;
+            }
+
+            if (mChasing)
+            {
+                const float k = 1.0f - std::exp(-3.0f * std::max(deltaTime, 0.0f) / std::max(mDuration, 1e-6f));
+                const size_t n = static_cast<size_t>(mSize) * 4;
+                mDisplay.resize(n);
+                float gap = 0.0f;
+                for (size_t i = 0; i < n; ++i)
+                {
+                    mDisplay[i] += (mTarget[i] - mDisplay[i]) * k;
+                    gap = std::max(gap, std::fabs(mTarget[i] - mDisplay[i]));
+                }
+                // Within a quarter of an 8-bit level: land on the target.
+                if (gap < 0.25f / 255.0f)
+                {
+                    mDisplay = mTarget;
+                    mFading = false;
+                    mChasing = false;
+                }
+                upload();
+                return true;
             }
 
             mElapsed += deltaTime;
@@ -190,6 +222,7 @@ namespace EdgeLighting
         std::vector<unsigned char> mBytes; ///< Reused upload scratch.
         int mSize = 0;                     ///< Ring width in texels; 0 until the first bake.
         bool mFading = false;              ///< True while a cross-fade is in flight.
+        bool mChasing = false;             ///< The fade was retargeted in flight: Tick chases mTarget exponentially.
         bool mOpaque = false;              ///< Every uploaded alpha byte is 255; see IsOpaque.
         float mElapsed = 0.0f;             ///< Seconds into the current fade.
         float mDuration = 0.0f;            ///< Snapshot of the duration for this fade.
