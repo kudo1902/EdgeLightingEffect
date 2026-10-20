@@ -299,6 +299,32 @@ and the hysteresis choices (the coverage table's width, the segment table's
 direct mode), which depend on history by design and evolve identically in
 every run, since all of them see the same sequence.
 
+## `flare-reuse`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check flare-reuse [--no-time] [--dump DIR]
+```
+
+A differential check of the lens flare's one reuse: below scale 1.0,
+`LensFlareRenderer::RenderOffscreen` skips the draw into its scaled buffer when
+nothing the pass reads has moved (`FlareInputs`, `mScaledCache`) and `Render`
+blits what the buffer holds. Two effects - the neon and the flare - draw one
+scripted 75-frame sequence, one with the reuse and one with it bypassed
+(`LensFlareRenderer::SetBypass(true)`): still frames, the sun moving, the rays
+spinning, the clock paused while they spin, then the rate back to 0, intensity
+and ghost colour changes, the rect moving (the sun rides its perimeter), a
+viewport change and back, the layer off and on, the scale through 0.25, 1.0
+and back, and the sun jumping away and back. Every frame, read back with its
+alpha, must match byte for byte; it exits non-zero otherwise (`--dump DIR`
+writes both frames of a mismatch). Then, unless `--no-time`, it times still
+frames of the flare alone at scale 0.5 - `Update(1/60)` + `Render` + `glFinish`
+per frame, min of 5 runs of the mean of 40 - both ways at 1920x1080 and
+3840x2160. Run it after adding anything `drawFlare` uploads or binds: an input
+that is not a function of `Config::lensFlare` belongs in `FlareInputs`, and the
+script should move it. Dropping the sun's position from the key fails the four
+rect-move frames and the three still frames after them, which is the check
+that the script reaches the key.
+
 ## `generate`
 
 ```bash

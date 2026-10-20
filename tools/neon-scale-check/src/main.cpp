@@ -53,10 +53,17 @@
 //       layer that reads time match the same frames started at 0, and move.
 //       See clock-check.h.
 //
+//   neon-scale-check flare-reuse [--no-time] [--dump DIR]
+//       A differential gate for the lens flare's scaled-buffer reuse: a
+//       scripted sequence drawn with the reuse and with it bypassed
+//       (LensFlareRenderer::SetBypass) must match byte for byte; then times
+//       still frames both ways. See flare-reuse.h.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
 #include "clock-check.h"
+#include "flare-reuse.h"
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
@@ -1014,6 +1021,12 @@ int main(int argc, char **argv)
     {
         return ClockCheck(argc, argv);
     }
+#ifdef NEON_SCALE_CHECK_FLARE_REUSE
+    if (argc >= 2 && std::strcmp(argv[1], "flare-reuse") == 0)
+    {
+        return FlareReuseCheck(argc, argv);
+    }
+#endif
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -1026,6 +1039,7 @@ int main(int argc, char **argv)
                  "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n"
                  "  neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate]\n"
                  "                            [--dump DIR] [--verbose]\n"
-                 "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n");
+                 "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n"
+                 "  neon-scale-check flare-reuse [--no-time] [--dump DIR] [--verbose]\n");
     return 2;
 }

@@ -76,6 +76,18 @@ if(_el_has_bypass)
     target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_SEQUENCE=1)
 endif()
 
+# `flare-reuse` needs LensFlareRenderer::SetBypass, likewise.
+if(EL_ROOT)
+    set(_el_flare_header "${EL_ROOT}/lib/include/renderer/lens-flare-renderer.h")
+else()
+    set(_el_flare_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/renderer/lens-flare-renderer.h")
+endif()
+file(STRINGS "${_el_flare_header}" _el_flare_has_bypass REGEX "SetBypass")
+if(_el_flare_has_bypass)
+    target_sources(neon-scale-check PRIVATE src/flare-reuse.cpp)
+    target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_FLARE_REUSE=1)
+endif()
+
 # `partition` watches the renderer's draws through the pass recorder shared
 # with neon-guide-figures. It needs the generated shaders.h (the recorder
 # replays draws through the library's own neon.vert), which is why the
