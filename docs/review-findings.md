@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V28, V29, V32, V33, V34, I13, I18, I76, I80, I81, I82, I83, I84, I85, I86, I87, I88, I89 |
+| open | V9, V16, V18, V29, V32, V33, V34, I13, I18, I76, I80, I81, I82, I83, I84, I85, I86, I87, I88, I89 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -5346,7 +5346,7 @@ other skip held: the emission table, the coverage table's dirty pieces, the
 offscreen reuse and the windowed clear byte-identical over every frame, and
 the gather's held region and the ring's field inside their bounds.
 
-### V28. A resized rect keeps its arcs' abutment flags from the old perimeter - OPEN
+### V28. A resized rect keeps its arcs' abutment flags from the old perimeter - FIXED
 
 **Found** by `exact` on `sequence --seed 1 --only 11` (frame 17 on): 24 of
 1440 frames up to 3 levels off a renderer that recomputes everything, on 2-6k
@@ -5379,6 +5379,8 @@ With it `exact` is byte-identical over the same 16 x 90 frames, and over 100 x
 150 but for one frame, V29. A resize animation then repacks the arc block every frame, which re-bakes
 the emission table every frame - one draw of 128 x 2 texels; the coverage table
 re-bakes on every resize already.
+
+**Fixed** on 2026-10-20 by construction rather than by the one-line gate above: `packLightBlocks` packs both blocks on every frame and `UniformBuffer::SetData`, which compares the bytes, skips an unchanged upload without moving its upload count, so nothing downstream re-bakes. `mLightBlocks.dirty` is gone. `neon-scale-check sequence` (seed 1, defaults): 24 of 1440 frames out of bounds before, 0 after; `check`, `clock`, `shared-buffer` and `partition` pass.
 
 ### V29. A segment move leaves a one-level stale texel that only an arc re-bake clears - OPEN
 
@@ -6242,7 +6244,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
-| V28 | open | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels, until the arcs next change; a one-line fix to the pack gate is verified, not applied - or pack every frame and let `UniformBuffer`'s byte compare skip the upload, which leaves no gate to go stale (thirty-fourth pass) |
+| V28 | fixed | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels; the gate is gone: the blocks are packed every frame and `UniformBuffer::SetData` skips an unchanged upload - `sequence` 24 failing frames -> 0 |
 | V29 | open | a segment step on a sharp-cornered, arc-less rect left a 1-level stale texel that only re-baking the coverage table's ARC pieces clears - the per-type split (I42) is not exact there; narrowed by elimination (thirty-fourth pass) to the bake's colour write mask in direct mode - likely a driver variant per mask - with an experiment to settle it, untested |
 | I76 | open | under the glow field the shared buffer holds one texel column of glow past pass 1b's discard edge (the field is half resolution and read NEAREST) - up to 213 levels, no frame pixel; fix: the same discards in the composite (confirmed in the code, thirty-fourth pass) |
 | V30 | fixed | the hue, the flare's rays and the droplets' field took their phase as `time * rate`, which races whenever the rate moves - the `HueRotationEaseReverse` preset moved the hue 0.12 / 0.44 turn a frame started 10 / 60 s into the clock against the 0.013 its rate allows; each is now a `PhaseAccumulator`, the rate integrated over the clock, bit-identical to the old phase while a rate holds (every check image, `clock` frame and `generate` PNG unchanged); a rate set to 0 now holds the phase where it stopped |

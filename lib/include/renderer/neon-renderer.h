@@ -928,8 +928,7 @@ namespace EdgeLighting
             float cornerSkip = 0.0f; ///< uCornerSkip: a corner arc is skipped whole this far from its circle - see GetCornerSkip.
         } ShadeLimits;
 
-        /// The two light blocks - the segments and the arcs - and whether
-        /// they still hold the current config. Read by the emission pre-pass,
+        /// The two light blocks - the segments and the arcs - Read by the emission pre-pass,
         /// the coverage bake and every neon.frag program; packed by
         /// @ref packLightBlocks.
         typedef struct LightBlocks
@@ -941,19 +940,6 @@ namespace EdgeLighting
             /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
             UniformBuffer arc{"NeonRenderer.ArcBlock"};
 
-            /// Whether @c mLightBlocks.segment / @c mLightBlocks.arc still hold the current
-            /// config. Cleared by @ref packLightBlocks once it has repacked.
-            ///
-            /// NOT set on every config change, as the emission table's flag used
-            /// to be: the blocks are packed from @c mEffectiveSegments and
-            /// @c NeonConfig::arcs and nothing else, so @ref OnConfigChanged gates
-            /// it on exactly those two. It accumulates rather than being assigned,
-            /// because that call can run more than once before the next
-            /// @ref Render - see the note there.
-            ///
-            /// Starts true because @ref Initialize does not pack - the first
-            /// @ref Render is what fills them.
-            bool dirty = true;
         } LightBlocks;
 
         /// Pass 0's target and what it holds: the per-sample emission table and
@@ -1065,7 +1051,7 @@ namespace EdgeLighting
             /// the rect's width, height, corner radius and winding, and the glow
             /// radius - every one of them in @ref renderGlowCoverPass or the
             /// blocks it binds - so @ref OnConfigChanged gates it on exactly
-            /// those, as it gates @c mLightBlocks.dirty. The bake is the costly
+            /// those, as the light blocks once were gated. The bake is the costly
             /// pass (0.14-0.27 ms on an AMD Radeon Pro 5300M), and "any change"
             /// re-ran it every frame under an intensity or colour animation, or an
             /// animation of another LAYER's fields, none of which it reads.
@@ -1080,7 +1066,7 @@ namespace EdgeLighting
             /// glow radius dirty all eight, as do the brightest arc's intensity
             /// and any light covering the whole ring.
             ///
-            /// Accumulated, never assigned, for @c mLightBlocks.dirty's reasons, and
+            /// Accumulated, never assigned, because OnConfigChanged can run more than once between frames, and
             /// cleared only by the bake - so a change made while the bake is
             /// skipped (a ring lit uniformly) is still pending when it next runs.
             /// Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
@@ -1355,9 +1341,8 @@ namespace EdgeLighting
         /// bake the per-sample emission, the main pass for the continuous
         /// filament gate.
         ///
-        /// Repacks only when @c mLightBlocks.dirty says the config moved; the
-        /// bind is unconditional. See the definition for why the two are
-        /// treated differently.
+        /// Packs every frame - an unchanged pack uploads nothing - and binds
+        /// unconditionally; see the definition.
         /// @pre @c mEffectiveSegments is current for @p config - i.e.
         ///      @ref OnConfigChanged has run for any change since the last
         ///      frame, which the effect guarantees by calling Update before

@@ -2842,7 +2842,7 @@ namespace EdgeLighting
                                    config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         const bool arcsDirty = rebuildAll || config.neon.arcs != mCurrentConfig.neon.arcs;
         // The glow coverage table's inputs, exactly: the two light blocks
-        // (segmentsDirty and arcsDirty, as for mLightBlocks.dirty below) and
+        // and
         // what renderGlowCoverPass reads off the config - the perimeter, the
         // drawn corner radius and the straights, all from width, height and
         // cornerRadius; the winding; and the glow radius. Not the rect's
@@ -2913,8 +2913,8 @@ namespace EdgeLighting
         // layer entirely - for a table none of those move. And per PIECE: a
         // light that moved re-bakes only the pieces its old and new supports
         // reach, so a segment travelling along one straight re-bakes that
-        // straight's band, not the whole table. Accumulated, for the reasons
-        // given for mLightBlocks.dirty just below.
+        // straight's band, not the whole table. Accumulated, because OnConfigChanged can
+        // run more than once between frames.
         //
         // And per light TYPE: the arcs' channels and the segments' are dirtied
         // separately, so arcs animating over still segments never re-integrate
@@ -2955,33 +2955,14 @@ namespace EdgeLighting
         const float directShare = static_cast<float>(GLOW_COVER_SEG_DIRECT_SHARE) * (mGlowCover.segDirect ? 1.0f : 1.2f);
         mGlowCover.segWantedDirect = mGlowCover.fillUnavailable || mEffectiveSegments.empty() ||
                                      float(mGlowCover.segWantedWidth) >= directShare * float(mGlowCover.wantedWidth);
-        // The light blocks get the OPPOSITE treatment, because their inputs are
-        // narrow and visible rather than wide and indirect: @ref
-        // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
-        // nothing else. mEffectiveSegments moves exactly when segmentsDirty
-        // does - it was rebuilt from that flag ten lines up - so the two
-        // together are the whole input set, and gating on them is the same
-        // enumeration samplesDirty and fillDirty above already do. Being
-        // conservative here would cost the gate its point: the common animation
-        // is an intensity or geometry sweep that touches neither list, and
-        // "any config change" would repack on every frame of it.
-        //
-        // ACCUMULATED, not assigned, and the difference is not subtle.
-        //
-        // This runs BEFORE the first Render - AddRenderer calls it - and on
-        // that call the incoming config usually matches the defaults it is
-        // compared against, so both terms are false. An assignment would clear
-        // the `true` the flag is born with, no Render would ever pack, and the
-        // two UBOs would be left with no data store at all: SetData is the only
-        // glBufferData they ever get. Binding those and letting the shader read
-        // them segfaults in the driver - measured, reproducibly, on the first
-        // frame. Not a stale frame; no frame.
-        //
-        // The same hazard returns later in a milder form: a host that calls
-        // SetConfig twice before Update gets two of these, and the second
-        // compares against the arcs the first one already installed. A
-        // narrow gate has to hold until the pack clears it.
-        mLightBlocks.dirty = mLightBlocks.dirty || segmentsDirty || arcsDirty;
+        // The light blocks have no gate here: packLightBlocks packs them on
+        // every frame and UniformBuffer::SetData skips an upload whose bytes
+        // match the last one. They used to be gated on segmentsDirty ||
+        // arcsDirty, which missed the perimeter - PackArcFlags turns the
+        // feathers' px into perimeter fractions - so a resized rect kept the
+        // old abutment flags, up to 3 levels off until the arcs next changed
+        // (V28). A gate on a hand-written input list is what can go stale; the
+        // byte compare cannot.
 
         mCurrentConfig = config;
 
@@ -3446,20 +3427,18 @@ namespace EdgeLighting
         // Both the emission pre-pass and the main pass read these, so they are
         // current before either draws.
         //
-        // The PACK is gated; the BIND is not. The block contents are a pure
-        // function of the config, so repacking them on a frame that changed
-        // nothing reproduces bytes byte for byte - the same argument the
-        // emission table rests on, one tier cheaper. The binding is different:
+        // Packed on EVERY frame, ungated: the contents are a pure function of
+        // the config, so a frame that changed nothing reproduces the bytes and
+        // UniformBuffer::SetData skips the upload (moving no upload count, so
+        // nothing downstream re-bakes). The cost is PackArcFlags' 8 x 8 loop
+        // and two 144-byte compares; a gate on a list of inputs missed the
+        // perimeter once (V28). The binding is unconditional too:
         // glBindBufferBase writes global context state that a host (or a
         // future pass) can repoint between frames, and re-asserting it costs
         // two calls against a whole frame's worth of drawing, so it stays
         // unconditional rather than being inferred from a flag this class
         // owns.
-        if (mLightBlocks.dirty)
-        {
-            packLightBlockData(config);
-            mLightBlocks.dirty = false;
-        }
+        packLightBlockData(config);
         mLightBlocks.segment.BindBase(SEGMENT_BLOCK_BINDING);
         mLightBlocks.arc.BindBase(ARC_BLOCK_BINDING);
     }
