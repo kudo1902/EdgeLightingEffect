@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_DROPLETS_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
 
@@ -51,12 +52,19 @@ namespace EdgeLighting
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
+        /// @c mDropTime at @p time for @p config's speed; see Update.
+        double advanceDropTime(double time, const Config &config);
 
     private:
         Config mCurrentConfig; ///< Last config seen; @ref setupGeometry sizes the quad from it.
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray{"DropletsRenderer"}; ///< Band ring (or one quad when the band has no hole).
         int mVertexCount = 6;                         ///< Vertices @ref setupGeometry last built: 24 for a ring, 6 for a quad.
+        /// The field's own time, uDropTime: DropletsConfig::speed integrated
+        /// over the clock's time and wrapped by DROPLET_TIME_PERIOD
+        /// (PhaseAccumulator), so a speed change slows or speeds the rain
+        /// rather than jumping the whole field by time * the change.
+        PhaseAccumulator mDropTime;
     };
 }
 

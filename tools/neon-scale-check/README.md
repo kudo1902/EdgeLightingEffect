@@ -158,7 +158,10 @@ when:
 - the hue variant never reaches the field's composite, or the buffer is ready
   while the neon is off, or not ready once it is on again;
 - after a rect that moves and shrinks at one scale, the buffer differs by a
-  single texel from the moved rect's drawn on a fresh effect.
+  single texel from the moved rect's drawn on a fresh effect. Both on effects
+  whose hue rate never moved: the hue's phase is the rate integrated over the
+  clock (`PhaseAccumulator`), so an effect that ran the hue variant holds its
+  hue where the rotation stopped, and differs from a fresh one everywhere.
 
 The last is the windowed clear (`SharedBuffer::BeginWrite`: this write's
 window and the last write's). The scenes never reach it - every cell changes

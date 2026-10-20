@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_DEBUG_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
 #include "renderer/gradient-ring-lut.h"
@@ -147,6 +148,12 @@ namespace EdgeLighting
         /// consulted, so a hide/show across an unchanged gradient still
         /// RESUMES a paused cross-fade rather than snapping it.
         bool mStripVisible = false;
+
+        /// The strip's hue phase: NeonConfig::hueRotationRate integrated over
+        /// the clock's time, exactly as NeonRenderer's own (PhaseAccumulator).
+        /// Fed the same times and rates - advanced in @ref Update every frame,
+        /// shown or not - so the strip scrolls with the ring it previews.
+        PhaseAccumulator mHuePhase;
     };
 
 } // namespace EdgeLighting

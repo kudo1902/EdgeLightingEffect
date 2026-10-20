@@ -188,8 +188,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float, double, const Config &)
+    void LensFlareRenderer::Update(float, double time, const Config &config)
     {
+        // The rays' rotation, every frame, so a rate that moves while the
+        // layer is off is integrated as it moved; drawFlare reads it again.
+        mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate);
     }
 
     void LensFlareRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double time,
@@ -482,9 +485,11 @@ namespace EdgeLighting
         // becomes a float angle: the shader reads it only through
         // mod(a, 2 PI) and sin(a * N / 2) with N whole, both periodic in a
         // turn, so the wrap is seamless - and an absolute time * rate in a
-        // float stops turning after a few days of uptime.
+        // float stops turning after a few days of uptime. The rate
+        // integrated rather than multiplied by the time (mRotation): animated,
+        // time * rate spun the rays faster the longer the clock had run.
         constexpr float TWO_PI = 6.28318530717958647692f;
-        mFlareShader.SetUniform("uRotation", GetCyclePhase(time, config.lensFlare.rotationRate) * TWO_PI);
+        mFlareShader.SetUniform("uRotation", mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate) * TWO_PI);
         // Quantise the [0, 1] density into an integer slot count for the
         // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
         // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so

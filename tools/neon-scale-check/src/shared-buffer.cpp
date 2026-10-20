@@ -416,16 +416,27 @@ namespace NeonScaleCheck
         // where this write drew: only a reader sees one. Measured against the
         // moved rect drawn on a fresh effect, texel for texel. Still frames
         // only: the hue's would compare two effects' clocks.
+        //
+        // On an effect of its own, not `effect`: that one ran the hue variant
+        // and then went back to rate 0, and the hue's phase is the rate
+        // INTEGRATED over the clock (PhaseAccumulator), so its hue stays where
+        // the rotation stopped while a fresh effect's sits at phase 0 - every
+        // lit texel differs for a reason that is not the clear. Two effects
+        // whose rate never moved hold the same phase.
         std::printf("moving rect, texels that differ from a fresh effect:");
+        EdgeLightingEffect movingEffect;
+        CreateEffect(movingEffect);
+        const std::shared_ptr<SharedBufferProbe> movingProbe = std::make_shared<SharedBufferProbe>();
+        movingEffect.AddRenderer(movingProbe);
         int movingMisses = 0;
         for (int s = 0; s < SCALE_COUNT; ++s)
         {
             Config from = BaseConfig();
             from.neon.resolutionScale = SCALES[s];
             const Config to = MovedRect(from);
-            Render(effect, from);
-            Render(effect, to);
-            const Seen moved = probe->Last();
+            Render(movingEffect, from);
+            Render(movingEffect, to);
+            const Seen moved = movingProbe->Last();
 
             EdgeLightingEffect fresh;
             CreateEffect(fresh);

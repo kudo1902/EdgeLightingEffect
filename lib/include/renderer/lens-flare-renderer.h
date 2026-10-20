@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_LENS_FLARE_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
 #include "gl/framebuffer.h"
@@ -120,6 +121,10 @@ namespace EdgeLighting
         /// What this frame's @ref RenderOffscreen left for @ref Render - see
         /// @ref FrameState.
         FrameState mFrame;
+        /// The rays' rotation in turns: LensFlareConfig::rotationRate - an
+        /// AnimatableField - integrated over the clock's time
+        /// (PhaseAccumulator). Advanced in @ref Update, read by @ref drawFlare.
+        PhaseAccumulator mRotation;
     };
 }
 

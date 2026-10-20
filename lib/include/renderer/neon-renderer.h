@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_NEON_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "core/shared-buffer.h"
 #include "gl/shader-program.h"
 #include "gl/uniform-buffer.h"
@@ -386,13 +387,15 @@ namespace EdgeLighting
         virtual bool Initialize() override;
 
         /// Per-frame bookkeeping, before @ref Render; draws nothing. Advances
+        /// the hue's phase to @p time (@c mHuePhase, every frame, so a rate
+        /// that moves while the layer is off is integrated as it moved),
         /// the colour ring's cross-fade (a fade frame re-uploads the ring,
         /// which moves its upload count and so re-bakes the emission table),
         /// and gives the glow coverage table back once nothing has read it for
         /// GLOW_COVER_RELEASE_SECONDS of frame time - here and not in
         /// @ref Render, which must not delete a framebuffer.
         /// @param deltaTime  Seconds since the last frame; the release timer's step.
-        /// @param time       Unused: the neon reads time in @ref RenderOffscreen.
+        /// @param time       Seconds of clock time, for the hue's phase.
         /// @param config     The active configuration.
         virtual void Update(float deltaTime, double time, const Config &config) override;
 
@@ -442,7 +445,7 @@ namespace EdgeLighting
         /// @param viewportWidth  The caller's framebuffer width, px.
         /// @param viewportHeight Its height, px.
         /// @param time           Seconds of clock time: what the hue rotates by. Reduced
-        ///                       in double to the hue's phase (GetCyclePhase) in
+        ///                       in double to the hue's phase (@c mHuePhase) in
         ///                       @ref RenderOffscreen, the only form any neon
         ///                       program is handed (@c uHuePhase).
         /// @param config         The active configuration.
@@ -621,7 +624,7 @@ namespace EdgeLighting
         {
             bool baked = false;    ///< Written at all: until then the buffer holds undefined texels, whatever @c inputs holds.
             EmissionInputs inputs; ///< The inputs other than the hue phase it was baked from.
-            float huePhase = 0.0f; ///< The hue phase it was baked at (uHuePhase, GetCyclePhase).
+            float huePhase = 0.0f; ///< The hue phase it was baked at (uHuePhase, mHuePhase).
             uint32_t version = 0;  ///< How many times it has been written - the table's version, for @ref GatherInputs. Only ever compared for equality.
         } EmissionBake;
 
@@ -1185,7 +1188,7 @@ namespace EdgeLighting
             UVMap scaledUV;               ///< Full-res rect-local px -> the reduced buffer's uv, for the blit.
             UVMap gatherUVFull;           ///< Full-res rect-local px -> the gather buffer's uv, for the ring.
             LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) and at what gain.
-            float huePhase = 0.0f;        ///< The hue's phase this frame (GetCyclePhase), for the ring's uHuePhase.
+            float huePhase = 0.0f;        ///< The hue's phase this frame (mHuePhase), for the ring's uHuePhase.
         } FrameState;
 
         /// Whether the offscreen phase can be skipped on this frame, and the
@@ -1462,9 +1465,9 @@ namespace EdgeLighting
         ///     frame moves the ring's count like a re-bake does.
         ///   - @p huePhase moved. It reaches the shader exactly once, as
         ///     `si - uHuePhase`, and is the only form time takes there: the
-        ///     fractional part of `time * hueRotationRate`, reduced in double
-        ///     on the CPU (GetCyclePhase) so it keeps its precision at any
-        ///     uptime. At a rate of 0 it is 0 at every time.
+        ///     hue rate integrated over the clock's time, in double on the CPU
+        ///     (@c mHuePhase) so it keeps its precision at any uptime. While
+        ///     the rate is 0 it does not move, whatever the time.
         ///
         /// It used to be "any config change" (@c mEmissionDirty), deliberately
         /// wide because a field list would drift from the shader; the version
@@ -1765,6 +1768,13 @@ namespace EdgeLighting
         /// @c PROGRAM_* bits of the programs that failed to build - see
         /// @ref ensureProgram.
         unsigned int mFailedPrograms = 0;
+
+        /// The hue's phase: NeonConfig::hueRotationRate integrated over the
+        /// clock's time (see PhaseAccumulator - `time * rate`, which it equals
+        /// while the rate holds, raced whenever the rate moved). Advanced in
+        /// @ref Update and read in @ref RenderOffscreen; the debug strip keeps
+        /// its own, fed the same times and rates, so the two agree.
+        PhaseAccumulator mHuePhase;
 
         /// A config change since the last frame moved NeonConfig::intensity.
         /// Set by @ref OnConfigChanged, consumed by the next @ref Render: the

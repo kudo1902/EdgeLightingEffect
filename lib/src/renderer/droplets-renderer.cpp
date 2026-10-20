@@ -97,8 +97,20 @@ namespace EdgeLighting
         return true;
     }
 
-    void DropletsRenderer::Update(float, double, const Config &)
+    void DropletsRenderer::Update(float, double time, const Config &config)
     {
+        // The field's time, every frame, so a speed that moves while the layer
+        // is off is integrated as it moved; Render reads it again.
+        advanceDropTime(time, config);
+    }
+
+    double DropletsRenderer::advanceDropTime(double time, const Config &config)
+    {
+        // The rate in drop-time per clock second. At speed 1 the product is
+        // DROPLET_TIME_SCALE exactly, so a constant speed reads the
+        // `time * DROPLET_TIME_SCALE * speed` it always did.
+        return mDropTime.Advance(time, DROPLET_TIME_SCALE * static_cast<double>(config.droplets.speed),
+                                 DROPLET_TIME_PERIOD);
     }
 
     void DropletsRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
@@ -139,9 +151,10 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
         mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         // The field's own time, wrapped in double before it becomes a float:
-        // see DROPLET_HASH_ROWS for why the wrap leaves no seam.
-        const double dropTime = WrapPeriod(time * DROPLET_TIME_SCALE * static_cast<double>(config.droplets.speed),
-                                           DROPLET_TIME_PERIOD);
+        // see DROPLET_HASH_ROWS for why the wrap leaves no seam. The speed is
+        // integrated rather than multiplied by the time (mDropTime): a changed
+        // speed used to jump the whole field by time * the change.
+        const double dropTime = advanceDropTime(time, config);
         mShaderProgram.SetUniform("uDropTime", static_cast<float>(dropTime));
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
         mShaderProgram.SetUniform("uLanes", std::max(config.droplets.lanes, 1));

@@ -2231,8 +2231,14 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float deltaTime, double, const Config &config)
+    void NeonRenderer::Update(float deltaTime, double time, const Config &config)
     {
+        // The hue's phase, every frame and before anything can return: a rate
+        // that moves while the layer is off or the glow skipped still has to
+        // be integrated as it moved. RenderOffscreen reads it again for the
+        // same time, which moves nothing.
+        mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
+
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // without any config change to announce it. Nothing here has to say
         // so: the upload moves the ring's upload count, which is part of the
@@ -2288,9 +2294,11 @@ namespace EdgeLighting
         // false: that is the frame a scaled field is baked again exactly.
         const bool intensityMoving = mIntensityMoving;
         mIntensityMoving = false;
-        // The hue's phase, reduced from the clock in double here: the only
-        // form in which time reaches a neon program (uHuePhase).
-        const float huePhase = GetCyclePhase(time, config.neon.hueRotationRate);
+        // The hue's phase, the rate integrated over the clock in double
+        // (mHuePhase): the only form in which time reaches a neon program
+        // (uHuePhase). Advanced in Update already; asked again here for a host
+        // that renders without updating.
+        const float huePhase = mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
         mFrame.huePhase = huePhase;
 
         // The frame is a pass schedule and nothing else: derive the transform,
@@ -4055,8 +4063,8 @@ namespace EdgeLighting
         }
 
         // Time enters neon-emission.frag in exactly one place - `float ti =
-        // si - uHuePhase` - so the phase is the whole of its time key. At a
-        // hue rate of 0 GetCyclePhase is exactly 0 at every time, so the
+        // si - uHuePhase` - so the phase is the whole of its time key. While
+        // the hue rate is 0 the phase does not move (mHuePhase), so the
         // table is never re-baked for time. That is not a tolerance: the
         // shader is handed the identical float, so the two bakes agree bit
         // for bit.

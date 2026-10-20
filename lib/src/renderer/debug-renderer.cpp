@@ -82,8 +82,13 @@ namespace EdgeLighting
         return true;
     }
 
-    void DebugRenderer::Update(float deltaTime, double, const Config &config)
+    void DebugRenderer::Update(float deltaTime, double time, const Config &config)
     {
+        // The strip's hue phase, every frame whether or not it is shown: the
+        // neon advances its own the same way, so a rate that moves while the
+        // strip is hidden still leaves the two agreeing when it comes back.
+        mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
+
         // Advances this renderer's own copy of the ring cross-fade. It is
         // handed the same deltaTime as the neon renderer's copy and was baked
         // from the same stops, so the two stay in step frame for frame - which
@@ -350,9 +355,9 @@ namespace EdgeLighting
         mLUTDebugShader.Use();
         mLUTDebugShader.SetUniform("uMVP", mvp);
         mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
-        // The same phase the neon reduces the clock to (uHuePhase), so the
-        // strip scrolls with the ring it previews.
-        mLUTDebugShader.SetUniform("uHuePhase", GetCyclePhase(time, config.neon.hueRotationRate));
+        // The same phase the neon integrates the hue rate to (uHuePhase), so
+        // the strip scrolls with the ring it previews.
+        mLUTDebugShader.SetUniform("uHuePhase", mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate));
         mGradientLUT.Bind(0);
         mLUTDebugShader.SetUniform("uGradientLUT", 0);
         mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);

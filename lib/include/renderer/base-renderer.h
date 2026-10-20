@@ -50,8 +50,10 @@ namespace EdgeLighting
         /// @param time       Accumulated clock time in seconds (paused when the clock is paused). A
         ///                   double, since an effect may run for days: never upload it to a
         ///                   shader as a float - reduce it on the CPU, in double, to the
-        ///                   bounded phase the shader needs (@ref GetCyclePhase,
-        ///                   @ref WrapPeriod in animation/clock.h).
+        ///                   bounded phase the shader needs. A phase driven by a
+        ///                   config rate is a @ref PhaseAccumulator, which
+        ///                   integrates the rate (animation/clock.h): `time *
+        ///                   rate` races whenever the rate moves.
         /// @param config     Current active configuration.
         virtual void Update(float deltaTime, double time, const Config &config) = 0;
 
@@ -107,8 +109,10 @@ namespace EdgeLighting
         /// @param time       Accumulated clock time in seconds (paused when the clock is paused). A
         ///                   double, since an effect may run for days: never upload it to a
         ///                   shader as a float - reduce it on the CPU, in double, to the
-        ///                   bounded phase the shader needs (@ref GetCyclePhase,
-        ///                   @ref WrapPeriod in animation/clock.h).
+        ///                   bounded phase the shader needs. A phase driven by a
+        ///                   config rate is a @ref PhaseAccumulator, which
+        ///                   integrates the rate (animation/clock.h): `time *
+        ///                   rate` races whenever the rate moves.
         /// @param config     Current active configuration.
         virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) = 0;
 
