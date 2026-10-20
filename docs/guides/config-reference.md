@@ -366,9 +366,10 @@ differ; shader is scale-invariant, low-frequency light).
 
 Ghost distance/color baked on CPU into std140 `GhostBlock`
 (`BakeGhostTable`, gated on `ghostOffset/ghostColor/ghostTint` only).
-Bloom/ring terms gated on `GetGhostBloomRadius / GetGhostRingFloor`
-(`lens-flare-tuning.h`); hex sprite not gated (`fwidth` in non-uniform flow
-is undefined).
+Bloom/ring/hex terms each gated on a disc (`GetGhostBloomRadius`,
+`GetGhostRingRadius` / `GetGhostRingFloor`, `GetHexRadius`;
+`lens-flare-tuning.h`); the hex edge width is the closed form of `fwidth`
+(`uHexPx`), since a derivative inside the gate would be undefined.
 
 ## SpotLight + SpotlightConfig -> SpotlightRenderer
 

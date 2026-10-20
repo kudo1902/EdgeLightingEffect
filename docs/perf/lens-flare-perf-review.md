@@ -3,7 +3,9 @@
 `LensFlareRenderer` was the most expensive layer in the pipeline - 1.6x the
 neon and 27x the droplets - for a decorative pass. This document is the
 measurement that established that, the attribution that found where the time
-went, and the before/after for the five changes that followed.
+went, and the before/after for the five changes that followed. Section 10 is a
+later follow-up on another machine: changes 6 and 7, which gate the hex sprite
+the first round could not.
 
 Design rationale for the individual pieces lives beside the code, in
 `lib/shaders/lens-flare.frag` and `lib/include/renderer/lens-flare-tuning.h`;
@@ -123,6 +125,9 @@ exactly why the shader carries a comment saying not to make it. The `uSpread`
 guard in change 4 is safe for the opposite reason: it branches on a uniform, so
 every invocation in the draw takes the same side and the control flow stays
 uniform by definition.
+
+Since done, by taking `fwidth` out rather than gating around it - see section
+10.
 
 ## 4. Performance
 
@@ -252,11 +257,10 @@ produce. Section 5 measures that price.
   correct there, but the shader expression itself is untouched. Closing it
   means clamping in the shader or in `LensFlareConfig`, which is a behaviour
   decision. Tracked as **I13** in `review-findings.md`.
-- **Gating the hex sprite.** Worth a further ~1.7x, blocked on the `fwidth`
-  rule in section 3. The way through is an analytic edge width - the mapping
-  from `gl_FragCoord` to the hex's argument is affine, so `fwidth` has a closed
-  form - which measured 1.61x against the original in a prototype but changes
-  0.07% of pixels by one LSB. Not attempted here.
+- **Gating the hex sprite.** Done on 2026-10-20, with the closed-form edge
+  width this item proposed and a disc gate on all three ghost terms: 1.6x on
+  the frame at 1080p and 4K on an Apple M2 Pro, at most one level on a few
+  dozen pixels. See section 10.
 - **`rnd(vec2)`** was dead before this work and is now gone with its overload,
   which is noted only so nobody looks for it.
 
@@ -281,3 +285,155 @@ same-binary-shape, and the two independent resolutions agreeing to within 0.06x
 (1.97x and 1.91x) is the main reason to trust them. The `spread = 0` figure is
 the exception worth taking literally, because 9.95 -> 1.17 ms is far outside
 any plausible session drift.
+
+## 9. Reusing the scaled buffer on a still frame (2026-10-20)
+
+A later whole-pipeline review (Apple M2 Pro, Release, 1080p) found the flare
+still the largest share of the GPU frame - 0.70 ms of 0.78 at its default scale
+1.0, 0.14 ms at 0.5 - and drawing its whole pass every frame even when its
+config, the sun and the rays' phase had not moved. The neon already skips its
+offscreen passes on such frames (`mOffscreen.reusable`); this is the flare's
+equivalent, below scale 1.0 only.
+
+**What it does.** `RenderOffscreen` builds the pass's key, `FlareInputs`, before
+it binds anything: the whole `LensFlareConfig` (every uniform but two is a
+function of it, and its `operator==` covers a field added later), the target's
+size, the sun's position in the buffer as `drawFlare` uploads it (the geometry
+and the viewport reach the shader only through it), the rays' phase (the clock
+and `mRotation` only through it) and the ghost block's upload count. If it
+equals the key recorded with the buffer (`mScaledCache`), the frame takes no
+capture, no bind and no draw - `FrameState::scaledReady` is set, so it still
+means "the buffer holds this frame's flare", and `Render` blits it. The record
+is cleared before every redraw (so a failed `Resize` leaves nothing to reuse)
+and whenever `OnConfigChanged` releases the buffer. `drawFlare` and the key take
+the sun's position and the phase from the same two helpers
+(`getSunPosition`, `getRotationTurns`), so they cannot disagree. The default
+`rotationRate` is 0, so a default flare whose sun is left in place reuses on
+every frame after its first; a spinning flare still reuses while the clock is
+paused.
+
+**Scale 1.0 is out of scope.** There the flare draws straight onto the
+caller's framebuffer, so there is nothing to reuse; doing the same at 1.0 would
+need a full-size cache buffer (8.3 MB of RGBA8 at 1080p, 33 MB at 4K) plus a
+blit, which costs a full-res fragment pass of its own. Not built.
+
+**Byte-identical.** `neon-scale-check flare-reuse` draws a 75-frame script -
+still frames, the sun moving, the rays spinning and stopping, the clock paused
+with them spinning, intensity and ghost-colour changes, the rect moving, a
+viewport change and back, the layer off and on, the scale through 0.25, 1.0
+and back to 0.5 - with the reuse and with it bypassed
+(`LensFlareRenderer::SetBypass(true)`), the neon drawn under it in both. All 75
+frames match exactly, alpha included. With the sun's position dropped from the
+key the same script fails 7 frames (the rect moving and the still frames after
+it), so the script does reach the key.
+
+**Still frames**, the flare alone at scale 0.5, `Update(1/60)` + `Render` +
+`glFinish` per frame, min of 5 runs of the mean of 40, Apple M2 Pro, Release,
+three runs agreeing within 0.01 ms:
+
+| size | redraw (bypassed) | reuse | ratio |
+| ---- | ----------------- | ----- | ----- |
+| 1920x1080 | 0.50 ms | 0.27 ms | 1.83x |
+| 3840x2160 | 1.44 ms | 0.70 ms | 2.06x |
+
+What is left on a reused frame is the blit, a full-res pass that reads the
+buffer, plus the frame's fixed overhead; the redraw side is the code before the
+change, the key's construction aside. Frames on which the sun, the rect, the
+viewport, the rays' phase or any flare field moves redraw exactly as before,
+so the change pays only where the sun is static in production - a host that
+places it and leaves it.
+
+## 10. Follow-up: every ghost term gated (2026-10-20)
+
+A whole-pipeline review on an Apple M2 Pro found the flare, at its default
+`resolutionScale` 1.0, was ~95% of the GPU frame (0.70 of 0.78 ms at 1080p),
+most of it still the ghost loop: every fragment paid the hex sprite in full for
+every ghost, and the bloom and ring gates still took a `length` (and the ring a
+`sin`) first. The item section 7 left open is now closed.
+
+### What changed
+
+| # | change |
+| - | ------ |
+| 6 | `hexCoverage`'s `fwidth(d)` is its closed form, `uHexPx * (\|n.x\| + \|n.y\|)` on the winning axis `n` (`HEX_SPAN_*` in the shader, `uHexPx = FLARE_HEX_SCALE / uResolution.y`). The hex's argument is affine in `gl_FragCoord` and steps the same on both axes, because `uv.x` is multiplied by the aspect. Floored at 1e-4, as before. |
+| 7 | all three ghost terms are gated on a disc, as a squared distance against a squared radius, so a fragment outside all three pays three dot products per ghost: the bloom on `uBloomRadiusSq` (the old bound, squared), the ring on `uRingRadiusSq` and the sprite on `uHexRadiusSq`. The ring's `uRingFloor` test on the `sin` stays, inside its disc. |
+
+The two new bounds, written out in `lens-flare-tuning.h` and solved in
+`GetGhostRingRadius` / `GetHexRadius`:
+
+```
+RING    c1 > 0 needs pow(l - 0.3, 1/40) < 0.001 + 1     (sin <= 1)
+        <=> l < 0.3 + 1.001^40 = 1.34080, with l = r + size * 0.5
+        so r < max(1.34080 - size * 0.5, 0): 0.2408 at the default 2.2,
+        and no ring at all past ghostSize 2.68.
+
+HEX     coverage is 0 where d >= 0.5 + w, and the support distance d is at
+        least |q| cos 30 (no edge normal is more than 30 degrees from q), so
+        |q| < (0.5 + w_max) / cos 30, w_max = max(uHexPx * sqrt(2), 1e-4).
+```
+
+Change 6 is what makes change 7 legal for the sprite: the gate creates
+non-uniform control flow, and a derivative taken inside it would be undefined.
+The closed form differs from the hardware's `fwidth` only where a 2x2 quad
+straddles a change of winning axis - a hex vertex - where the finite
+difference mixes two axes' slopes.
+
+### Visual comparison
+
+Frames through the real renderer (`LensFlareRenderer` alone into an
+`OffscreenCapture`, fixed clock, default config otherwise), against the same
+harness linked to `f1382c0`:
+
+| scene | differing pixels | max delta |
+| ----- | ---------------- | --------- |
+| 1080p, ghostSize 1.0 / 2.2 / 3.0, spread 1 | 11 / 16 / 10 | 1 |
+| 1080p, ghostSize 1.0 / 2.2 / 3.0, spread 0 | 0 / 0 / 0 | 0 |
+| 1080p, ghostSize 2.2, `resolutionScale` 0.5 | 12 | 1 |
+| 1080p, ghostSize 1.0, `resolutionScale` 0.25 | 118 | 1 |
+| 4K, ghostSize 1.0 / 2.2 / 3.0, spread 1 | 12 / 12 / 25 | 1 |
+| 4K, ghostSize 1.0 / 2.2 / 3.0, spread 0 | 0 / 0 / 0 | 0 |
+
+One level at most, on the hex vertices. The 0.25 row has more because its
+buffer is 270 texels tall, so each hex is a few dozen texels across and a
+larger share of them sit on a vertex - the blit then spreads each over 16
+pixels.
+
+### Performance
+
+GPU time of `EdgeLightingEffect::Render` with the flare alone, `GL_TIME_ELAPSED`
+over batches of 50 frames (median of 9 batches after 20 warm-up frames, no
+clear in the timed region), Release, both sides back to back, twice, against
+`f1382c0`. The two runs' medians agreed to within 0.005 ms; the table gives
+their mean.
+
+| scene | before | after | speedup |
+| ----- | ------ | ----- | ------- |
+| 1080p, ghostSize 1.0 | 0.762 ms | 0.507 ms | 1.50x |
+| 1080p, ghostSize 2.2 (default) | 0.761 ms | 0.488 ms | **1.56x** |
+| 1080p, ghostSize 3.0 | 0.761 ms | 0.486 ms | 1.57x |
+| 1080p, spread 0 | 0.146 ms | 0.147 ms | 1.00x |
+| 1080p, ghostSize 2.2, scale 0.5 | 0.237 ms | 0.171 ms | 1.39x |
+| 1080p, ghostSize 1.0, scale 0.25 | 0.096 ms | 0.082 ms | 1.18x |
+| 4K, ghostSize 1.0 | 3.015 ms | 2.006 ms | 1.50x |
+| 4K, ghostSize 2.2 (default) | 3.017 ms | 1.933 ms | **1.56x** |
+| 4K, ghostSize 3.0 | 3.015 ms | 1.920 ms | 1.57x |
+| 4K, spread 0 | 0.574 ms | 0.577 ms | 1.00x |
+
+Spread 0, which skips the loop, is the sun and the envelope alone, so the
+ghost loop by itself went from ~0.61 to ~0.34 ms at 1080p and ~2.44 to ~1.36 ms
+at 4K at the default ghostSize - 1.8x - and is now about 70% of the frame
+rather than 81%. The reduced scales gain less because the blit and the sun
+terms the gate does not touch are a larger share there. Below 1.0, `uHexPx`
+comes from the height of the target the flare draws into - the scaled buffer -
+which `drawFlare` is handed, so the edge stays one texel of that buffer wide.
+
+The same change measured first on `6ba0dcb`, before the flare's two-phase
+frame, gave the same pixel diff and 1.5-1.6x, with noisier "before" numbers.
+
+A prototype of the same change, measured earlier the same day on this machine
+with a bare fullscreen draw, reported 1.21x at 1080p (0.77 -> 0.63 ms); this
+build measures more, and the difference was not attributed. The closed-form
+width alone measured 1.00x in that prototype - on the M2 the win is the gate it
+allows, not `fwidth` itself (section 7's AMD 5300M prototype reported 1.61x).
+
+Machine: Apple M2 Pro, macOS, arm64, Release.
