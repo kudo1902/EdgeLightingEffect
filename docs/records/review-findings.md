@@ -525,6 +525,12 @@ shader files; the tuning headers' `#define` lines survive it - would remove
 both costs, and one more if the `PLATFORM_WINDOWS` branch is ever finished:
 MSVC refuses a string literal over 16 KB (C2026).
 
+**2026-10-20:** `neon-tuning.h`'s measurements and history moved to
+[`neon-tuning-notes.md`](../design/neon-tuning-notes.md) (773 -> 444 lines, no
+code changed): the embedded text is 538 KB, `NEON_GATHER_FRAG_SRC` 41 KB. Still
+open - the strip is not built, and the remaining shaders' own prose is most of
+what is left.
+
 ### I86. The C ABI logs on paths a host calls every frame - OPEN
 
 *From the Thirty-fifth pass.*

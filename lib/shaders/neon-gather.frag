@@ -99,9 +99,9 @@ PerimeterGather gatherPerimeter(vec2 p) {
     // read identically at any size, and pins the kernel at a constant 1.13
     // sample spacings so it cannot bead at any size either. Not coupled to
     // glowRadius: the gather is colour only, so a wide glow has no business
-    // desaturating the ring. See neon-tuning.h for the measurements behind
-    // this, and neon.frag's kernel widths for the emission widths it is split
-    // from.
+    // desaturating the ring. See docs/design/neon-tuning-notes.md for the
+    // measurements behind this, and neon.frag's kernel widths for the
+    // emission widths it is split from.
     float kc  = max(rectPerimeter() * COLOR_BLEND_PERIM_FRAC, EMISSION_MIN_WIDTH);
     float kc2 = kc * kc;
 

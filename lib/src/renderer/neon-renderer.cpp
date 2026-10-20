@@ -698,7 +698,7 @@ namespace EdgeLighting
         /// that filament has fallen to FILAMENT_CUTOFF of its gain, about 2/255
         /// after the grade, so the reach itself is the right width and nothing
         /// is capped. RING_GUARD_TEXELS then adds the reduced buffer's bilinear
-        /// footprint. See neon-tuning.h for the calibration.
+        /// footprint. See docs/design/neon-tuning-notes.md for the calibration.
         ///
         /// Asked by @ref NeonRenderer::setupRingGeometry to build the ring (and,
         /// through it, the gather pass's quad, which covers the ring).

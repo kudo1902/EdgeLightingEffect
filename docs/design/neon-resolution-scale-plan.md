@@ -568,7 +568,8 @@ rebuild it.
 
 As planned. The calibration in the Done notes below dropped `RING_MAX_SIGMAS`
 and widened R to cover the reduced pass's filament as well; `GetRingWidth` and
-the note on `RING_GUARD_TEXELS` in `neon-tuning.h` hold the rule that shipped.
+the note on `RING_GUARD_TEXELS` in `neon-tuning.h` hold the rule that shipped
+(its calibration table now in [`neon-tuning-notes.md`](neon-tuning-notes.md)).
 
 ```
 R = min(filamentReach, RING_MAX_SIGMAS * sigma) + RING_GUARD_TEXELS / scale
@@ -718,7 +719,8 @@ Rerun with all three fixed, at each candidate `RING_GUARD_TEXELS`:
 
 1.0 is the smallest that holds the targets, so it stays. 2.0 cleans up 0.75
 as well for a ring one buffer texel wider each side - a cheap option if 0.75
-matters. The table is recorded in `neon-tuning.h` beside the constant.
+matters. The table was recorded in `neon-tuning.h` beside the constant, and
+moved to [`neon-tuning-notes.md`](neon-tuning-notes.md) on 2026-10-20.
 
 **Cost**, min over three interleaved runs against step 4. The default scene's
 1.0 time is the 1.87 ms of the proposal's Apple M2 Pro table, so these are that

@@ -244,7 +244,8 @@ was used as if it named a live quantity now say `glowReach`. Four uses of
 "early-out" survive on purpose, because they describe actual early returns: the
 `opaqueOnly` return in `NeonRenderer`, the `bell < 0.005` skip in the pre-pass,
 and the two lines in `neon-tuning.h` that explain what the constant used to be
-calibrated for.
+calibrated for (moved with the rest of that header's history to
+[`neon-tuning-notes.md`](../design/neon-tuning-notes.md) on 2026-10-20).
 
 ### S4. `SegmentBoost::boost` also names a removed mechanism
 

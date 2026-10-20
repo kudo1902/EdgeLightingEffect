@@ -1,0 +1,763 @@
+# neon-tuning.h: the commentary behind its constants
+
+Moved verbatim out of
+[`lib/include/renderer/neon-tuning.h`](../../lib/include/renderer/neon-tuning.h)
+on 2026-10-20, the way [`neon-frag-notes.md`](neon-frag-notes.md) was moved out of
+`neon.frag`. The header keeps what a reader needs at each constant - what it is,
+its units, which code mirrors it, and what not to do - and these are the
+measurements, calibrations and history behind those lines, one section per
+block in header order, each block whole as it stood. Line numbers are the
+header's at `f7c6466` (`git show f7c6466:lib/include/renderer/neon-tuning.h`).
+Nothing here is a current instruction the header does not also carry; where
+the two disagree, the header and `CLAUDE.md` win.
+
+Some of this text names code by what it was then: "both setupGeometry
+implementations" and "both fragment shaders" date from the reduced-scale fork
+([`neon-unification-plan.md`](neon-unification-plan.md)), and
+`BLOOM_SPACING_FLOOR`, `CUTOFF_SOFT_FLOOR_PX` and the `FULL_RES_SPLIT_*` gate
+are gone. The header's own wording is current.
+
+## Filament: the stated floor and the sampling floor
+
+`neon-tuning.h` lines 30-107, before the move: `FILAMENT_MIN_HALF_WIDTH`, `FILAMENT_NYQUIST_SAMPLE_PX`, `FILAMENT_NYQUIST_MIN_SHARE`, `FILAMENT_GAIN`.
+
+```text
+--- Filament (the sharp bright line) ---
+
+FILAMENT_MIN_HALF_WIDTH is a STATED-width floor: it is what makes
+lineWidth 0 mean "no line" rather than a single bright dot, and it is
+paired with lineGate, which fades the filament in over the same span. It
+describes the width the caller asked for, so it is a FULL-RES px constant
+and the shader converts it with uResolutionScale like every other one.
+
+The SAMPLING floor is the pair below, and the distinction from the
+stated floor is the whole point of having two of them. Below
+resolutionScale 1.0 the gather rasterises into a reduced buffer and
+neon-blit.frag bilinearly upsamples it, so a filament the buffer cannot
+sample is not reconstructed - it is resampled, and what comes out
+depends on where the rect edge happens to fall between buffer texel
+centres. That is a property of the BUFFER, so these are in BUFFER px and
+are NOT converted with uResolutionScale.
+
+Getting that backwards is what made a 1 px line at scale 0.5 disagree
+with the same line at 1.0. sigma was floored only by the converted
+stated constant, which at scale 0.5 is 0.25 buffer px, so the line sat
+under the buffer's Nyquist limit and its peak swung with the rect's
+sub-pixel position - 217 on a texel centre, 180 half a texel off,
+against a 1.0 reference that holds 230-241 at every position.
+
+THE FLOOR IS NOT A FIXED HALF WIDTH. It was one - a flat 0.5 buffer px -
+and a fixed half width asks the wrong question. What survives the blit
+is not decided by the profile's width at half maximum; it is decided by
+how much signal the NEIGHBOURING buffer texel still carries, because
+that is what the bilinear filter rebuilds the peak from. So the floor
+says exactly that: the profile must still be at
+FILAMENT_NYQUIST_MIN_SHARE of its peak, FILAMENT_NYQUIST_SAMPLE_PX out.
+Inverting the generalized Gaussian for sigma gives
+
+    sigma >= SAMPLE_PX / pow(log2(1 / MIN_SHARE), 1/N)
+
+which neon.frag and NeonRenderer::setupGeometry both evaluate.
+
+0.0625 and 1.0 are today's behaviour restated, not a retune: at the
+DEFAULT falloff (N = 2) the expression is exactly 0.5 buffer px, the
+constant it replaces, so nothing at or near the default moves.
+
+The two questions diverge at a SOFT falloff, and that is what the change
+is for. sigma does not only set the core - it multiplies reachSigmas, so
+it sets the whole tail. At filamentFalloff 0.27 (N = 0.54) reachSigmas
+clamps at FILAMENT_REACH_MAX_SIGMAS and the tail is 64 sigmas, so a flat
+0.5 floor stretched a 31 px filament to 61 px at scale 0.5 and past
+120 px at 0.25 - to buy 5 levels of peak accuracy (max per-phase error
+13 -> 8) on a profile 31 px wide that the buffer was sampling perfectly
+well. The share form asks for 0.082 buffer px there, below what the
+caller already supplies, so it does not engage.
+
+Where it DOES still engage it is doing the work it was added for: at the
+default falloff, without any floor, the peak collapses to 153 against a
+235 reference, and at filamentFalloff 1.5 to 24. The known cost of the
+share form is the band around filamentFalloff 0.4 to 0.5, where it stops
+engaging while the unfloored peak error is still 12 to 18 levels;
+tightening MIN_SHARE to cover that would stop the default case being
+bit-identical, so the crossover sits here deliberately. See
+docs/design/corner-crease-and-filament-nyquist.md section 2.8.
+
+The line does read WIDER at a reduced scale wherever the floor engages,
+and that part is not a defect to tune away: a line the buffer cannot
+sample cannot be reconstructed from it. The floor buys a stable,
+correctly-bright line of the narrowest width the buffer can actually
+carry. Deliberately NOT paired with an amplitude compensation to
+conserve the line's integral - the grade at the end of neon.frag
+tonemaps per-fragment INSIDE the buffer and FILAMENT_GAIN puts the core
+deep in saturation, so scaling the linear amplitude barely moves the
+8-bit value while it does measurably dim the peak (error 15-23/255
+against 0-10 without it). See
+docs/design/corner-crease-and-filament-nyquist.md section 2.
+
+GATED to scales below 1.0 in both consumers. At scale 1.0 the reduced
+buffer is full size and the blit copies it 1:1, so there is nothing to
+survive, and the ring always shades at 1.0. The old flat constant was a
+no-op at 1.0 by arithmetic
+coincidence - it equalled the converted stated floor; this expression
+would not be, above N = 2, so the gate is explicit now. ---
+```
+
+## ARC_FEATHER_MAX_SHARE: the feather cap
+
+`neon-tuning.h` lines 125-140, before the move: `ARC_FEATHER_MAX_SHARE`.
+
+```text
+--- Cap on each feather, as a share of the arc's own length.
+
+The feathers above are a fixed pixel span while an arc's length is a
+FRACTION of the perimeter, so the same arc config is a different pixel
+length on every rect. Below ~(HEAD + TAIL) px the two ramps overlapped
+and ate into the arc's peak: an L = 0.02 arc peaked at 1.00 on an
+800x600 rect but only 0.21 on a 200x150 one - the last place rect size
+still reached brightness. Capping each feather at a share of the arc
+length holds the peak at exactly 1.0 for any length at any size; a short
+arc gets a proportionally shorter ramp instead of a truncated top.
+
+0.4 leaves a 0.2 * length plateau at full brightness between the two
+ramps. Up to 0.5 also holds the peak, but with no plateau the arc reads
+as a spike rather than a flat-topped segment. Arcs longer than
+(HEAD + TAIL) / 0.4 px never reach the cap, so the normal case is
+bit-identical to before. ---
+```
+
+## Halo and bloom: the closed form over the emitter's pieces
+
+`neon-tuning.h` lines 143-259, before the move: `HALO_GAIN`, `HALO_NORM_FACTOR`.
+
+```text
+--- Halo (sharp coloured glow).
+
+The halo and bloom are evaluated ANALYTICALLY from the rounded-box SDF
+distance, not summed over the perimeter gather. For a locally straight
+emitter of unit density the old sums converge exactly to:
+
+  sum g*sqrt(g) * spacing*kh^2*HALO_NORM  -> HALO_NORM  * 2*kh^2/(ad^2 + kh^2)
+  sum 1/(dd+bw^2) * spacing*bw*BLOOM_NORM -> BLOOM_NORM * PI*bw/sqrt(ad^2 + bw^2)
+
+so the NORM factors keep their meaning and their calibration: peak
+values at ad = 0 are unchanged (0.86 and 1.005 respectively).
+
+The closed form is what makes the effect geometry-independent. The
+gather had to floor its kernel at a multiple of sampleSpacing to stop
+128 discrete samples beading into dots, and sampleSpacing is
+perimeter / NEON_MAX_LOOP_SAMPLES - so halo width, and via the gate its
+brightness, both tracked the rect size, and glowRadius did nothing at
+all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
+of its usable range). An analytic profile cannot bead at any radius, so
+no floor is needed and glowRadius sets the width directly.
+
+Those two limits are of an INFINITE emitter, and evaluating one of them
+at ad = the nearest-edge distance is what used to produce the interior
+medial-axis creases - the dark wedges running in from each corner, plus
+the central spine. A fragment on a corner diagonal has two edges equally
+near and was lit by exactly one of them: measured against a fragment with
+a single edge at the same distance, the ratio was 1.000 at every distance
+tested, where physics says roughly 2.
+
+neon.frag now sums the FINITE-SEGMENT form of the same two integrals over
+the four straight edges instead (haloSegment / bloomSegment). Integrating
+the same kernels from t1 to t2 along a segment at perpendicular distance
+a gives elementary antiderivatives, and as t1 -> -inf, t2 -> +inf each one
+reduces to exactly the limit above - so this is a strict generalisation
+and the NORM factors keep the calibration they already had. The corner
+sweep went from a V kinked at exactly 45 degrees (21 levels deep at
+r = 160) to a smooth basin of 12, which is genuine falloff rather than a
+crease. Cost is ~1.06-1.10x of the neon frame; the gather loop is still
+the overwhelming majority of it.
+
+The CREASE is what the four-segment form was adopted for. It is not the
+largest thing it moves. The old expressions were functions of ad and of
+nothing else, so the old profile was SYMMETRIC about the line - a
+fragment 120 px inside the edge and one 120 px outside were lit
+identically, by construction. Outside, the emitter recedes; inside, it
+wraps around you. The segment sum knows the difference, so the exterior
+now falls off slightly faster (mid-edge peak itself moves by 2/255) and
+the INTERIOR stops falling off past roughly one rect-half and settles on
+a floor. On the 1000x500 / glowRadius 60 probe the centre goes 162 ->
+186 and the interior mean 174.5 -> 188.8; at glowRadius 30 on 800x400 it
+is 81 -> 113. The glow reads as bigger, and the part that grew is the
+interior - the exterior mean goes slightly DOWN.
+
+Intended, and not tunable back out: a real rectangular tube does light
+its own interior, and HALO_GAIN cannot be lowered to undo it without
+dimming the line with it. The knobs for a perimeter-hugging glow are the
+ones that always meant that - insideCutoff, and glowSide OUTSIDE.
+
+THE CORNERS ARE A FIFTH THROUGH EIGHTH SEGMENT, not an extension of the
+four. The straights are trimmed to their TANGENT POINTS, and each quarter
+arc contributes one more segment: the arc DEVELOPED onto its own tangent
+at whichever arc point is nearest the fragment, carrying the arc's full
+length and split about that point, so it abuts the straights exactly in
+arclength and the emitter is continuous. See neon.frag's
+arcTangentSegment.
+
+DEVELOPED AT RATE sqrt(rho * min(rho, r)), NOT AT RATE r, with the
+measure put back by scaling the segment by r/rate - `rho` being the
+fragment's distance from the arc centre. Laying an arc out one unit of
+tangent per unit of arc is only right for a fragment ON it; the exact
+distance to the point dphi away is a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2,
+whose slope at the foot is sqrt(rho*r). Rate r cost two things:
+
+  - at the CENTRE OF CURVATURE the whole arc ran off to one side of the
+    foot, and both kernels peak at t = 0, so it under-counted - to 54%
+    of the true value on a circle, where all four centres coincide at
+    the middle of the shape;
+  - and it CREASED, because the arc's endpoints slide at the tangent
+    rate on one side of the clamp and at rate 1 on the other, which
+    agree only where the rate is length(w). Every other point of the two
+    lines through an arc centre carried a C1 kink: an L-shaped seam per
+    corner, and on a circle an unmistakable dark cross. See
+    docs/records/review-findings.md V12.
+
+rho == r gives rate r and weight 1, so a fragment on the tube is
+bit-identical to the rate-r form and this calibration is untouched. The
+whole emitter's worst error against a numerically integrated perimeter
+falls on every geometry tested (16.5 -> 9.8% on a 600x400 r=40,
+37.3 -> 26.3% on a circle).
+
+The straights used to run to the SHARP corner instead, on the grounds
+that over-extending them past the tangent point stood in for the arc that
+has no elementary closed form. It does not stand in for it. The
+over-extension is a phantom emitter a few px from a fragment that is tens
+of px from the real tube: on an 800x400 rect at cornerRadius 40, a point
+20 px outside the arc on the diagonal sits 2.4 px from EACH of the two
+phantoms, and rendered 98 -> 146 across the commit that introduced them.
+Against a numerically integrated rounded-rect perimeter it was 40 levels
+too dark ON the tube and 50 too bright just outside it, which is what
+made a rounded corner read square at a narrow glowRadius.
+
+The developed arc costs one extra segment per corner - one atan and a
+length on top - and takes the worst error over a quadrant from 76 to 6
+levels at glowRadius 5, 112 to 6 at cornerRadius 120, 130 to 8 at 200.
+A full circle (cornerRadius == halfMin) is still the residual case,
+since its perimeter is four developed arcs and no straights at all.
+
+Gated on uCornerRadius > 0, which is a UNIFORM - safe branching, and the
+reason a sharp rect pays nothing and stays bit-identical (nine scenes
+cmp-equal, not argued, and still cmp-equal after the rate fix above).
+Rounded costs 1.19x of the neon pass against no arcs at all, and the rate
+fix adds 1.03x on top - but the sharp path pays 1.026x of THAT for code
+it never runs, because what decides this block is REGISTER PRESSURE, not
+structure: with a per-arc bloom pedestal it was heavy enough to cost the
+sharp path 1.14x. Re-time a cornerRadius 0 scene as well as a rounded one
+after touching this. See docs/design/corner-crease-and-filament-nyquist.md
+sections 1.7 to 1.9, and docs/records/review-findings.md V4, V10 and V12. ---
+```
+
+## COLOR_BLEND_PERIM_FRAC: the colour kernel as a fraction of the perimeter
+
+`neon-tuning.h` lines 263-311, before the move: `COLOR_BLEND_PERIM_FRAC`.
+
+```text
+--- Width of the COLOUR gather kernel, as a FRACTION OF THE PERIMETER.
+
+The perimeter colour blend is the one part of the shader that is still a
+discrete sum over the loop samples, and it is the only place a length has
+to be expressed this way rather than in pixels. The reason is that the
+signal it filters - the gradient LUT - is itself parameterised by
+perimeter fraction: sample i contributes LUT(i / NEON_MAX_LOOP_SAMPLES).
+A kernel measured in pixels therefore covers a DIFFERENT span of the
+gradient on every geometry, and the same colour stops render washed out
+on a small rect and crisp on a large one. Measured on the stock 4-stop
+ring, the colour sampled exactly on the red stop ran (0.95, 0.33, 0.06)
+at 200x150 against (0.96, 0.04, 0.00) at 2800x2200 - roughly 8x the hue
+bleed from geometry alone. Scaling the kernel with the perimeter is what
+makes the gradient read identically at any size.
+
+Two further properties fall out of the same choice:
+
+  - A constant anti-bead margin. The kernel has to stay >= about one
+    sample spacing, or it collapses between samples and the blend beads
+    into dots. Spacing is perimeter / NEON_MAX_LOOP_SAMPLES, so a
+    perimeter fraction pins the ratio at
+    COLOR_BLEND_PERIM_FRAC * NEON_MAX_LOOP_SAMPLES = 1.13 spacings on
+    every geometry, where the previous fixed 24 px span met the bound
+    only up to a ~3000 px perimeter and was down to 0.31 spacings by
+    9900 px. (No beading was actually measurable there - a DFT of the
+    hue around the perimeter put the 128-cycle component at the noise
+    floor - because the gradient varies slowly over one spacing on a
+    rect that large. The margin is a guarantee for dense colour stops,
+    not a fix for an observed artifact.)
+
+  - Sample-count independence. The kernel comes from the
+    NEON_MAX_LOOP_SAMPLES-based fraction rather than from the runtime
+    sample count, so the numSamples knob does not move the colour
+    blend. (An earlier sampleSpacing-derived floor divided by the live
+    count and landed 2x wider at reduced counts.)
+
+Deliberately NOT coupled to glowRadius. The gather produces colour only -
+the halo and bloom have been closed-form since they stopped riding on it -
+so a wide glow has no reason to desaturate the gradient, and the old
+max(glowRadius, floor) reintroduced exactly the pixel-space dependence
+this constant exists to remove.
+
+0.0088 puts the kernel at 24.0 px on the stock 800x600 / radius 40
+geometry, matching the previous fixed span, so default-sized output is
+unchanged.
+
+NOTE: unit-free, unlike the px constants around it. The shader
+multiplies it by a perimeter that is already in scaled px, so it needs
+no uResolutionScale correction - applying one would double-apply. ---
+```
+
+## ARC_FRAME_EPSILON: the arc frame's degenerate guard
+
+`neon-tuning.h` lines 330-345, before the move: `ARC_FRAME_EPSILON`.
+
+```text
+--- Degenerate guard for the corner arc's tangent frame (neon.frag,
+arcTangentSegment). The frame is built by normalising the fragment's
+offset from the arc centre, clamped into the quarter the arc occupies;
+that offset is the zero vector only for a fragment sitting exactly on an
+arc centre, where the direction is undefined and atan(0, 0) is undefined
+with it. Below this the frame falls back to the nearer of the two tangent
+points, which is the correct clamp for the whole region the guard covers.
+
+It floors `rho` in the same function, for the same fragment: the
+development rate divides into the segment's weight, so an exactly-zero
+rho would be a division by zero. The floored value is nowhere near a
+pixel and the limit it lands on is the exact answer anyway, so this only
+keeps a NaN out.
+
+Unit-free: compared against a length in the shader's own px space, and
+small enough that nothing but the exact degeneracy reaches it. ---
+```
+
+## Bloom
+
+`neon-tuning.h` lines 348-349, before the move: `BLOOM_REACH_TO_GLOW`, `BLOOM_NORM_FACTOR`.
+
+```text
+--- Bloom (wide background spill). See the halo note above for the closed
+form; BLOOM_SPACING_FLOOR is gone with the gather. ---
+```
+
+## The glow coverage table's layout and its sizing
+
+`neon-tuning.h` lines 367-389, before the move: `GLOW_COVER_MAX_WIDTH` to `GLOW_COVER_HEIGHT`.
+
+```text
+--- Glow coverage table (neon-glow-cover.frag, V20 and V21): for each piece
+of the emitter and each fragment position round it, the arcs' and the
+segments' coverage of that piece as the halo and the bloom see it. Laid
+out in neon-pieces.glsl: four bands of ROWS rows, each holding one
+straight at its left and one corner at its right. A band's columns are
+shared between the two in proportion to their lengths (uGlowCoverSplit,
+NeonRenderer::GetGlowCoverSplit), so a circle's corners get the columns
+its straights do not need and a long rect's straights get its corners':
+the straight has OVERHANG columns past each end, the corner
+CORNER_OVERHANG on each side of its arc and a guard texel at each end of
+its block, and the columns left over (the layout's `shared`) are split
+between the two interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
+within one halo width of a straight, and 16 inside and 16 outside a
+corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
+perimeter. Sizing it, against an exact per-piece reference (V21 in
+docs/records/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
+32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
+under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
+rect.
+
+The WIDTH is not a constant: the table's layout is a parameter
+(NeonRenderer's GlowCoverLayout, the shaders' uGlowCoverLayout), between
+MIN_WIDTH and MAX_WIDTH in steps of WIDTH_STEP. ROWS and HEIGHT are. ---
+```
+
+## The glow coverage table's width: the calibration
+
+`neon-tuning.h` lines 399-426, before the move: `GLOW_COVER_PX_PER_COLUMN_PER_KH`, `GLOW_COVER_MIN_PX_PER_COLUMN`, `GLOW_COVER_MAX_PX_PER_COLUMN`.
+
+```text
+--- The glow coverage table's width (NeonRenderer's GetGlowCoverWidth):
+enough interior columns that the longest band - its straight plus its
+quarter arc, L full-res px - gets one every S px, S growing with the
+halo width kh (max(glowRadius, EMISSION_MIN_WIDTH), px):
+
+    S    = clamp(PX_PER_COLUMN_PER_KH * kh, MIN_PX_PER_COLUMN, MAX_PX_PER_COLUMN)
+    need = 2 + 2 OVERHANG + 2 CORNER_OVERHANG + ceil(L / S)
+    W    = clamp(need rounded up to WIDTH_STEP, MIN_WIDTH, MAX_WIDTH)
+
+In full-res px because the edge ring reads the table at full
+resolution; lengths enter the layout only as ratios, so every scale
+shares one table.
+
+Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the 1024-wide
+table (docs/design/neon-glow-cover-resolution-plan.md step 2): 250 configs -
+rects 200 x 120 to 3600 x 2000, glowRadius 1 / 2 / 5 / 10 / 20,
+cornerRadius 0 / 40 / a circle, both windings, three partial arcs with
+and without colour stops and with two segments, at scales 1.0 / 0.5 /
+0.25 - each at every width from 256 to 960, the frame after a light
+change, against the same frame at 1024. The widest spacing that still
+met the plan's criterion (max 2 levels, 99.9% of lit pixels within 1)
+on every config was ~2.2 px per column at kh 1, 2.5 at 2, 4.6 at 5, 6.8
+at 10 and 10 at 20. These constants sit under that envelope - 12% at
+kh 5, 27% or more elsewhere - and at the widths they give, every config
+read at most 2 levels with at least 99.988% of lit pixels within 1.
+Spacing 20% wider failed at kh 5 (4 levels on a 200 px circle). A
+narrow glow on a large rect still gets MAX_WIDTH: at kh 1-2 a
+3600 x 2000 rect needed all 1024 columns. ---
+```
+
+## The segment table: the calibration
+
+`neon-tuning.h` lines 431-457, before the move: `GLOW_COVER_SEG_COLUMNS_PER_SIGMA`.
+
+```text
+--- The segment table (NeonRenderer's GetGlowCoverSegmentWidth,
+neon-glow-cover-fill.frag): the segments' two channels of the glow
+coverage table, baked at a width of their own and copied in. A bell's
+standard deviation is 0.3536 x its length x the perimeter - ~100 px for
+a length-0.05 segment on a 1840 x 1000 rect, against an arc's 14 px
+feather - so it needs far fewer columns than the arcs:
+
+    sigma = 0.3536 x the shortest lit segment's length x perimeter   (full-res px)
+    need  = 2 + 2 SEG_OVERHANG + 2 SEG_CORNER_OVERHANG + ceil(L / (sigma / SEG_COLUMNS_PER_SIGMA))
+    W     = clamp(need rounded up to WIDTH_STEP, SEG_MIN_WIDTH, the main table's width)
+
+with L the longest band, as for the main table. Where W would be at
+least SEG_DIRECT_SHARE of the main table's width (very short segments)
+the separate table saves nothing, and the segments are baked into the
+main table directly, as before it existed.
+
+Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the segments
+baked into the main table directly (plan step 3): 135 configs - rects
+200 x 120 to 3600 x 2000, glowRadius 2 / 5 / 10, cornerRadius 0 / 40 /
+a circle, scales 1.0 / 0.5 / 0.25, segments of length 0.01-0.2 with
+boosts 0.5-2, overlapping, abutting, over the corners, travelling, and
+under a partial arc - the frame after a light change, the segment table
+forced on. With overhangs 16 / 8, every COLUMNS_PER_SIGMA from 3 to 8
+read at most 2 levels with 99.9992% of lit pixels within 1; 2 read 3
+levels on a thin glow at 3840 x 2160. 4 is one step of margin. Overhangs
+8 / 4 held at every value tried (99.988%), 32 / 16 read at most 1 level
+from 4 up but do not fit SEG_MIN_WIDTH. ---
+```
+
+## GLOW_COVER_BELL_REACH: where the bake cuts a bell
+
+`neon-tuning.h` lines 460-472, before the move: `GLOW_COVER_BELL_REACH`, `GLOW_COVER_SEG_OVERHANG`, `GLOW_COVER_SEG_CORNER_OVERHANG`, `GLOW_COVER_SEG_MIN_WIDTH`, `GLOW_COVER_SEG_DIRECT_SHARE`.
+
+```text
+--- How far the glow coverage bake integrates a segment's bell either side
+of its centre, in units of 1 / invSigma (the bell is exp(-(d invSigma)^2),
+so 3 is 4.24 standard deviations, where it has fallen to 1.2e-4 of its
+peak). The bake (neon-glow-cover.frag, segmentsOnPiece) cuts the bell
+here and NeonRenderer's GetGlowCoverDirtySegmentPieces mirrors it to
+find the pieces a moved segment reaches: change one and the other
+follows, or a piece the bell reaches is not re-baked. It was 5 / sqrt(2)
+(5 sigma); at 3 a moved segment dirties fewer pieces, which took the
+segment table's bake on a band of 8 segments from 0.75 to 0.58 (timer
+units, AMD Radeon Pro 5300M), at most 1 level, on up to 1.6% of a
+frame's lit pixels (0.15% on average over the cover set; I61 in
+docs/records/review-findings.md). An 8-node rule on top halved it again but
+read 3 levels off a long, bright segment, and was not taken. ---
+```
+
+## BLIT_SIDE_GUARD_PX: the one-sided cut's guard band
+
+`neon-tuning.h` lines 496-525, before the move: `BLIT_SIDE_GUARD_PX`.
+
+```text
+--- One-sided cut guard band, in BUFFER pixels. Scaled path only.
+
+One of the two constants in this file stated in buffer px rather than
+full-res px (BLIT_CUTOFF_GUARD_PX below is the other): it describes the
+BUFFER's own sampling, so it must NOT be converted with uResolutionScale.
+
+For pass 1b the one-sided cut is not applied by neon.frag at all -
+neon-blit.frag applies it at DESTINATION resolution, where a pixel is a
+pixel and the edge can land exactly where the full-resolution shading
+puts it. What neon.frag still does is cull the dark side, and the bound
+it culls at cannot be the cut itself: the blit reconstructs each
+destination pixel from the 2x2 buffer texels around it, so a texel
+killed at the cut leaves the first LIT destination pixel rebuilt partly
+from black. Measured at scale 0.5, glowSide OUTSIDE: the first lit pixel
+came back at 178 against the 239 full resolution puts there, a dark seam
+hugging the inside of the glow's own edge.
+
+So the cull runs this far PAST the cut, and the guard band's emission is
+what the blit's filter reconstructs the boundary from. One buffer texel
+is the filter's reach; 2.0 covers that with room for the diagonal, where
+fwidth of an SDF is sqrt(2) rather than 1, and for the half-texel of
+phase between the cut and the nearest texel centre.
+
+The band costs a two-texel strip along the perimeter - nothing beside
+the half-plane the cull still removes - and none of it is visible: the
+blit's mask is zero everywhere past the cut, including at the hard step
+where this bound finally discards.
+
+NOT used by the edge ring, which owns its own cut (uBlitOwnsCut 0). See
+neon.frag's sideCull and the post-grade cut block. ---
+```
+
+## BLIT_CUTOFF_GUARD_PX: the cutoffs' guard band
+
+`neon-tuning.h` lines 528-552, before the move: `BLIT_CUTOFF_GUARD_PX`.
+
+```text
+--- Cutoff guard band, in BUFFER pixels. Pass 1b only.
+
+BLIT_SIDE_GUARD_PX's argument, applied to the inside/outside cutoffs.
+For pass 1b neon-blit.frag applies the cutoff masks at
+DESTINATION resolution, and neon.frag only culls - this far past the end
+of each ramp, so the blit's bilinear filter rebuilds every boundary from
+lit texels rather than from black. Same value as the side guard, for the
+same reasons: one buffer texel of filter reach, plus room for the
+diagonal and for the phase between the boundary and the nearest texel
+centre.
+
+It replaces CUTOFF_SOFT_FLOOR_PX, a feather in buffer px that let a mask
+drawn INTO the buffer place its boundary sub-texel. That was the best the
+buffer could do, and it still softened the boundary across a buffer
+texel and snapped it toward the buffer grid: on the bounded_band scene of
+docs/pages/neon-resolution-scale-comparison.html it read p99 41/255 against the
+1.0 render at scale 0.5, and 69 at 0.25, and the band spread past its
+own cutoffs as the scale fell (50,703 lit px at 0.5 and 53,568 at 0.25,
+against 47,012 at 1.0). Drawn by the blit instead it reads p99 4 at 0.5
+and 12 at 0.25, with 47,012 lit px at every scale; what is left is the
+reduced-resolution glow inside the band, not its edges. See
+docs/design/neon-resolution-scale-plan.md, step 2.
+
+NOT used by the edge ring, whose masks and culls are its own. See
+neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
+```
+
+## RING_GUARD_TEXELS: the edge ring's width and its calibration
+
+`neon-tuning.h` lines 555-593, before the move: `RING_GUARD_TEXELS`.
+
+```text
+--- Edge ring width. CPU only.
+
+At every scale, NeonRenderer redraws a ring around the rect
+edge at FULL resolution (neon.frag's ring program),
+reading only the gather's result from the gather buffer. The ring reaches R
+full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
+
+    R = max(reach(1.0), reach(scale)) + RING_GUARD_TEXELS / scale
+
+where reach(s) is the filament's reach as neon.frag computes it at scale
+s, in full-res px. BOTH, because inside R the reduced pass's filament -
+floored to what its buffer can sample, so wider than the real one
+whenever the line is thin - is replaced by the real one, and R has to
+clear whichever reaches further. Uncapped: the reach is where a filament
+has fallen to FILAMENT_CUTOFF of its gain, about 2/255 after the grade,
+which is exactly how far its error can show. RING_GUARD_TEXELS adds the
+reduced buffer's bilinear footprint past that.
+
+Calibrated over lineWidth {1, 2, 4, 8, 16} x filamentFalloff
+{0.5, 1, 2, 4} x glowRadius {0, 2, 5, 20}, each config rendered at
+scales 0.75, 0.5 and 0.25 and compared against its own 1.0 render
+(docs/design/neon-resolution-scale-plan.md, step 5). Worst error over all 80:
+
+  RING_GUARD_TEXELS    scale 0.75    scale 0.5    scale 0.25
+         0.5               3            12            3
+         1.0               4             2            2
+         2.0               2             2            2
+
+1.0 is the smallest that holds 2/255 at 0.5 and 0.25, the targets. 2.0
+also brings 0.75 within 2 (its worst at 1.0 is a 1 px flat-top line
+with no glow) for a ring one buffer texel wider each side.
+
+The two things that made the first version of this ring fail that sweep,
+both now handled: R used to cover only the full-res filament (fixed by
+taking the reduced pass's too, above), and at a small glowRadius pass 1's
+quad stopped short of R, so the ring read gather texels nothing wrote
+(fixed by covering the ring with the quad; since the gather was split
+out, the gather pass's own quad, built in setupRingGeometry, covers
+it). ---
+```
+
+## GATHER_TEXELS_PER_KERNEL: the gather's resolution and its calibration
+
+`neon-tuning.h` lines 596-629, before the move: `GATHER_TEXELS_PER_KERNEL`, `GATHER_MIN_SCALE`.
+
+```text
+--- Gather resolution. CPU only.
+
+At every resolutionScale the gather - ~95% of neon.frag's cost when it
+ran inline - runs in a pass of its own (neon-gather.frag) at its own
+scale, and pass 1 and the
+edge ring shade from its result. Its scale is (GetGatherScale in
+neon-renderer.cpp)
+
+    clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE,
+          min(resolutionScale, GATHER_MAX_SCALE))
+
+with kc the colour kernel's width in full-res px, perimeter *
+COLOR_BLEND_PERIM_FRAC: the gather's outputs are Lorentzian-weighted
+means whose kernel is never narrower than kc, so this many texels per kc
+carries them through a bilinear read.
+
+Calibrated on Mesa llvmpipe with an RGBA16F gather buffer (worst error
+against 1.0 over `probe scenes`, and the default scene's frame time):
+
+  GATHER_TEXELS_PER_KERNEL   worst error   default 0.5   default 0.25
+           1.0                   4              -              -
+           1.5                   2           10.5 ms        8.0 ms
+           2.0                  1-2          10.8 ms        7.3 ms
+           4.0                   -           14-17 ms      11-12 ms
+    (gather at resolutionScale)  1-2          37.5 ms       12.3 ms
+
+2.0 is the knee: 1.5 saves nothing measurable (the gather is no longer
+the pass that costs) and 4.0 costs half as much again for no visible
+gain. With an RGBA8 gather buffer - the fallback - 2.0 reads 3/255.
+GATHER_MIN_SCALE barely matters - full-viewport rects
+at 720p and 1080p read 1-2 at a floor of 0 and 0.0625 alike - and is
+kept as a cheap guard: the gather buffer is clipped to the viewport, so
+at the floor it is at most 128 x 80 texels at 1080p. See
+docs/design/neon-resolution-scale-plan.md section 13. ---
+```
+
+## GATHER_MAX_SCALE: the gather's ceiling, and the gate it replaced
+
+`neon-tuning.h` lines 633-655, before the move: `GATHER_MAX_SCALE`.
+
+```text
+--- The gather's ceiling. CPU only.
+
+GetGatherScale never gathers finer than this, at any resolutionScale.
+It binds only on a rect whose perimeter is under ~450 px (kc under 4
+px), which would otherwise gather near full resolution: its gather
+buffer - RGBA16F over the glow quad's box, two attachments with
+segments - ran to 16 / 33 MB at 1080p for a 40 x 24 rect whose glow
+fills the frame. At 0.5 that is a quarter, the same as the scaled path
+at 0.5 always gathered at, and the check suite's smallest rect (perimeter
+478 px) is not touched.
+
+It replaces the split gate at 1.0 (FULL_RES_SPLIT_GATHER_MAX_SCALE /
+FULL_RES_SPLIT_MIN_AREA_PX, removed - docs/design/neon-shader-cleanup-plan.md
+step 3), which ran the gather INLINE in neon.frag where splitting it
+out did not pay: on an AMD Radeon Pro 5300M, where the first offscreen
+pass of a frame costs ~0.15 ms, for a still cutoff band under ~140k px
+of quad and for a gather near full resolution. Since unchanged frames
+stopped re-running the gather (I40) the still case no longer leaves
+the caller's framebuffer at all; an Apple M2 Pro measured the split
+1.1-4.75x faster at every size and mode, and the AMD, re-measured with
+every rect split against its own gate, 0.98-1.02x in every animated
+mode with one loss - a cutoff band under an intensity pulse, 0.84x.
+So every scale splits, and the inline loop went with the gate. ---
+```
+
+## GLOW_REACH_RADIUS_FACTOR: the quad's reach
+
+`neon-tuning.h` lines 671-691, before the move: `GLOW_REACH_RADIUS_FACTOR`.
+
+```text
+--- Glow reach (quad sizing). The draw quad is sized to
+rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
+
+Named for the reach, not for an early-out: the per-fragment
+`ad > earlyOut -> discard` this constant was originally calibrated for
+no longer exists. Geometry culls the far region instead, which is
+tiler-friendly, so what the factor sets is how far the glow is allowed to
+reach before the quad stops covering it. The locals it feeds already say
+so - `glowReach` in both setupGeometry implementations, `reach` in both
+shaders.
+
+glowRadius only: the companion sampleSpacing * SPACING_FACTOR term is
+gone. sampleSpacing is perimeter / NEON_MAX_LOOP_SAMPLES, so it won on
+any reasonably large rect at default glowRadius and made both the
+distance the bloom got truncated at and the brightness it still had
+there track the rect size. The bloom's reach is a function of glowRadius
+alone, so that is all that sizes the quad.
+
+Used by the renderers' setupGeometry AND by the shaders, which recompute
+the same expression to place the bloom pedestal that lets this margin
+stay tight without the truncation showing. Keep the two in step. ---
+```
+
+## QUAD_FADE_START_FRAC: the quad-edge fade
+
+`neon-tuning.h` lines 694-720, before the move: `QUAD_FADE_START_FRAC`.
+
+```text
+--- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
+margin. The emission ramps to zero over [FRAC * margin, margin], so the
+bloom's 1/D tail - still ~10% of peak out at the quad edge - never clips
+as a hard rectangle.
+
+A fraction, not a pixel span, because the margin is proportional to
+glowRadius (see GLOW_REACH_RADIUS_FACTOR) and so is the bloom profile it
+hides. A fraction keeps the ramp at a constant proportion of the bloom's
+reach, so the fade reads the same at every glow radius; a fixed px ramp
+would vanish on a wide glow and dominate a narrow one. At the stock
+glowRadius 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a
+62 px ramp.
+
+Nothing derives 0.8 - anything leaving a ramp wide enough to hide the
+clip behaves the same. What it DOES assume is that the margin was set by
+the glow, where 20% of it is a long distance. When outsideCutoff clamps
+the margin instead (to where its fade ends, size + softness, plus 1),
+20% of ~13 px is 2.6 px and
+the ramp lands INSIDE the cutoff band, dimming the band's outer edge
+ahead of the cutoff mask - and only on the exterior, since the fade keys
+on positive d. Both shaders therefore floor the ramp's start at the
+cutoff boundary whenever that boundary falls inside the quad; see the
+fadeStart block in neon.frag.
+
+Since V23 the bloom no longer relies on this fade to end smoothly - each
+piece fades by its own distance from BLOOM_FADE_START_FRAC, below, which
+has it under a level well before this ramp starts. ---
+```
+
+## BLOOM_FADE_START_FRAC: each piece's bloom end fade
+
+`neon-tuning.h` lines 723-741, before the move: `BLOOM_FADE_START_FRAC`.
+
+```text
+--- Where each piece's bloom starts fading out, as a FRACTION of `reach`
+(neon.frag's bloom end fade, V23).
+
+The pedestal takes the bloom's 1/a tail to exactly 0 at `reach`, but
+with its slope still on, so the glow stopped on a crease: inside a large
+rect, a hard-edged dark rectangle `reach` in. The quad-edge fade above
+hid it outside, but over [0.8, 1.0] of the margin, where the tail is
+still ~5 levels up, and a fade that late STEEPENS the tail before it
+flattens it - a shoulder, then flat, which reads as an edge too. So
+each piece's bloom is multiplied by 1 - smoothstep(FRAC * reach, reach,
+a) of its own distance, on both sides.
+
+0.5 is about the latest start that does not steepen it: the steepest
+slope inside the fade over the slope where it starts, on the
+infinite-line bloom at glowRadius 5, bloomStrength 0.52, intensity 0.8,
+is 1.40 at 0.8, 1.14 at 0.6, 1.035 at 0.5 and 1.00 from 0.4 down. (It
+is also where c * (reach - a)^2 meets the pedestalled 1/a tail in value
+and slope.) An earlier start costs more of the tail; at 0.5 the glow
+reads up to 6 levels dimmer in the outer half of its reach. ---
+```
+
+## Filament reach in sigmas
+
+`neon-tuning.h` lines 744-768, before the move: `FILAMENT_CUTOFF`, `FILAMENT_REACH_MIN_SIGMAS`, `FILAMENT_REACH_MAX_SIGMAS`.
+
+```text
+--- Filament reach for the same quad sizing, expressed in sigmas.
+
+glowRadius = 0 means "filament only" - the halo and bloom are gated off
+by GLOW_GATE_FADE_PX - but the filament itself is still there, sized by
+lineWidth, so the quad has to cover it or the exterior gets clipped.
+
+The reach is NOT a constant, because the profile is
+exp2(-(ad/sigma)^N) with N = 2 * filamentFalloff and the slider runs
+down to falloff 0. Solving core * FILAMENT_GAIN < FILAMENT_CUTOFF gives
+
+    reach = sigma * log2(FILAMENT_GAIN / FILAMENT_CUTOFF) ^ (1/N)
+
+which is 1.9 sigmas at falloff 2.0, 3.5 at 1.0, 12.6 at 0.5, 67.8 at 0.3
+and 558 at 0.2 - it diverges as falloff -> 0. A fixed 12 (calibrated for
+falloff 0.5) left the low end badly under-sized: the interior is
+unbounded because the quad always covers it, so a soft filament flooded
+inward while the exterior was chopped at 12 sigmas. That asymmetry is
+the "no outer glow at glowRadius 0" report.
+
+MAX_SIGMAS bounds the fill cost where the formula diverges; the shaders
+pedestal-subtract the core at exactly this reach, so hitting the cap
+shortens the glow symmetrically on BOTH sides instead of showing a cliff
+on the outside. MIN_SIGMAS keeps a little room at very high falloff.
+Keep the expression in step across neon-tuning.h, both setupGeometry
+implementations, and both fragment shaders. ---
+```

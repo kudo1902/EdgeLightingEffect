@@ -70,6 +70,7 @@ Studies of specific mechanisms:
 | -------- | ---------- |
 | [`emission-prepass.md`](design/emission-prepass.md) | The per-sample emission table: why it exists, what it is keyed on, and its before / after. |
 | [`neon-frag-notes.md`](design/neon-frag-notes.md) | The measured history behind `neon.frag`'s lines, one section per block in shader order. |
+| [`neon-tuning-notes.md`](design/neon-tuning-notes.md) | The measurements, calibrations and history behind `neon-tuning.h`'s constants, one section per block in header order. |
 | [`corner-crease-and-filament-nyquist.md`](design/corner-crease-and-filament-nyquist.md) | The analytic emission's corner and filament defects and their fixes. Read before touching the halo / bloom or filament blocks. |
 | [`glow-side-comparison.md`](design/glow-side-comparison.md) | Edges as coverage on the graded output, and the one-sided cut moved into the blit. |
 | [`glow-inner-reach.md`](design/glow-inner-reach.md) | The glow quad's interior hole with no cutoff set, and the proof it changes no pixel. |

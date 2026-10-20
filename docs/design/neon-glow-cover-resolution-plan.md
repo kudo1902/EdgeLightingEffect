@@ -434,7 +434,7 @@ Gates:
 
 | file | change |
 | ---- | ------ |
-| `neon-tuning.h` | `GLOW_COVER_PX_PER_COLUMN_PER_KH`, `GLOW_COVER_MIN_PX_PER_COLUMN` and `GLOW_COVER_MAX_PX_PER_COLUMN`, with the calibration recorded beside them, as `RING_GUARD_TEXELS`'s is. |
+| `neon-tuning.h` | `GLOW_COVER_PX_PER_COLUMN_PER_KH`, `GLOW_COVER_MIN_PX_PER_COLUMN` and `GLOW_COVER_MAX_PX_PER_COLUMN`, with the calibration recorded beside them, as `RING_GUARD_TEXELS`'s is (both moved to [`neon-tuning-notes.md`](neon-tuning-notes.md) on 2026-10-20). |
 | `neon-renderer.cpp` | `GetGlowCoverWidth(config)` (section 3.2); `OnConfigChanged` stores the wanted width under `glowCoverShapeDirty`; `ensureGlowCoverBuffer` applies it with the hysteresis of section 3.4 and sets both masks whole on a reallocation (it already does). |
 | `neon-renderer.h` | `GlowCoverTable::wantedWidth`; the docs of `GlowCoverTable` and `ensureGlowCoverBuffer` (no longer "fixed size"). |
 
