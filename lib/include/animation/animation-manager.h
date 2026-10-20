@@ -39,6 +39,22 @@ namespace EdgeLighting
     ///
     /// An @ref AnimationGroup is itself an @ref Animation, so a whole group can
     /// be @ref Attach ed as a single phase-locked unit.
+    ///
+    /// ## Callbacks may change the list
+    ///
+    /// @ref Animation::OnComplete and @ref Animation::OnStateChanged fire from
+    /// inside @ref Update, and attaching the next animation or detaching the
+    /// finished one from there is the obvious way to chain them - the C ABI
+    /// documents its callbacks as firing inside @c el_effect_update. So
+    /// @ref Update walks a snapshot of the list, not the list itself:
+    ///   - an animation attached from a callback is first advanced on the
+    ///     NEXT Update;
+    ///   - one detached from a callback (itself, a later one, or all of them
+    ///     through @ref DetachAll) is not advanced again, and stays alive
+    ///     until the walk is done even if the list held its last reference.
+    /// Walking the list itself, either of those freed or overran the vector
+    /// under the loop (heap-use-after-free / container-overflow under
+    /// AddressSanitizer). A callback that calls @ref Update again is ignored.
     class AnimationManager
     {
     public:
@@ -80,6 +96,8 @@ namespace EdgeLighting
         ///        @ref Animation::Update).
         /// @param dt Time to advance (typically the effect clock's delta, so a
         ///           paused clock freezes every animation).
+        /// @note Safe against callbacks that attach or detach - see the class
+        ///       note. A nested call, from a callback, does nothing.
         void Update(float dt);
 
         /// @brief Apply every attached animation onto @p target in attach order
@@ -89,6 +107,15 @@ namespace EdgeLighting
 
     private:
         std::vector<AnimationPtr> mAnimations;
+        /// What @ref Update walks: a copy of @c mAnimations taken as it
+        /// starts, so the callbacks it fires can change the list. A member,
+        /// copy-assigned, so the per-frame walk reuses its capacity and
+        /// allocates nothing; cleared after the walk, so it never keeps a
+        /// detached animation alive past the Update that detached it.
+        std::vector<AnimationPtr> mWalk;
+        /// True while @ref Update walks @c mWalk - a nested Update from a
+        /// callback would overwrite it under the walk.
+        bool mInUpdate = false;
     };
 
 } // namespace EdgeLighting

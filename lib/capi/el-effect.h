@@ -1144,6 +1144,13 @@ extern "C"
      *  Attach animation handles to the effect. Attach does NOT transfer
      *  ownership - the caller still owns the handle and must destroy it.
      *  Order of attach is the order of Apply per frame (later writes win).
+     *
+     *  Attach and the detach calls return @ref EL_ERROR_INVALID_HANDLE before
+     *  the effect is initialised; the count reports 0 and contains reports
+     *  false then, as @ref el_effect_get_renderer_count does. All of them are
+     *  safe to call from an animation's own callback, which fires inside
+     *  @ref el_effect_update: an animation attached there is first advanced
+     *  on the next update, and one detached there is not advanced again.
      *  @{ */
 
     /** @brief Attach an animation. Duplicates and null handles are ignored. */

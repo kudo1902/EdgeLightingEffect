@@ -152,6 +152,10 @@ namespace EdgeLighting
     ///                         Composes cleanly for UI indicators that need
     ///                         to track all three states.
     ///
+    /// A callback may clear or replace itself, and may attach, detach, add or
+    /// remove animations in the @ref AnimationManager or @ref AnimationGroup
+    /// that is advancing it: both walk a snapshot of their list.
+    ///
     /// @code
     ///     auto pulse = std::make_shared<IntensityPulse>(0.5f);
     ///     pulse->Play();
@@ -294,7 +298,11 @@ namespace EdgeLighting
                     transitionTo(AnimationState::STOPPED);
                     if (OnComplete)
                     {
-                        OnComplete();
+                        // A copy, so the callback may clear or replace
+                        // OnComplete - a C host unregistering itself, say -
+                        // without destroying the callable it is running in.
+                        const std::function<void()> onComplete = OnComplete;
+                        onComplete();
                     }
                 }
             }
@@ -529,7 +537,9 @@ namespace EdgeLighting
             mState = next;
             if (OnStateChanged)
             {
-                OnStateChanged(prev, next);
+                // A copy, for OnComplete's reason (see Update).
+                const std::function<void(AnimationState, AnimationState)> onStateChanged = OnStateChanged;
+                onStateChanged(prev, next);
             }
         }
 
@@ -618,50 +628,68 @@ namespace EdgeLighting
         // command), but child states can drift if a child is controlled
         // individually.
 
+        //
+        // Each of them, and Update, reaches the children's callbacks
+        // (OnStateChanged, OnComplete), which may Add or Remove children - so
+        // they walk a snapshot (forEachChild), and skip a child removed
+        // earlier in the walk. A child added during one is first reached by
+        // the next call.
+
         void Play() override
         {
             Animation::Play();
-            for (const auto &a : mAnimations)
-            {
-                a->Play();
-            }
+            forEachChild([](Animation &a) { a.Play(); });
         }
 
         void Pause() override
         {
             Animation::Pause();
-            for (const auto &a : mAnimations)
-            {
-                a->Pause();
-            }
+            forEachChild([](Animation &a) { a.Pause(); });
         }
 
         void Stop() override
         {
             Animation::Stop();
-            for (const auto &a : mAnimations)
-            {
-                a->Stop();
-            }
+            forEachChild([](Animation &a) { a.Stop(); });
         }
 
         void Reset(Config &cfg) override
         {
             Animation::Reset(cfg);
-            for (const auto &a : mAnimations)
-            {
-                a->Reset(cfg);
-            }
+            forEachChild([&cfg](Animation &a) { a.Reset(cfg); });
         }
 
         // --- Drive -------------------------------------------------------
 
+        /// @note A nested call, from a child's callback, does nothing: it would
+        ///       overwrite the walk under the outer one.
         void Update(float dt) override
         {
-            Animation::Update(dt);
-            for (const auto &a : mAnimations)
+            if (mInUpdate)
             {
-                a->Update(dt);
+                return;
+            }
+            Animation::Update(dt);
+            // The per-frame walk reuses a member snapshot, so it allocates
+            // nothing once warm; reset even if a callback throws.
+            typedef struct WalkScope
+            {
+                AnimationGroup &group;
+                explicit WalkScope(AnimationGroup &g) : group(g) { group.mInUpdate = true; }
+                ~WalkScope()
+                {
+                    group.mWalk.clear();
+                    group.mInUpdate = false;
+                }
+            } WalkScope;
+            WalkScope scope(*this);
+            mWalk = mAnimations;
+            for (const auto &a : mWalk)
+            {
+                if (contains(a))
+                {
+                    a->Update(dt);
+                }
             }
         }
 
@@ -722,7 +750,32 @@ namespace EdgeLighting
         }
 
     private:
+        /// Whether @p animation is still a child.
+        bool contains(const AnimationPtr &animation) const
+        {
+            return std::find(mAnimations.begin(), mAnimations.end(), animation) != mAnimations.end();
+        }
+
+        /// @p fn on every child, over a snapshot taken now, skipping one
+        /// removed during the walk. For the broadcasts, which are not per
+        /// frame, so a local copy is fine.
+        template <typename Fn>
+        void forEachChild(Fn fn)
+        {
+            const std::vector<AnimationPtr> walk = mAnimations;
+            for (const auto &a : walk)
+            {
+                if (contains(a))
+                {
+                    fn(*a);
+                }
+            }
+        }
+
+    private:
         std::vector<AnimationPtr> mAnimations;
+        std::vector<AnimationPtr> mWalk; ///< Update's snapshot of mAnimations; empty outside it.
+        bool mInUpdate = false;          ///< True while Update walks mWalk.
     };
 
     /// @}
