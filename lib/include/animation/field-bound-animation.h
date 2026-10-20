@@ -449,7 +449,7 @@ namespace EdgeLighting
         // --- Drive -------------------------------------------------------
 
         /// @brief Evaluate every binding at @p elapsed and write into @p cfg.
-        void ApplyAt(Config &cfg, float elapsed) const override;
+        void ApplyAt(Config &cfg, double elapsed) const override;
 
         // --- RESTORE support ------------------------------------------
         // Generic implementation. For scalar bindings we snapshot per-binding

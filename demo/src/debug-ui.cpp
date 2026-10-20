@@ -548,7 +548,7 @@ namespace
         }
 
         // --- Elapsed status line ---
-        float elapsed = anim.GetElapsed();
+        const float elapsed = static_cast<float>(anim.GetElapsed());
         if (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
         {
             if (dur > 0.0f)

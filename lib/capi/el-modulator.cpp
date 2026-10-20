@@ -164,7 +164,7 @@ el_result_e el_modulator_evaluate(el_modulator_handle_t mod, float time, float *
 {
     VALIDATE_MOD_PTR(mod, "el_modulator_evaluate");
     VALIDATE_OUT_PTR(outValue, "el_modulator_evaluate");
-    *outValue = mod->ptr ? mod->ptr->Evaluate(time) : 0.0f;
+    *outValue = mod->ptr ? mod->ptr->Evaluate(static_cast<double>(time)) : 0.0f;
     LOG_D("mod=%p, time=%f, value=%f", (void *)mod, time, *outValue);
     return EL_SUCCESS;
 }

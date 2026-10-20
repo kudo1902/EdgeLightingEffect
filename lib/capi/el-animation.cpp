@@ -442,7 +442,7 @@ el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElaps
 {
     VALIDATE_ANIM_PTR(anim, "el_animation_get_elapsed");
     VALIDATE_OUT_PTR(outElapsed, "el_animation_get_elapsed");
-    *outElapsed = anim->ptr ? anim->ptr->GetElapsed() : 0.0f;
+    *outElapsed = anim->ptr ? static_cast<float>(anim->ptr->GetElapsed()) : 0.0f;
     LOG_D("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
     return EL_SUCCESS;
 }
@@ -450,12 +450,12 @@ el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElaps
 el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
 {
     VALIDATE_ANIM_PTR(anim, "el_animation_set_elapsed");
-    if (!anim->ptr || anim->ptr->GetElapsed() == elapsed)
+    if (!anim->ptr || anim->ptr->GetElapsed() == static_cast<double>(elapsed))
     {
         return EL_SUCCESS;
     }
     LOG_I("anim=%p, elapsed=%f", (void *)anim, elapsed);
-    anim->ptr->SetElapsed(elapsed);
+    anim->ptr->SetElapsed(static_cast<double>(elapsed));
     return EL_SUCCESS;
 }
 

@@ -531,7 +531,7 @@ namespace EdgeLighting
         }
     } // namespace
 
-    void FieldBoundAnimation::ApplyAt(Config &cfg, float elapsed) const
+    void FieldBoundAnimation::ApplyAt(Config &cfg, double elapsed) const
     {
         for (const ScalarBinding &b : mScalarBindings)
         {
