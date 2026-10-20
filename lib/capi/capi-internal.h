@@ -225,26 +225,26 @@ inline bool AllFinite(std::initializer_list<double> values)
 
 /// Rejects a call any of whose float arguments is NaN or infinite, returning
 /// @p failure (EL_ERROR_INVALID_PARAMETER, or nullptr from a factory).
-#define REQUIRE_FINITE(fn, failure, ...)                     \
-    do                                                       \
-    {                                                        \
-        if (!AllFinite({__VA_ARGS__}))                       \
-        {                                                    \
+#define REQUIRE_FINITE(fn, failure, ...)                             \
+    do                                                               \
+    {                                                                \
+        if (!AllFinite({__VA_ARGS__}))                               \
+        {                                                            \
             LOG_E("%s: non-finite argument (%s)", fn, #__VA_ARGS__); \
-            return failure;                                  \
-        }                                                    \
+            return failure;                                          \
+        }                                                            \
     } while (0)
 
 /// Rejects a duration below @p minimum, or equal to it when @p strict.
-#define REQUIRE_DURATION(fn, failure, duration, strict)                  \
-    do                                                                   \
-    {                                                                    \
+#define REQUIRE_DURATION(fn, failure, duration, strict)                   \
+    do                                                                    \
+    {                                                                     \
         if ((strict) ? !((duration) > 0.0f) : !((duration) >= 0.0f))      \
-        {                                                                \
+        {                                                                 \
             LOG_E("%s: duration %f must be %s 0", fn, (double)(duration), \
-                  (strict) ? "above" : "at least");                      \
-            return failure;                                              \
-        }                                                                \
+                  (strict) ? "above" : "at least");                       \
+            return failure;                                               \
+        }                                                                 \
     } while (0)
 
 /// Short-circuit setter that only logs + assigns when the incoming value

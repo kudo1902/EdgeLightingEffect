@@ -650,25 +650,29 @@ namespace EdgeLighting
         void Play() override
         {
             Animation::Play();
-            forEachChild([](Animation &a) { a.Play(); });
+            forEachChild([](Animation &a)
+                         { a.Play(); });
         }
 
         void Pause() override
         {
             Animation::Pause();
-            forEachChild([](Animation &a) { a.Pause(); });
+            forEachChild([](Animation &a)
+                         { a.Pause(); });
         }
 
         void Stop() override
         {
             Animation::Stop();
-            forEachChild([](Animation &a) { a.Stop(); });
+            forEachChild([](Animation &a)
+                         { a.Stop(); });
         }
 
         void Reset(Config &cfg) override
         {
             Animation::Reset(cfg);
-            forEachChild([&cfg](Animation &a) { a.Reset(cfg); });
+            forEachChild([&cfg](Animation &a)
+                         { a.Reset(cfg); });
         }
 
         // --- Drive -------------------------------------------------------

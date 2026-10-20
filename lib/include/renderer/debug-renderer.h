@@ -108,15 +108,15 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mLUTDebugShader;                                  ///< LUT strip (neon-lut-debug.frag).
-        ShaderProgram mStopMarkerShader;                                ///< Per-stop marker (neon-stop-marker.frag).
-        ShaderProgram mWireframeShader;                                 ///< Bounding box (wireframe.frag).
-        ShaderProgram mSharedBufferShader;                              ///< Shared-buffer inset (shared-buffer-debug.frag).
-        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};     ///< Small centred quad, sized to the rect.
-        VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"}; ///< Unit quad ([-1,+1]), scaled per marker.
-        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
+        ShaderProgram mLUTDebugShader;                                                ///< LUT strip (neon-lut-debug.frag).
+        ShaderProgram mStopMarkerShader;                                              ///< Per-stop marker (neon-stop-marker.frag).
+        ShaderProgram mWireframeShader;                                               ///< Bounding box (wireframe.frag).
+        ShaderProgram mSharedBufferShader;                                            ///< Shared-buffer inset (shared-buffer-debug.frag).
+        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};                   ///< Small centred quad, sized to the rect.
+        VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"};               ///< Unit quad ([-1,+1]), scaled per marker.
+        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};                 ///< 4 corners, drawn as GL_LINE_LOOP.
         VertexArray mSharedBufferInsetVertexArray{"DebugRenderer.SharedBufferInset"}; ///< The inset quad, inset-local px; uploaded each frame it is drawn.
-        glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
+        glm::vec2 mLUTStripHalfSize{0.0f};                                            ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
 
         /// This renderer's OWN copy of the baked colour ring, from the same
         /// @c Config::neon inputs @ref NeonRenderer bakes from - so the strip
