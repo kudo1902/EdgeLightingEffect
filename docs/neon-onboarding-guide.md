@@ -1196,7 +1196,7 @@ deprecated shim. On `main` the fill was bounded by the glow's cutoffs; read
 | ----- | ------------- | ------------ | ---------- |
 | `colorStops` | `vector<ColorStop>`, red 0.0 / green 0.25 / blue 0.5 / yellow 0.75 | The base gradient around the ring. Positions are perimeter fractions from `t = 0`; the bake sorts them, so authored order does not matter (except between stops at the same position). Empty means white. | `GradientRingLUT::Bake` -> `uGradientLUT` (unit 0). RGB is read by P0 at the rotated position; alpha is read pointwise by `neon.frag`. |
 | `blendSpace` | `BlendSpace`, `RGB` | How the gradient blends between stops: `RGB` (straight mix), `HSV` or `HSL` (shortest way round the hue circle). Alpha always blends linearly. | Bake time only; never a uniform. |
-| `hueRotationRate` | float, 0.5 | Revolutions per second the base gradient scrolls around the ring; the sign is the direction; 0 is static. Arcs and segments with their own stops do not rotate. | `uHuePhase` = `fract(time x rate)`, reduced on the CPU in double (`GetCyclePhase`): P0 reads the ring at `t - uHuePhase`; `neon.frag` reads alpha the same way. A non-zero rate re-runs P0 every frame. |
+| `hueRotationRate` | float, 0.5 | Revolutions per second the base gradient scrolls around the ring; the sign is the direction; 0 is static. Arcs and segments with their own stops do not rotate. | `uHuePhase` = the rate integrated over the clock, in double on the CPU (`PhaseAccumulator`; `fract(time x rate)` while the rate holds): P0 reads the ring at `t - uHuePhase`; `neon.frag` reads alpha the same way. A non-zero rate re-runs P0 every frame. |
 | `colorTransitionDuration` | float, 0.3 s | Cross-fade time when `colorStops` or `blendSpace` change. 0 snaps. Runs on the host's raw `dt`, so it continues while the effect clock is paused. | `GradientRingLUT::Tick`, from `NeonRenderer::Update`; each fade frame re-uploads the ring and re-runs P0. |
 
 | `RGB` | `HSV` | `HSL` |
@@ -2139,7 +2139,7 @@ applies both itself at full resolution.
 | `uLineWidth` | float | scaled px | `lineWidth` x scale |
 | `uFilamentFalloff` | float | none | `filamentFalloff` |
 | `uIntensity` | float | none | `intensity` |
-| `uHuePhase` | float | cycles, [0, 1) | `fract(clock time x hueRotationRate)`, in double on the CPU (`GetCyclePhase`) - the clock is a double and no shader sees an absolute time |
+| `uHuePhase` | float | cycles, [0, 1) | `hueRotationRate` integrated over the clock time, in double on the CPU (`PhaseAccumulator`) - the clock is a double and no shader sees an absolute time |
 | `uGlowRadius` | float | scaled px | `glowRadius` x scale |
 | `uBloomStrength` | float | none | `bloomStrength` |
 | `uGlowSide` | int | 0/1/2 | `glowSide` |

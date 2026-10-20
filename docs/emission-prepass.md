@@ -160,9 +160,9 @@ is that test, and it has exactly two terms.
   counts are only current once `packLightBlocks` has run, so `Render` packs
   before it asks.
 - **`uHuePhase`**, which reaches `neon-emission.frag` in exactly one place:
-  `float ti = si - uHuePhase`. It is `fract(time * hueRotationRate)`, reduced
-  on the CPU in double (`GetCyclePhase`), and the only form time or the rate
-  takes in the pass. At a rate of 0 it is exactly 0 at every time, so a still
+  `float ti = si - uHuePhase`. It is `hueRotationRate` integrated over the
+  clock, in double on the CPU (`PhaseAccumulator`), and the only form time or
+  the rate takes in the pass. While the rate is 0 it does not move, so a still
   ring rebakes nothing however the clock runs. The comparison is
   `huePhase != mEmission.bake.huePhase`, exact rather than tolerant, because an
   unchanged clock reproduces the identical phase. (Until 2026-10-19 the pass

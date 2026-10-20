@@ -35,7 +35,7 @@ out vec4 fragColor;
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
-uniform float uHuePhase; ///< fract(time * hueRotationRate), reduced on the CPU in double (GetCyclePhase).
+uniform float uHuePhase; ///< hueRotationRate integrated over the clock, in double on the CPU (PhaseAccumulator).
 uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;

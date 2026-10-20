@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I86, I87, I88 |
+| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I86, I88 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -6101,7 +6101,7 @@ out of the C ABI on every platform rather than two.
 on this Mac contradicted: 87 calls of a logging getter printed nothing, because
 of the `PLATFORM_MACOS` branch above. The claim holds only for Linux, as given.
 
-### I87. V30's fix left seven descriptions of the old phase formula - OPEN
+### I87. V30's fix left seven descriptions of the old phase formula - FIXED
 
 The thirty-fourth pass made every rate-driven phase a `PhaseAccumulator`, but
 these still describe `uHuePhase` as `fract(time * hueRotationRate)` reduced by
@@ -6116,6 +6116,8 @@ these still describe `uHuePhase` as `fract(time * hueRotationRate)` reduced by
 `progress-log.md` describes the clock commit as it was and stays;
 `tools/neon-scale-check/README.md`'s `clock` section is about `GetCyclePhase`
 itself, which still exists, and stays too. Comments and prose only - no pixel.
+
+**Fixed** on 2026-10-20: the three shader comments and the four passages in `implementation.md`, `emission-prepass.md` and `neon-onboarding-guide.md` now describe `uHuePhase` as the rate integrated over the clock (`PhaseAccumulator`), equal to `fract(time * rate)` while the rate holds. Comments and prose only; `check` passes.
 
 ### I88. The spotlight overwrites its strip buffer in place on every animated frame - OPEN
 
@@ -6270,7 +6272,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V34 | fixed | the colour cross-fade restarted on every bake, so a stop edited each frame lagged (23% of a one-second drag shown at its end); a fade retargeted in flight now chases the new target exponentially at a time constant of a third of the duration - lag 0.77 -> 0.09; a change from rest keeps the smoothstep |
 | I85 | fixed | `CaptureUtil::ReadRegion` tested `GL_SAMPLES`, the DRAW framebuffer's, so a single-sample capture read after `End` was refused under a multisampled window; the pre-check is gone (glReadPixels' own INVALID_OPERATION is named instead) and a host pack buffer is unbound for the read and restored |
 | I86 | open | on Linux / Tizen `LOG_D` stays live in the C ABI, so 74 of 82 getters log on every call; `el_animation_update` / `apply` log at INFO on every call everywhere (120 lines per 60 frames); no level filter or platform sink |
-| I87 | open | V30's fix left seven descriptions of `uHuePhase` as `fract(time * rate)` - three shader comments, four places in three docs |
+| I87 | fixed | V30's fix left seven descriptions of `uHuePhase` as `fract(time * rate)`; all seven now describe the integrated phase (`PhaseAccumulator`) |
 | I88 | open | the spotlight overwrites its strip VBO with `glBufferSubData` every animated frame, where the neon orphans with `glBufferData` to avoid an implicit sync; not measured |
 | I89 | fixed | `el_animation_destroy` on an attached animation left it running with its C callback still holding the host's `userData`; destroy now clears both callbacks (use-after-free under ASan before, clean after); the orphaned animation is still removable only by `el_effect_detach_all_animations`, as the header now says |
 

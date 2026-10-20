@@ -63,9 +63,10 @@ precision highp float;
 
 out vec4 fragColor;
 
-/// The hue's phase: fract(time * hueRotationRate), reduced in double on the
-/// CPU (GetCyclePhase), so it keeps a float's precision at any uptime. Time
-/// reaches this pass in no other form.
+/// The hue's phase: hueRotationRate integrated over the clock's time, in
+/// double on the CPU (PhaseAccumulator), so it keeps a float's precision at any
+/// uptime and moves at the rate even while the rate changes. Time reaches this
+/// pass in no other form.
 uniform float uHuePhase;
 uniform int   uNumSamples; ///< Samples in use; 1..NEON_MAX_LOOP_SAMPLES. Texels past it are written but never read.
 

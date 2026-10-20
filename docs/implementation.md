@@ -65,9 +65,11 @@ Two calls per frame, from the host:
 `clockTime` is a `double` (`Clock`, and `BaseRenderer`'s `time` parameter):
 an effect may run for days, and a float clock stops moving at 60 fps past 2^19
 s (~6.07 days). No shader is handed it. Each renderer reduces it on the CPU, in
-double, to the bounded phase its shader reads (`GetCyclePhase`, `WrapPeriod`
-in `animation/clock.h`): the neon's `uHuePhase`, the flare's `uRotation`, the
-droplets' wrapped `uDropTime`. `neon-scale-check clock` checks the frames at a
+double, to the bounded phase its shader reads: the neon's `uHuePhase`, the
+flare's `uRotation`, the droplets' wrapped `uDropTime`. Each is a
+`PhaseAccumulator` (`animation/clock.h`) - the config's rate INTEGRATED over the
+clock, not multiplied by it, so a rate that changes moves the phase at that
+rate; while a rate holds it equals `GetCyclePhase` / `WrapPeriod` exactly. `neon-scale-check clock` checks the frames at a
 10-day start time against the same frames from 0.
 
 **`Render(w, h)`** - in two phases, each over every renderer in registration

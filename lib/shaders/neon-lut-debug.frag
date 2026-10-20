@@ -9,7 +9,7 @@ out vec4 fragColor;
 
 uniform sampler2D uGradientLUT;
 uniform vec2  uStripHalfSize; ///< half-width, half-height of the strip in local px.
-uniform float uHuePhase; ///< fract(time * hueRotationRate), reduced on the CPU in double (GetCyclePhase).
+uniform float uHuePhase; ///< hueRotationRate integrated over the clock, in double on the CPU (PhaseAccumulator).
 
 void main() {
     // Map local x in [-halfW, +halfW] to u in [0, 1], then apply the same
