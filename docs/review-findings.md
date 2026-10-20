@@ -35,9 +35,9 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, I13, I18 |
+| open | V9, V16, V18, V28, V29, V32, V33, V34, I13, I18, I76, I80, I81, I82, I83, I84, I85, I86, I87, I88, I89 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
-| fixed or changed | every other V, I and R item, through the thirty-second pass |
+| fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -87,6 +87,18 @@ V16 comes from measuring a cap on the edge ring's width - see
 [Fifteenth pass](#fifteenth-pass-the-ring-cap-comparison). The cap was rejected
 (section 7 of `neon-resolution-scale-plan.md`); V16 is what the uncapped
 baseline of that comparison turned up, in the shipped code.
+
+V30, V31, V32 and I77 to I84 come from a read of the whole tree at `1c76c3e` -
+see [Thirty-fourth pass](#thirty-fourth-pass-the-full-tree-review). Most of
+them sit outside the neon's skip keys, which `neon-scale-check sequence`
+already covers: in the time model, the animation system, the C ABI and the
+droplets. The five that were reproduced - V30, V31, I77, I78 and I79 - are
+fixed; the rest are open. The same pass adds notes to V28, V29 and I76.
+
+V33, V34 and I85 to I89 come from a second read of the tree the same day,
+over the code the thirty-fourth pass only skimmed and over its own fixes - see
+[Thirty-fifth pass](#thirty-fifth-pass-the-second-full-tree-review). All are
+open; that pass changed no code.
 
 ## How the visual items were reproduced
 
@@ -5502,6 +5514,660 @@ buffer at 1080p and 0.5, 1.0 MB at 0.25.
 
 ---
 
+## Thirty-fourth pass (the full-tree review)
+
+A read of the whole tree at `add_shared_buffer_architecture` (`1c76c3e`),
+architecture and implementation, on 2026-10-20. The neon's own skip keys are
+well covered by `neon-scale-check sequence` (V28, V29 and I76 above), so most
+of what this pass found sits OUTSIDE them: in the time model, the animation
+system, the C ABI and the droplets. Five items were reproduced with throwaway
+probes - CPU programs against the headers, AddressSanitizer runs, and a hidden
+GLFW window with an `OffscreenCapture` as in
+[How the visual items were reproduced](#how-the-visual-items-were-reproduced),
+on an AMD Radeon Pro 5300M and its Intel UHD 630 - and all five are fixed:
+V30, V31, I77, I78 and I79. The rest - V32 and I80 to I84, the minor list and
+the stale documentation - are open and are recorded from the read alone,
+except where an item says what was measured.
+
+How the five fixes were checked as a set, after the last of them: the full
+build (the library, the C ABI, both demos and both tools) with no warnings;
+each item's probe, which fails on `1c76c3e` and passes after; and
+`neon-scale-check` built for both trees on the AMD 5300M. `clock`, `check` and
+`partition` pass on both, `check`'s output is identical, `clock --dump`'s 30
+frames are byte-identical and `generate --images` writes 210 of 210 PNGs
+byte-identical between the two - every scene there holds its rates constant,
+which is the case V30's fix is built to leave alone. `shared-buffer` needed a
+change to its own test, given under V30. `sequence` fails 24 frames on both
+trees, identically: V28, which this pass did not fix.
+
+### V30. The hue raced whenever its rate changed, and the flare's rays and the droplets' field with it - FIXED
+
+**Found** by reading where each renderer turns the clock into the phase its
+shader reads: the neon's and the debug strip's `uHuePhase` were
+`GetCyclePhase(time, hueRotationRate)`, the flare's `uRotation`
+`GetCyclePhase(time, rotationRate)` and the droplets' `uDropTime`
+`WrapPeriod(time * DROPLET_TIME_SCALE * speed, DROPLET_TIME_PERIOD)`. Each is
+`time * rate`, which is the phase only while the rate holds. Under a moving
+rate its slope is `rate + time * d(rate)/dt`, so the phase races by an amount
+that grows with the uptime, and a rate changed in a single step - a slider, a
+square-wave animation - jumps it by `time * change`.
+
+All three rates move in practice. `hueRotationRate` and `rotationRate` are
+`AnimatableField`s, the demo and the C ABI ship two presets that animate the
+hue's (`HueRotationEaseReverse`, a triangle between -0.8 and 0.8 rev/s over
+6 s, and `HueRotationReverse`, a square wave), and `droplets.speed` is a
+slider in both demos.
+
+**Measured** through the library's own `Clock`, `AnimationManager`,
+`HueRotationEaseReverse(0.8, 6)` and the phase as `NeonRenderer` computed it,
+over one 6 s cycle at 60 fps, with the preset started at different clock
+times. The rate never exceeds 0.8 rev/s, which is 0.0133 of a turn a frame:
+
+| preset started at | mean hue step, turn / frame | max |
+| ----------------- | --------------------------- | --- |
+| clock 0 s | 0.028 | 0.066 |
+| clock 10 s | 0.116 | 0.155 |
+| clock 60 s | 0.440 | 0.480 |
+| clock 600 s | 0.360 | 0.400 |
+
+Even started at 0 the hue moved twice as fast as its rate; a minute in it
+moved nearly half a turn a frame, which reads as noise. The demos start their
+clock with the effect, so the preset came closest to its intended look in the
+first seconds of a session and degraded from there.
+
+**Fixed** by integrating each rate instead of multiplying it by the time:
+`PhaseAccumulator` (`animation/clock.h`) keeps an anchor - a phase at a time -
+and advances from it at the current rate; a new rate re-anchors at the time it
+is first seen, with the phase the old rate had reached, so the phase stays
+continuous and moves at the rate it is given. Until the rate first changes the
+anchor is (0, 0) and the phase is `rate * time` wrapped, bit for bit what
+`GetCyclePhase` / `WrapPeriod` return, so a constant rate - the default and
+every check scene - renders as before at every time. Asking twice at one time
+with one rate returns one phase, so each renderer advances its accumulator from
+`Update`, every frame and before any early return - a rate that moves while the
+layer is off is integrated as it moved - and reads it again in its draw, for a
+host that renders without updating. `NeonRenderer::mHuePhase`,
+`DebugRenderer::mHuePhase` (fed the same times and rates as the neon's, so
+the strip keeps the glow's hue), `LensFlareRenderer::mRotation` and
+`DropletsRenderer::mDropTime`. A non-finite rate counts as 0 and a
+non-finite time moves nothing, so neither can leave a NaN in the anchor.
+`GetCyclePhase` stays, as the constant-rate form `neon-scale-check clock`
+checks.
+
+After the fix, the same measurement:
+
+| preset started at | mean hue step | max |
+| ----------------- | ------------- | --- |
+| clock 0, 10, 60, 600 and 870400 s | 0.0066 | 0.0133 |
+
+and a constant rate of 0.5 at 100,000 times from 870400 s matches
+`GetCyclePhase` in every bit; a paused clock under a moving rate holds the
+phase. The gates are as given at the top of this pass.
+
+**What changes for a host.** A rate set to 0 now HOLDS the phase where the
+rotation stopped, rather than returning it to 0 - the only continuous answer,
+since a rate animation passes through 0 every half cycle - and the phase is a
+function of the rate's history rather than of the time alone, so two effects
+whose rates moved differently can show different hues at one time. That is
+what `neon-scale-check shared-buffer` tripped over: its long-lived effect ran
+the hue variant at 0.5 rev/s and then went back to rate 0 for the moving-rect
+comparison, holding its hue where the rotation stopped while the fresh effect
+it was compared with sat at phase 0 - 679,332 texels off at 1.0, for no reason
+the clear could be blamed for. The comparison now runs on an effect of its own
+whose rate never moved (and its README says so); with that, `shared-buffer`
+passes.
+
+### V31. The droplets keep the ring built for the previous glow side - FIXED
+
+**Found** by reading `DropletsRenderer::OnConfigChanged`. Its rebuild gate was
+the geometry, `bandWidth` and `bandOffset`, but `GetBandExtent` - what
+`setupGeometry` builds the band's ring from - also reads
+`NeonConfig::glowSide`: the band sits outside the rect edge for OUTSIDE, inside
+it for INSIDE, across it for BOTH. A change to the side alone left the ring
+built for the old side, whose hole then swallowed part of the new band.
+
+**Measured** with a 600 x 400 rect at (100, 100) in an 800 x 600 viewport,
+`bandWidth` 40, `amount` 1, every other field at its default, changing only
+`glowSide` on a live effect and comparing with a fresh effect drawn at the
+new side (AMD Radeon Pro 5300M):
+
+| switched | lit px after the switch | fresh effect | px that differ |
+| -------- | ----------------------- | ------------ | -------------- |
+| BOTH -> INSIDE | 12,122 | 13,471 | 1,349 |
+| BOTH -> OUTSIDE | 10,230 | 14,117 | 3,887 |
+| INSIDE -> BOTH | 11,819 | 13,260 | 1,441 |
+| INSIDE -> OUTSIDE | 2,914 | 14,117 | 11,203 |
+| OUTSIDE -> BOTH | 13,259 | 13,260 | 1 |
+| OUTSIDE -> INSIDE | 8,419 | 13,471 | 5,052 |
+
+It stayed wrong until the rect or the band next changed. The same probe on the
+Intel UHD 630 read 8,409 of 12,891 for OUTSIDE -> INSIDE.
+
+**Fixed** by gating on what the builder reads rather than on a list of the
+fields behind it: the geometry, and `GetBandExtent(config)` against
+`GetBandExtent(mCurrentConfig)` (`BandExtent` gained an `operator==`). All six
+transitions are now byte-identical to the fresh effect.
+
+**Why it was missed** is the same shape as the neon's own history - the
+"glowSide and insideCutoff BOUND THE QUAD NOW" note in its `OnConfigChanged`,
+and V28: a hand-written list of inputs that the builder outgrew. See the V28
+addendum below for the pattern that removes the class.
+
+### I77. An animation callback that attaches or detaches corrupts the walk it fires from - FIXED
+
+**Found** by reading `AnimationManager::Update`, a range-for over the attach
+list that calls each animation's `Update`, which fires `OnComplete` and
+`OnStateChanged` from inside it. Chaining one-shots from `OnComplete` - attach
+the next, detach the finished one - is what those callbacks are for, and the
+C ABI documents them as firing "inside `el_effect_update`", where a C host's
+natural move is `el_effect_attach_animation` or `el_effect_detach_animation`.
+Either changes the vector under the loop. `AnimationGroup` had the same shape
+in `Update` and in its `Play` / `Pause` / `Stop` / `Reset` broadcasts, whose
+children's state changes fire `OnStateChanged`. And a callback that cleared or
+replaced ITSELF - a C host unregistering with
+`el_animation_set_on_complete_callback(anim, NULL)` - destroyed the
+`std::function` it was running in.
+
+**Measured** under AddressSanitizer with three animations attached, the first
+a one-shot that completes in the `Update` under test, one case per process:
+
+| case | `1c76c3e` | after |
+| ---- | --------- | ----- |
+| manager: attach two from `OnComplete` | heap-use-after-free | clean |
+| manager: detach itself | container-overflow | clean |
+| manager: detach a later one | container-overflow | clean, and it is not advanced |
+| manager: `DetachAll` | container-overflow | clean |
+| manager: `Update` again from the callback | clean | clean (ignored) |
+| a callback clearing itself, then reading a capture | heap-use-after-free | clean |
+| group: `Add` two from `OnComplete` | heap-use-after-free | clean |
+| group: `Remove` itself | container-overflow | clean |
+| group: `Add` two from `OnStateChanged` under a broadcast `Pause` | heap-use-after-free | clean |
+
+With a single animation attached the loop happened to end before it touched
+the freed storage, which is why one animation never showed it.
+
+**Fixed.** `AnimationManager::Update` walks a snapshot, `mWalk`, copy-assigned
+from the list so the per-frame walk reuses its capacity and allocates nothing,
+and cleared after it, so a detached animation is not kept alive past the
+Update that detached it. An animation attached during the walk is first
+advanced on the next Update; one detached during it - itself, a later one, or
+all of them - is not advanced again (each entry is checked against the list
+before it is ticked). A nested `Update` from a callback is ignored, since it
+would overwrite the walk, and a scope guard resets both if a callback throws.
+`AnimationGroup::Update` does the same with its own member snapshot, and its
+broadcasts walk a local copy (they are not per frame). `Animation` invokes a
+COPY of `OnComplete` and `OnStateChanged`, so a callback may clear or replace
+itself. The class notes and the C header (`el-effect.h`, animation
+management) say what a callback may do. All nine cases are clean under
+AddressSanitizer and UndefinedBehaviorSanitizer.
+
+### I78. A zero-duration animation kept its elapsed time in a float - FIXED
+
+**Found** while checking the double clock (`3ee57bf`) against the animation
+system it feeds. `Animation::mElapsed` was a float. LOOP mode wraps it at the
+duration, but a duration of 0 - "the modulator owns its periodicity",
+`FieldBoundAnimation`'s default and the `*Curve(mod)` animations' - is never
+wrapped, and `Modulator::Evaluate(float)` took the time as a float too. So the
+bug the clock was fixed for was still there one layer up.
+
+**Measured** with a `FieldBoundAnimation` of the default duration driving a
+0.5 Hz sawtooth on `NEON_INTENSITY`, its elapsed time set to an uptime and then
+stepped 600 times by 1/60 s (each frame should move the saw by 1/120):
+
+| uptime | `1c76c3e`: elapsed advanced per 10 s | worst saw step error | after: advanced | error |
+| ------ | --------------------------------- | -------------------- | --------------- | ----- |
+| 0 | 10.000019 s | 1.3e-7 | 10.000001 s | 5.2e-8 |
+| 1 day | 9.375 s | 5.2e-4 | 10.000001 s | 5.2e-8 |
+| 3 days | 9.375 s | 5.2e-4 | 10.000001 s | 5.2e-8 |
+| 6 days | 18.75 s | 7.3e-3 | 10.000001 s | 5.2e-8 |
+| 6.1 days | 0 s | 8.3e-3 | 10.000001 s | 5.2e-8 |
+| 12 days | 0 s | 8.3e-3 | 10.000001 s | 5.2e-8 |
+| 365 days | 0 s | 8.3e-3 | 9.999999 s | 5.2e-8 |
+
+Past 2^19 s (~6.07 days) the animation stood still, exactly as the float clock
+did.
+
+**Fixed** by making time a double end to end in the animation system:
+`Animation::mElapsed`, `GetElapsed` / `SetElapsed`, `ApplyAt(Config &, double)`
+and `Modulator::Evaluate(double)`. Each modulator reduces the time in double to
+the bounded quantity it shapes - the `Oscillator`'s cycle phase, the `Ease`'s
+progress, the `Sequence`'s local time - and only then narrows to float, with
+the usual guard for a value just under 1 that narrows to 1.0f. `dt` stays a
+float. Subclasses whose own duration bounds their elapsed time narrow it
+explicitly (`ArcWipe`, the demo's `EdgeExpand`). The C ABI keeps its float
+signatures (`el_animation_get_elapsed` / `set_elapsed`,
+`el_modulator_evaluate`), converting at the boundary.
+
+An `Animation` subclass that still overrides `ApplyAt(Config &, float)` no
+longer compiles (with `override`; without it the class is abstract), which is
+the intent. Animated values are now reduced in double rather than float, so an
+animated frame can differ from `1c76c3e` in the last bit of a modulated value;
+every constant-config image is unchanged (210 of 210, above).
+
+### I79. The C ABI dereferenced a null effect before `el_effect_init` - FIXED
+
+**Found** by reading `el-effect.cpp`. `el_effect_create` makes the handle with
+a null `impl`, which only `el_effect_init*` fills (`InitLayers`), but eleven
+entry points dereferenced it unchecked: `el_effect_update`, `el_effect_render`,
+`el_effect_capture`, `el_effect_clock_play`, `el_effect_clock_pause`,
+`el_effect_clock_is_playing`, `el_effect_attach_animation`,
+`el_effect_detach_animation`, `el_effect_detach_all_animations`,
+`el_effect_get_animation_count` and `el_effect_contains_animation`. Only
+`el_effect_set_renderer_order` checked (`IsInitialised`). A C host that
+attached its animations before initialising, or updated before it, crashed -
+the ABI's promise is an `el_result_e` for misuse, never a crash.
+
+**Measured**: `el_effect_update`, `el_effect_clock_play` and
+`el_effect_capture` on a created, uninitialised handle each exited with 139
+(SIGSEGV).
+
+**Fixed** with the same check on all of them: nine return
+`EL_ERROR_INVALID_HANDLE` and log the call, and the two queries with an empty
+answer give it, as `el_effect_get_renderer_count` does before init - a count
+of 0, contains false. `el-effect.h` documents each. A C probe calling all eleven on an
+uninitialised handle gets exactly that, and exits cleanly.
+
+### V32. The lens flare is never dithered - OPEN
+
+**Found** by reading: `lens-flare.frag` writes its colour straight out at both
+resolution paths, and below 1.0 into `mScaledBuffer`, which is RGBA8 (the
+`Framebuffer::Resize` default). The flare is the smoothest light the library
+draws - a soft glow, ghosts and rays - so it is the layer most exposed to the
+mechanism R7 fixed for the neon and V27 for the spotlight: slow gradients
+crossing an 8-bit level only every few px draw contour rings, and below 1.0 an
+RGBA8 buffer rounds the tail to plateaus that the blit's bilinear read joins
+into diamond-shaped bands. **Not measured.** The cure, if it shows, is the
+other two layers': a half-float buffer read undithered, and the noise added
+once per destination pixel on the write to the caller's target.
+
+### I80. No float input is checked for NaN or infinity - OPEN
+
+**Found** by reading the C ABI setters (`SET_AND_LOG` passes every float
+through) and the animation factories (`IntensityPulse(0)` builds an
+`Oscillator` of frequency 1 / 0; an `Ease` or `Sequence` takes any duration).
+One NaN in the config makes `Config::operator==` false for good, so
+`EdgeLightingEffect::refreshActiveConfig` notifies every renderer on every
+frame and every skip and cache the renderers keep - the neon's offscreen
+reuse, its fields, the glow coverage table's dirty pieces - is defeated, on
+top of the NaN reaching geometry and uniforms. V30's `PhaseAccumulator`
+treats a non-finite rate as 0, which covers the phases alone. The fix is to
+refuse non-finite values at the boundary - the C ABI's setters and the
+factories - as b692d63 did for enum values.
+
+### I81. Every uniform lookup builds a `std::string` - OPEN
+
+**Found** by reading `ShaderProgram::getLocation`: its cache is an
+`std::unordered_map<std::string, GLint>`, looked up with the `const char *`
+name, which constructs a temporary string on every `SetUniform` - and then a
+second hash lookup for the value cache. Under libstdc++, the Linux / Tizen
+standard library, a name longer than 15 characters does not fit the
+small-string buffer and is a heap allocation: 8 of the library's 88 distinct
+uniform names, `uInsideCutoffSoftness`, `uGlowCoverLayout` and
+`uPerimeterUnread` among them, about 7 allocations per `uploadNeonUniforms`
+call, on every frame. macOS's libc++, whose buffer holds 22, shows none of it,
+which is why nothing measured here saw it. It works against the zero-allocation
+goal `EdgeLightingEffect::mScratchConfig` was built for. The fix is to resolve
+each location once after the link (a member per uniform), or to key the cache
+on the literal's address, which is stable.
+
+### I82. The output dither is added where the glow is 0 - OPEN
+
+**Found** by reading the three writes R7 dithers - `neon-blit.frag`, the edge
+ring (`neon.frag` with `uBlitOwnsCut` 0) and the ring field's composite
+(`neon-field.frag`, `NEON_FIELD_RING`): each adds `neonDither`'s noise to its
+colour unconditionally, where the glow is an exact 0 as well. Three
+consequences:
+
+- On an 8-bit UNORM target, which is what R7 was measured on, nothing shows:
+  the noise is under half a level and a premultiplied write of it over an exact
+  level rounds back. On a 10-bit, half-float or sRGB host target it is noise
+  added to the HOST's pixels wherever the blit draws, which reaches out to the
+  glow's fade margin.
+- The blend cannot skip the empty pixels. The spotlight's blit measured that
+  writing a dithered near-zero rather than an exact 0 over every empty pixel
+  was part of its first version's 1.26-1.33x (V27).
+- The proofs that `GetGlowInnerReach`'s interior hole and `GetCornerSkip`'s
+  skipped arcs change no pixel predate R7. They bound what is left under half
+  an 8-bit level, which rounded to 0 without the dither; with it a pixel the
+  glow would draw at 0.3 of a level rounds up about 30% of the time, so the
+  hole and the skip move such pixels by 1 level, stochastically. The comment
+  in `setupRingGeometry` that the texels past `mGlowInnerReach` are "stored as
+  0" holds for the RGBA8 fallback only; in half float they hold the small
+  value.
+
+The fix for the first two is a dither that leaves an exact 0 alone (gated on
+the colour, as the spotlight's blit gates on an empty texel); the third is a
+statement in `glow-inner-reach.md` that the bound is "within the dither"
+rather than "no pixel".
+
+### I83. What the library leaves changed in the host's GL state is not documented - OPEN
+
+**Found** by reading the wrappers. The library documents what it ASSUMES of
+the caller's state - no face culling, a full colour and alpha write mask,
+`GL_FUNC_ADD`, depth off - and `EdgeLightingEffect::Render` no longer forces
+any of it, but what a frame LEAVES is not listed anywhere: its last vertex
+array and `GL_ARRAY_BUFFER` bound (`VertexArray::DrawArrays` binds and does
+not unbind), program 0, its textures on units 0 to 7 with the active unit
+moved, the uniform-buffer binding points 0 to 3, and `GL_BLEND` enabled with
+`GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA` - every renderer ends on that, enabled
+whatever the host had. Two assumptions are missing from the list too: pixel
+UNPACK state - `BaseLUT::Upload` hands `glTexImage2D` / `glTexSubImage2D` a
+client pointer, which a bound `GL_PIXEL_UNPACK_BUFFER` turns into an offset
+into it - and the read framebuffer, which `RenderTargetState` restores through
+`GL_FRAMEBUFFER` and so rebinds to the draw framebuffer. A host whose GL layer
+caches state, as DALi's does, draws its next frame on stale assumptions. The
+fix is both lists in `BaseRenderer` and `EdgeLightingEffect::Render`'s docs,
+and an opt-in save / restore scope beside the existing `GLUtils` guards.
+
+### I84. The embedded shader text is 85% comments - OPEN
+
+**Measured** on `build/lib/generated/shaders.h` with a regular expression that
+drops `//` and `/* */` comments and blank lines: 692 KB of shader source
+across the library's programs, 105 KB without comments. `NEON_FRAG_SRC` is
+150 KB, 32 KB without; `neon-tuning.h` alone injects about 50 KB of prose into
+each of the seven neon shader sources, ten programs between them - the emission
+pre-pass is 54 KB of source for 5 KB of code. All of it is compiled into the
+library and handed to the driver's compiler, whose first-frame cost several
+items above went to lengths to cut. Stripping comments in `lib/CMakeLists.txt`
+before `configure_file` - GLSL has no string literals, so it is safe on the
+shader files; the tuning headers' `#define` lines survive it - would remove
+both costs, and one more if the `PLATFORM_WINDOWS` branch is ever finished:
+MSVC refuses a string literal over 16 KB (C2026).
+
+### V28 and V29, addenda; I76, confirmed
+
+**V28: a fix by construction.** V28's verified one-line fix adds the
+perimeter to `mLightBlocks.dirty`'s gate; the gate itself is what can go stale,
+and it saves almost nothing. `UniformBuffer::SetData` already compares the
+bytes and skips an identical upload, moving no upload count, so packing both
+blocks on EVERY frame and letting it decide costs `PackArcFlags`' 8 x 8 loop
+and two memcmps of 144 bytes, and leaves no list of inputs to miss. The same
+pattern - compute the cheap product, upload on a byte change - would retire
+`geometryDirty` and `fillDirty` for the neon's 24-float meshes (a `Mesh`
+upload that compares first), and is how V31 was fixed. Not applied; `sequence`
+still fails its 24 frames.
+
+**V29: narrowed, untested.** In the main table's direct mode (`segDirect`), a
+bake that only the segments dirtied draws its pieces with `uBakeArcs` 0 and
+`glColorMask(GL_FALSE, GL_FALSE, GL_TRUE, GL_TRUE)`; a full bake - and V29's
+workaround, which dirties every arc piece with any segment piece - draws them
+with `uBakeArcs` 1 and a full mask. `pieceCover`'s segment channels never read
+the arcs, and a uniform branch cannot change what one compiled program
+computes for them, so within one program the two must agree bit for bit; and
+V29 already ruled out the dirty mask and the per-piece rectangles. By
+elimination, the likely cause is the driver building a different program per
+colour write mask - on the Apple GPU's Metal-backed GL a write mask is part of
+the pipeline - whose rescheduled arithmetic lands an ulp apart, which the
+`c / (1 + c)` encoding and the half-float store then round a level apart. The
+experiment: bake the both-kinds group under the segments-only mask and
+compare `.b` / `.a` bitwise against the full-mask bake. If they differ, the
+split is exact only up to the driver, and the cheapest robust bake is the full
+mask with both kinds integrated on segment-dirty pieces - the arcs' closed
+form, far cheaper than the bells I42 avoided. One caveat on the premise: V29's
+frame is right at the direct-mode threshold (a 192-column segment table
+against 0.75 x 256), so which mode it ran in depends on the hysteresis. In the
+segment-table mode a full bake and a segments-only bake take the same path for
+the segment channels (passes 0s and 0f), and this explanation does not apply.
+
+**I76: confirmed in the code.** The glow field's composite (`neon-field.frag`
+without `NEON_FIELD_RING`) has no discards; the ring field's has the masks.
+
+### Minor, recorded rather than itemised
+
+- `NeonConfig::gradientLutSize` is documented as a power of two in 32-256, but
+  `GradientRingLUT::Bake` only floors it at 4 and the C ABI setter passes it
+  through: a large value allocates three float rings of that width on the CPU
+  and a texture past `GL_MAX_TEXTURE_SIZE`, which then samples black.
+- `neon-emission.frag` samples its LUTs with `texture()` - implicit LOD -
+  inside branches that differ per fragment (the winning arc, the segment
+  early-out). Harmless while every LUT has one level, but against the
+  `textureLod` rule `neon.frag` keeps for the same reason.
+- `EdgeLightingEffect::AddRenderer(std::shared_ptr<BaseRenderer>)` accepts the
+  same pointer twice, or a second renderer of a named layer; the layer
+  overload refuses both. With two NEON layers `IsValidLayerList` refuses every
+  `SetLayerOrder`, and the second neon's shared buffer is refused.
+- `DebugRenderer`'s colour-stop markers sit at the stops' unrotated positions
+  while the LUT strip and the glow rotate with the hue.
+- `SpotlightRenderer` floors its resolution scale at 0.125; the neon and the
+  flare floor theirs at 1e-3.
+- `AnimationGroup` documents its state as a derived aggregate (Playing if any
+  child is), but `GetState` is not virtual and returns the last broadcast.
+
+### Stale documentation, recorded rather than itemised
+
+- `NeonConfig::resolutionScale`'s Memory note (`config.h`) still describes "an
+  RGBA8 buffer at this scale over the part of the frame the glow can reach";
+  the reduced buffer is RGBA16F over the whole viewport since it became the
+  shared buffer.
+- The comment block at the top of `shaders.h.in` says `neon-common.glsl` holds
+  the gather loop, that `neon-sdf.glsl` goes into three programs and
+  `neon-grade.glsl` into two; it is four and three now.
+- `neon.frag`'s header comment names `NeonRenderer::ensurePathPrograms`, now
+  `ensureGlowPrograms`.
+- `EdgeLightingEffect::AddRenderer` says renderers gate their rebuilds on
+  shader validity; the neon gates on `mInitialized`, as `CLAUDE.md` insists.
+- `Config`'s comment says the layers composite by additive blending; the
+  spotlight screens. `SpotlightConfig`'s says the one thing that stops light is
+  `@c clip`, renamed `clipArea`.
+- This document's own "Checked and found correct" note at the top says
+  colour-stop alpha gates the filament, the halo and the bloom together; V18
+  measured that it gates the filament alone.
+
+---
+
+## Thirty-fifth pass (the second full-tree review)
+
+A second read of the tree on 2026-10-20, over the code the
+[Thirty-fourth pass](#thirty-fourth-pass-the-full-tree-review) only skimmed -
+the utilities, the animation bindings, the C ABI's animation and modulator
+layers, the spotlight's strip solve and every shader outside the neon, the
+LUT and texture wrappers, the capture utility, the demos and the tools - and
+over that pass's own five fixes again.
+
+**The thirty-fourth pass's fixes, re-read: no defect.** `PhaseAccumulator`,
+the manager's and the group's snapshot walks, the double elapsed time, the
+droplets' gate and the C ABI's init check all hold on a second reading. One
+property of V30's fix is worth restating, since it is a consequence rather
+than a defect: the phase is a function of the rate's HISTORY, so a renderer
+registered mid-session starts from `rate * time` while one that saw the rate
+move has integrated it, and the two can show different hues - the reason the
+neon and the debug strip advance theirs from `Update` on every frame.
+
+Five items were measured with throwaway probes like the last pass's - CPU
+programs against the headers, the C ABI built in Release, and a hidden GLFW
+window on the AMD Radeon Pro 5300M: V33, V34, I85, I86 and I87. I88 and I89
+and the minor list are from the read alone. **All are open**: this pass changed
+no code. One claim made while reading did not survive its probe and is
+recorded under I86 as retracted.
+
+### V33. An HSV or HSL blend toward white, grey or black sweeps the hue toward red - OPEN
+
+**Found** by reading `ColorUtils::BlendStops`. `RgbToHsv` and `RgbToHsl` give
+an achromatic colour - white, any grey, black - a hue of 0, which is red,
+because it has no hue to give. `BlendStops` then interpolates the hue along
+the short way round from the other stop's hue to 0, and the saturation from
+that stop's to 0, so the midpoint of a gradient into white or black is a
+half-saturated colour at a hue neither stop has. `BlendSpace::HSV` is the
+mode documented to AVOID muddy mid-tones; this is the case it handles worst.
+
+**Measured**, the midpoint (t = 0.5) of `BlendStops` in each space:
+
+| stops | RGB | HSV | HSL |
+| ----- | --- | --- | --- |
+| blue -> white | (0.500, 0.500, 1.000) | (1.000, 0.500, 1.000) | (0.875, 0.625, 0.875) |
+| blue -> black | (0.000, 0.000, 0.500) | (0.500, 0.250, 0.500) | (0.375, 0.125, 0.375) |
+| green -> grey 0.5 | (0.250, 0.750, 0.250) | (0.750, 0.750, 0.375) | (0.750, 0.750, 0.250) |
+| cyan -> white | (0.500, 1.000, 1.000) | (0.750, 1.000, 0.500) | (0.750, 0.875, 0.625) |
+
+Blue into white passes through pink, blue into black through purple, green
+into grey through olive, cyan into white through yellow-green. It reaches
+every gradient the library bakes: the base ring (`SampleRing`, through
+`GradientRingLUT`, and the debug strip's copy), and the arcs' and segments'
+own stops (`SampleSpan`, through `SpanAtlasLUT`).
+
+**The fix** is the usual one for hue interpolation: an endpoint whose
+saturation is (near) 0 - or, for HSV, whose value is - takes the other
+endpoint's hue, so the blend runs at one hue and only the saturation and the
+value or lightness move. Every RGB-space gradient, the default, is untouched
+by it.
+
+### V34. A colour stop edited every frame drags the ring far behind it - OPEN
+
+**Found** by reading `GradientRingLUT::Bake`. With `colorTransitionDuration`
+above 0 (default 0.3 s), a bake whose inputs changed starts a cross-fade from
+the ring on screen: `mFrom = mDisplay`, `mElapsed = 0`. When the stops change
+on every frame - a stop's colour or position dragged in the C++ demo's
+gradient editor ("Col##Neon", "Pos"), a host animating stops through
+`SetConfig` - every frame restarts the fade, and the first frame of a
+smoothstep moves only `3u^2 - 2u^3` of the way, u = 1 / 18 at 60 fps: about
+0.9% of the remaining distance a frame.
+
+**Measured** with a 32-texel ring and one stop dragged from red to blue over
+60 frames at 60 fps (a bake and a `Tick(1 / 60)` each frame, the ring read
+back with `CaptureUtil::ReadTexture2D`):
+
+| `colorTransitionDuration` | how far the shown colour lags the dragged one when the drag ends |
+| ------------------------- | ---------------------------------------------------------------- |
+| 0 | 0.00 |
+| 0.3 s (the default) | 0.77 - the ring shows 23% of the change after a second of dragging |
+
+Once the drag stops the fade completes in its 0.3 s, so the ring catches up
+after the user lets go, which is the opposite of what an editor needs.
+Attached animations do not hit it: no `AnimatableField` reaches
+`NeonConfig::colorStops`, and the arcs' and segments' stops bake into
+`SpanAtlasLUT`, which does not fade.
+
+**The fix** is to retarget a fade in flight instead of restarting it - keep its
+progress and blend from the ring on screen toward the new target over what is
+left of the duration - or to treat the duration as a rate limit (the ring
+moves at most `dt / duration` of a full change a frame). `DebugRenderer`'s ring
+shares the class and the behaviour.
+
+### I85. `CaptureUtil::ReadRegion` refuses a single-sample read when the window is multisampled - OPEN
+
+**Found** by reading: before `glReadPixels`, `ReadRegion` refuses the read if
+`GL_SAMPLES` is above 1. But `GL_SAMPLES` is a property of the DRAW
+framebuffer, not the read one, and `ReadFramebuffer` and `ReadTexture2D` bind
+only `GL_READ_FRAMEBUFFER`. So the check tests whatever the host has bound to
+draw into.
+
+**Measured** with a hidden GLFW window created with `GLFW_SAMPLES` 4 and an
+`OffscreenCapture` of 32 x 32 cleared to red: `Read` before `End` succeeds,
+since the capture is then the draw framebuffer too; `Read` after `End` -
+which `Read` and `Save` allow - is refused with "read framebuffer is
+multisampled (4 samples); blit it into a single-sample framebuffer first",
+although the framebuffer being read has one sample. With no multisampling on
+the window both succeed. The tools and the demos create their windows without
+multisampling, which is why nothing tripped over it; a host whose window is
+multisampled cannot capture with `ReadTexture2D` at all.
+
+**The fix** is to drop the pre-check: `glReadPixels` from a multisampled read
+framebuffer is `GL_INVALID_OPERATION`, which `ReadRegion` already checks for
+after the read. Related, and the pack side of I83: `ReadRegion` sets
+`GL_PACK_ALIGNMENT` but not `GL_PIXEL_PACK_BUFFER`, so a host with a pack
+buffer bound reads into that buffer at the vector's address as an offset.
+
+### I86. The C ABI logs on paths a host calls every frame - OPEN
+
+**Found** by reading `log-util.h` and the C ABI, and measured where it could
+be on this machine:
+
+- `capi-internal.h` compiles `LOG_D` out only under `PLATFORM_MACOS` or
+  `PLATFORM_WINDOWS`. On `PLATFORM_LINUX` - the Tizen build - it stays live, and
+  74 of the 82 `el_effect_get_*` getters log a formatted line through
+  `std::cout` on every call. `demo-capi`'s UI code calls 63 distinct getters,
+  55 of them logging ones, as it lays out each frame; that demo does not build on Linux, but a C# host on
+  Tizen reading its UI state through P/Invoke every frame is the same shape.
+- `el_animation_update` and `el_animation_apply` log at INFO on EVERY call, on
+  every platform. Measured: one animation driven through the pair for 60
+  frames printed 120 lines.
+- `Util::Print` has no level filter and no platform sink: every level goes to
+  `std::cout`, which on a Tizen device is not where its log reader looks.
+
+Each line is a `std::string` built by `FormatString` plus an `iostream` write,
+on the frame path. The fix is a level threshold in `log-util.h` (compile time
+at least), the two per-frame INFO lines moved to DEBUG, and `LOG_D` compiled
+out of the C ABI on every platform rather than two.
+
+**Retracted.** Read first as "every C ABI getter spams the log", which a probe
+on this Mac contradicted: 87 calls of a logging getter printed nothing, because
+of the `PLATFORM_MACOS` branch above. The claim holds only for Linux, as given.
+
+### I87. V30's fix left seven descriptions of the old phase formula - OPEN
+
+The thirty-fourth pass made every rate-driven phase a `PhaseAccumulator`, but
+these still describe `uHuePhase` as `fract(time * hueRotationRate)` reduced by
+`GetCyclePhase`:
+
+- the `uHuePhase` comments in `neon.frag`, `neon-emission.frag` and
+  `neon-lut-debug.frag`;
+- `implementation.md` (the clock paragraph), `emission-prepass.md` (the time
+  key) and `neon-onboarding-guide.md` (the `hueRotationRate` row of the config
+  table and the `uHuePhase` row of the uniform table).
+
+`progress-log.md` describes the clock commit as it was and stays;
+`tools/neon-scale-check/README.md`'s `clock` section is about `GetCyclePhase`
+itself, which still exists, and stays too. Comments and prose only - no pixel.
+
+### I88. The spotlight overwrites its strip buffer in place on every animated frame - OPEN
+
+**Found** by reading `SpotlightRenderer::buildStrips`, which runs on every
+config change - every frame under a lamp animation - and writes the strips
+with `glBufferSubData` into the ceiling-sized store `ensureBuffer` allocated
+once. The neon made the opposite call for its meshes on purpose
+(`NeonRenderer::setupGeometry`): `glBufferData` lets the driver orphan a store
+the GPU may still be reading and hand back fresh memory, while "a SubData into
+that same store is what risks an implicit sync". On a tiler, where the
+previous frame's draw is often still in flight when the next frame's CPU work
+runs, that is the stall the neon avoided. **Not measured.** The two layers
+should follow one rule, chosen by a measurement on the target: orphan with
+`glBufferData` (the ceiling is 34 KB), or round-robin two stores.
+
+### I89. Destroying an attached animation's handle orphans it, its C callback included - OPEN
+
+**Found** by reading `el_animation_destroy`, which deletes the handle and
+nothing else; its header says "Detach first if attached", and nothing enforces
+it. The effect's manager shares ownership of the animation, so an attached one
+keeps running after its handle is gone - and it can no longer be detached on
+its own, since `el_effect_detach_animation` takes the handle; only
+`el_effect_detach_all_animations` reaches it. A C callback set on it
+(`el_animation_set_on_complete_callback` / `_on_state_changed_callback`)
+keeps the host's `userData`, so a host that frees `userData` with the handle
+gets a use-after-free in its own code on the animation's next completion or
+state change. The cheap guard is for `el_animation_destroy` to clear both
+callbacks, which only a C host could have set through that handle; detaching
+from every effect it is attached to would need the handle to know them.
+
+### Minor, recorded rather than itemised
+
+- `contour-tracer.cpp` (`TraceOutermostContour`) and `PathUtils` are compiled
+  into the library and used by nothing in `lib/`, `demo/`, `demo-capi/` or
+  `tools/` - remnants of the removed stroke / path system, unless a host links
+  them. The tracer's header calls it "Moore-Neighbor boundary following"; the
+  implementation is marching squares with a segment chainer.
+- Both demos compute their frame delta from `static_cast<float>(glfwGetTime())`
+  (`demo/src/main.cpp`, `demo-capi/src/main.cpp`): the host side of I78. A
+  reference host left running for a day steps its `dt` in 7.8 ms units, and
+  past ~6 days in 62 ms ones - the library's double clock cannot repair a delta
+  that arrives quantised.
+- The flare's ray lengths come from `fract(sin(slot * 43.7583) * 12345.67)` in
+  `lens-flare.frag`, and the droplets' column phase from `N()`'s
+  `fract(sin(t * 12345.564) * 7658.76)` - the precision-chaotic hash
+  `LensFlareRenderer::BakeGhostTable` moved off the GPU for the ghosts, because
+  GLSL's `sin` gives it a per-driver answer. The rays and the droplets' columns
+  therefore still differ from one GPU to the next.
+- `SegmentUtils::AcquireSegment` hands out one past the highest live id; a
+  config that carries an id of `0xFFFFFFFF` (ids survive serialization) makes
+  that wrap to 0, and the entry it pushes can never be found.
+- `HasClippedLamp` tests a clipped lamp's `enable` and `intensity` but not its
+  tint, so a clipped lamp with a black tint - which draws nothing - still pins
+  the spotlight's scale to 1.0.
+- The spotlight's direct path (scale 1.0) adds its dither to every fragment of
+  its strips, including unlit ones, colour and alpha alike: I82's case for this
+  layer. Its blit already leaves an exact 0 alone.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5512,7 +6178,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence` and all open. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence` and all open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5576,9 +6242,27 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
-| V28 | open | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels, until the arcs next change; a one-line fix to the pack gate is verified, not applied |
-| V29 | open | a segment step on a sharp-cornered, arc-less rect left a 1-level stale texel that only re-baking the coverage table's ARC pieces clears - the per-type split (I42) is not exact there; cause not pinned down |
-| I76 | open | under the glow field the shared buffer holds one texel column of glow past pass 1b's discard edge (the field is half resolution and read NEAREST) - up to 213 levels, no frame pixel; fix: the same discards in the composite |
+| V28 | open | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels, until the arcs next change; a one-line fix to the pack gate is verified, not applied - or pack every frame and let `UniformBuffer`'s byte compare skip the upload, which leaves no gate to go stale (thirty-fourth pass) |
+| V29 | open | a segment step on a sharp-cornered, arc-less rect left a 1-level stale texel that only re-baking the coverage table's ARC pieces clears - the per-type split (I42) is not exact there; narrowed by elimination (thirty-fourth pass) to the bake's colour write mask in direct mode - likely a driver variant per mask - with an experiment to settle it, untested |
+| I76 | open | under the glow field the shared buffer holds one texel column of glow past pass 1b's discard edge (the field is half resolution and read NEAREST) - up to 213 levels, no frame pixel; fix: the same discards in the composite (confirmed in the code, thirty-fourth pass) |
+| V30 | fixed | the hue, the flare's rays and the droplets' field took their phase as `time * rate`, which races whenever the rate moves - the `HueRotationEaseReverse` preset moved the hue 0.12 / 0.44 turn a frame started 10 / 60 s into the clock against the 0.013 its rate allows; each is now a `PhaseAccumulator`, the rate integrated over the clock, bit-identical to the old phase while a rate holds (every check image, `clock` frame and `generate` PNG unchanged); a rate set to 0 now holds the phase where it stopped |
+| V31 | fixed | the droplets' rebuild gate missed `glowSide`, which their band's extent reads, so a side change kept the old ring - 2,914 of 14,117 lit px for INSIDE -> OUTSIDE; now gated on the extent itself, all six transitions byte-identical to a fresh renderer |
+| I77 | fixed | an animation callback that attached or detached changed the vector the manager (and `AnimationGroup`) was walking - heap-use-after-free or container-overflow under ASan in 8 of 9 cases, and a callback clearing itself destroyed its own `std::function`; both now walk an allocation-free snapshot and invoke a copy of the callback - all 9 clean under ASan and UBSan |
+| I78 | fixed | a zero-duration animation's elapsed time was a float - 9.375 s per 10 s after a day, frozen past 6.07 days, the clock's old bug one layer up; elapsed, `ApplyAt` and `Modulator::Evaluate` are doubles, exact over 365 days |
+| I79 | fixed | eleven C ABI entry points dereferenced the null effect a created, uninitialised handle holds (SIGSEGV); they return `EL_ERROR_INVALID_HANDLE` - or an empty answer for the two queries - before init |
+| V32 | open | the lens flare writes undithered, into RGBA8 below 1.0 - the mechanism R7 and V27 fixed elsewhere, on the smoothest layer; not measured |
+| I80 | open | no float input is checked for NaN or infinity, at the C ABI or in the animation factories; one NaN makes `Config ==` false for good, defeating every skip and cache |
+| I81 | open | `ShaderProgram::getLocation` builds a `std::string` per `SetUniform`; under libstdc++ 8 of 88 names allocate, ~7 heap allocations per neon upload per frame, invisible on macOS |
+| I82 | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
+| I83 | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
+| I84 | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size and driver lexing, and clear MSVC's 16 KB literal limit |
+| V33 | open | an HSV or HSL blend toward an achromatic stop takes that stop's hue as 0 and sweeps toward red - blue -> white peaks at pink (1.0, 0.5, 1.0) in HSV, blue -> black at purple; fix: an achromatic endpoint takes the other's hue |
+| V34 | open | the colour cross-fade restarts on every bake, so a stop edited each frame (the demo's gradient editor, a host animating stops) lags: 23% of a one-second drag shown when it ends, at the default 0.3 s; fix: retarget a fade in flight rather than restart it |
+| I85 | open | `CaptureUtil::ReadRegion` tests `GL_SAMPLES`, the DRAW framebuffer's, so a single-sample capture read after `End` is refused when the window is multisampled (measured at 4x); and it ignores a bound pack buffer |
+| I86 | open | on Linux / Tizen `LOG_D` stays live in the C ABI, so 74 of 82 getters log on every call; `el_animation_update` / `apply` log at INFO on every call everywhere (120 lines per 60 frames); no level filter or platform sink |
+| I87 | open | V30's fix left seven descriptions of `uHuePhase` as `fract(time * rate)` - three shader comments, four places in three docs |
+| I88 | open | the spotlight overwrites its strip VBO with `glBufferSubData` every animated frame, where the neon orphans with `glBufferData` to avoid an implicit sync; not measured |
+| I89 | open | `el_animation_destroy` on an attached animation leaves it running, undetachable on its own, and with its C callback still holding the host's `userData` |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
