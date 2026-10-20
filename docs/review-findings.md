@@ -6163,6 +6163,8 @@ from every effect it is attached to would need the handle to know them.
   `tools/` - remnants of the removed stroke / path system, unless a host links
   them. The tracer's header calls it "Moore-Neighbor boundary following"; the
   implementation is marching squares with a segment chainer.
+  **Removed:** `contour-tracer.{h,cpp}` and `path-utils.h` are deleted and
+  `lib/CMakeLists.txt` no longer builds the tracer.
 - Both demos compute their frame delta from `static_cast<float>(glfwGetTime())`
   (`demo/src/main.cpp`, `demo-capi/src/main.cpp`): the host side of I78. A
   reference host left running for a day steps its `dt` in 7.8 ms units, and

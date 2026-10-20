@@ -310,7 +310,7 @@ everything follows:
 
 | namespace | `Get*` | other |
 | --------- | ------ | ----- |
-| `PathUtils` | `GetPathAABB`, `GetPathLength`, `GetPointOnPath` | - |
+| `PathUtils` (since removed with the contour tracer: dead code, used by nothing) | `GetPathAABB`, `GetPathLength`, `GetPointOnPath` | - |
 | `GLUtils` | `GetCap`, `GetExtensions` | `CheckExtension`, `CheckGLError`, `LogCaps`, `LogExtensions`, `LogRendererInfo` |
 | `ColorUtils` | - | `SampleRing`, `SampleSpan`, `SortStops`, `BlendStops`, `RgbToHsv`, ... |
 | `SegmentUtils` | - | `AcquireSegment`, `FillEffectiveSegments`, `FindPreservedSegment`, `ReleaseSegment` |
