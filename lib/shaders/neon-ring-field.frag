@@ -52,10 +52,13 @@ void main() {
     // after its tone map as coverage (neon.frag at scale 1.0, where
     // blitOwnsCut is false): the same expressions, term for term - keep them
     // in step with neon.frag's, and with neon-blit.frag's below 1.0. The field
-    // holds Fa from before them (neon-field-bake.frag stops at the grade), and
-    // what neon.frag discarded ahead of them is a 0 texel, which composites to
-    // nothing. Skipped on a uniform when neither is set: every factor is then
-    // exactly 1 (a disabled side's sentinel saturates its smoothstep). The
+    // holds Fa from before them (neon-field-bake.frag stops at the grade) and
+    // from before the ring's culls, which the bake does not make (V35): each
+    // cull lies where one of these factors is exactly 0, so the product
+    // composites to nothing wherever the ring would have discarded, decided
+    // from this pixel's own vPos. Skipped on a uniform when neither is set:
+    // every factor is then exactly 1 (a disabled side's sentinel saturates
+    // its smoothstep). The
     // derivative is in uniform control flow, so defined.
     if (uGlowSide != GLOW_SIDE_BOTH || uInsideCutoff < 0.5 * CUTOFF_NEUTRALISED ||
         uOutsideCutoff < 0.5 * CUTOFF_NEUTRALISED)

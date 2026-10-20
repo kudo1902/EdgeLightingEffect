@@ -1479,10 +1479,11 @@ namespace EdgeLighting
         /// @p scale, fading against @p limits.quadMargin and skipping corner
         /// arcs past @p limits.cornerSkip (px in the same space, both). One
         /// copy for every program built from neon.frag, so the variants cannot
-        /// drift apart in what they are told - but for uGlowSideSoftness, which
-        /// the field bake (@c mFieldBakeShader) is not sent: its only reader is
-        /// the cut after the bake's return, so a compiler that removes dead
-        /// code removes the uniform (I63, UploadEdgeMaskUniforms). Not for neon-gather.frag, which
+        /// drift apart in what they are told - but for uGlowSide and
+        /// uGlowSideSoftness, which the field bake (@c mFieldBakeShader) is not
+        /// sent: their only readers are the cut after the bake's return and
+        /// the culls the bake does not make (V35), so a compiler that removes
+        /// dead code removes both (I63, UploadEdgeMaskUniforms). Not for neon-gather.frag, which
         /// shades nothing - it takes @ref uploadShapeUniforms alone. The
         /// gather's own inputs - the sample block, the count and the emission
         /// table - are not here: only the gathering programs have them, and

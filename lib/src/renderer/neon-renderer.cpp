@@ -1341,6 +1341,15 @@ namespace EdgeLighting
             return IsShadingFactorable(config, ringOpaque);
         }
 
+        /// What of the one-sided cut a program reads, for
+        /// @ref UploadEdgeMaskUniforms. Every one reads the cutoffs.
+        typedef enum class CutReads
+        {
+            NONE, ///< The field bake (neon-field-bake.frag): neither the cut nor its cull.
+            CULL, ///< Pass 1c's composite (neon-field.frag): the side it culls, not the cut's softness.
+            ALL,  ///< neon.frag and the ring field's composite: the cull and the cut, softness included.
+        } CutReads;
+
         /// The one-sided cut and the cutoffs, for @p shader at @p scale: what
         /// neon.frag and the ring field's composite (neon-ring-field.frag)
         /// apply after their tone map, and so the same numbers
@@ -1348,19 +1357,24 @@ namespace EdgeLighting
         /// ring's own shading would. Pixel-valued, so multiplied by @p scale,
         /// as uploadShapeUniforms' are; a disabled cutoff at its sentinel.
         ///
-        /// @p cutSoftness is false for the field bake (neon-field-bake.frag),
-        /// which stops at the grade, ahead of the one-sided cut. The cut's
-        /// softness has no other reader, so a compiler that drops what the
-        /// bake never reads (neonShade's edge.sideSoft) drops
-        /// uGlowSideSoftness from that program, and setting it logged "uniform 'uGlowSideSoftness' not
-        /// found" on NeonRenderer.Field. Everything else here also feeds the
-        /// discards above the grade, so the bake keeps it.
+        /// @p cut is what @p shader reads of the one-sided cut, so no program
+        /// is sent a uniform a compiler that drops dead code drops from it:
+        /// setting one logs "uniform '...' not found" (Tizen's compiler drops
+        /// them; Apple's GL keeps them, so the Macs never show it). The field
+        /// bake (neon-field-bake.frag) stops at the grade, ahead of the cut, so
+        /// it never reads uGlowSideSoftness (I63, which logged on
+        /// NeonRenderer.Field), and it makes no cull (V35), so uGlowSide
+        /// reaches nothing it writes either. It still reads the cutoffs,
+        /// through the bloom's end fade and the quad-edge fade. Pass 1c's
+        /// composite culls by side but never applies the cut.
         /// @pre @p shader is in use.
-        inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
-                                           bool cutSoftness)
+        inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config, CutReads cut)
         {
-            shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            if (cutSoftness)
+            if (cut != CutReads::NONE)
+            {
+                shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            }
+            if (cut == CutReads::ALL)
             {
                 shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
             }
@@ -4073,9 +4087,9 @@ namespace EdgeLighting
         shader.SetUniform("uHuePhase", huePhase);
         shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        // The field bake ends at the grade, before the cut that reads the
-        // softness - see UploadEdgeMaskUniforms.
-        UploadEdgeMaskUniforms(shader, scale, config, &shader != &mFieldBakeShader);
+        // The field bake ends at the grade, before the cut, and culls nothing -
+        // see UploadEdgeMaskUniforms.
+        UploadEdgeMaskUniforms(shader, scale, config, &shader == &mFieldBakeShader ? CutReads::NONE : CutReads::ALL);
 
         shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         shader.SetUniform("uPerimeterUnread",
@@ -4441,7 +4455,9 @@ namespace EdgeLighting
             LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
             return false;
         }
-        // Cleared to 0: a texel neon.frag discards composites to nothing.
+        // Cleared to 0: a texel the quad does not reach composites to nothing.
+        // The bake culls nothing (V35) - pass 1c makes every cull, from pass
+        // 1b's own vPos.
         mGlowField.buffer.Bind();
         mGlowField.buffer.ClearBuffer();
 
@@ -4521,10 +4537,11 @@ namespace EdgeLighting
         mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.texelScale);
         mFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
         // Pass 1b's discards, which the composite repeats so the shared
-        // buffer ends where pass 1b's does (I76).
+        // buffer ends where pass 1b's does (I76) - the only ones, since the
+        // bake makes none (V35).
         uploadShapeUniforms(mFieldCompositeShader, mvp, scale, config);
         mFieldCompositeShader.SetUniform("uResolutionScale", scale);
-        UploadEdgeMaskUniforms(mFieldCompositeShader, scale, config, false);
+        UploadEdgeMaskUniforms(mFieldCompositeShader, scale, config, CutReads::CULL);
         bindGatherBuffer(mFieldCompositeShader, gatherUV);
         mGlowMesh.Draw();
         mFieldCompositeShader.Unuse();
@@ -4547,8 +4564,9 @@ namespace EdgeLighting
             LOG_E("NeonRenderer: no half-float target for the edge ring's field - the ring is shaded directly.");
             return false;
         }
-        // Cleared to 0: atlas texels no strip covers are never read, and a
-        // texel neon.frag discards composites to nothing.
+        // Cleared to 0 for the atlas texels no strip covers, which are never
+        // read: the bake culls nothing (V35), so it writes every strip texel,
+        // and pass 2r's masks make the ring's culls.
         mRingField.buffer.Bind();
         mRingField.buffer.ClearBuffer();
 
@@ -4950,7 +4968,7 @@ namespace EdgeLighting
         const RingFieldLayout &layout = mRingField.layout;
         mRingFieldCompositeShader.Use();
         uploadShapeUniforms(mRingFieldCompositeShader, mvp, 1.0f, config);
-        UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, true);
+        UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, CutReads::ALL);
         mRingField.buffer.BindTexture(7);
         mRingFieldCompositeShader.SetUniform("uField", 7);
         mRingFieldCompositeShader.SetUniform("uRingLo", layout.origin);

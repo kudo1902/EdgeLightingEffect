@@ -20,8 +20,9 @@
 // px, and the scale is that buffer's texels per scaled px - just under 1,
 // since its texel count is the viewport's truncated. Not gl_FragCoord: a select
 // between the two cost the old full-resolution composite ~30% on an AMD Radeon
-// Pro 5300M. A texel neon.frag discarded holds 0, which composites to nothing,
-// as the discard did.
+// Pro 5300M. The bake discards nothing (V35): the culls below are the only
+// ones the field's pixels get, and a texel the quad did not reach holds 0,
+// which composites to nothing.
 // ---------------------------------------------------------------------------
 
 uniform vec2      uFieldOrigin; ///< vPos of the field's texel (0, 0) corner.
@@ -31,11 +32,14 @@ uniform float     uResolutionScale; ///< The reduced buffer's scale: converts it
 void main() {
     // Pass 1b's discards, term for term (neon.frag with uBlitOwnsCut 1): the
     // cull BLIT_SIDE_GUARD_PX past the one-sided cut and BLIT_CUTOFF_GUARD_PX
-    // past each cutoff's ramp. The field is half this buffer's resolution and
-    // read NEAREST, so without them a texel just past the edge read a field
-    // texel whose centre was inside it and the shared buffer carried a line
-    // of glow pass 1b leaves at 0 (I76). The blit never reads past them, so
-    // no frame pixel moves. The derivative sits above every discard.
+    // past each cutoff's ramp. Without them the shared buffer carried a line
+    // of glow past the edge where pass 1b leaves 0 (I76). They are the ONLY
+    // culls: this draws pass 1b's quad through pass 1b's projection, so its
+    // vPos and its decisions are pass 1b's to the bit, which the bake's, on a
+    // grid of its own, are not - a bake that culled too left a 0 on a texel
+    // right at the boundary that this kept, 200 levels off (V35). The blit
+    // never reads past them, so no frame pixel moves. The derivative sits
+    // above every discard.
     {
         vec2  halfSize = uRectSize * 0.5;
         float d        = sdRoundBox(vPos, halfSize, uCornerRadius);

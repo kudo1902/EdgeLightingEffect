@@ -8,12 +8,14 @@
 // (neon-field-common.glsl) tone-maps times the gathered hues. The masks
 // below the grade (neon.frag's main) are not in it: for the shading's field
 // the blit owns both; the edge ring's field, baked with the ring's uniforms,
-// has its composite apply them (neon-ring-field.frag).
+// has its composite apply them (neon-ring-field.frag). Nor are the culls
+// above it (V35): neonShade(true) discards nothing, and each composite makes
+// them on its own grid - see the culls in neon-shade.glsl.
 //
-// uGlowSideSoftness reaches only edge.sideSoft, which this program never
-// reads, so it may compile it out, and NeonRenderer leaves it out of the
-// bake's upload (UploadEdgeMaskUniforms): a read of it that reaches
-// neonShade's result has to go back into that upload.
+// uGlowSide and uGlowSideSoftness reach only the culls and the NeonEdge this
+// program never reads, so it may compile both out, and NeonRenderer leaves
+// them out of the bake's upload (UploadEdgeMaskUniforms): a read of either
+// that reaches neonShade's result has to go back into that upload.
 // ---------------------------------------------------------------------------
 
 void main() {

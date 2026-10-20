@@ -696,9 +696,20 @@ vec3 neonShade(bool fieldBake, out NeonEdge edge) {
     bool  blitOwnsCut = (uBlitOwnsCut != 0);
     float sideBack = 0.5 * sideAA;
     float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
+    // NOT IN THE FIELD BAKE, this cull or the cutoffs' below (V35): a field
+    // texel holds the shading wherever the quad reaches, and the composite
+    // that writes the frame's own grid makes every cull - pass 1c repeats
+    // these from pass 1b's own vPos (neon-field.frag), and pass 2r's masks are
+    // exactly 0 wherever the ring culls (neon-ring-field.frag). The bake draws
+    // through a projection of its own, so its vPos differs from the shading's
+    // in the last bits: deciding a texel on a cull's boundary here, it left a
+    // 0 that pass 1c kept, 200 levels under pass 1b's guard band. Drop the
+    // fieldBake test and that comes back. It also leaves uGlowSide unread in
+    // the bake, so UploadEdgeMaskUniforms does not send it there.
+    bool cull = !fieldBake;
     // Deliberately NOT mirrored in neon-gather.frag - see the note at its top.
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
+    if (cull && uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
+    if (cull && uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
 
     // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff];
     // each side's feather STARTS at that boundary and runs its softness beyond
@@ -766,8 +777,8 @@ vec3 neonShade(bool fieldBake, out NeonEdge edge) {
     // reason sideCull does. The guard is an exact 0 for the ring, which keeps
     // culling exactly where its own masks end.
     float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
-    if (dOut >  outHalf + cutGuard ) discard;
-    if (dIn  < -(inHalf + cutGuard)) discard;
+    if (cull && dOut >  outHalf + cutGuard ) discard;
+    if (cull && dIn  < -(inHalf + cutGuard)) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile: core(ad) = exp(-ln(2) * (ad / sigma)^N),
