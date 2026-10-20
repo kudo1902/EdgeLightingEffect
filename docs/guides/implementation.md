@@ -5,7 +5,9 @@ For depth, see [`neon-onboarding-guide.md`](neon-onboarding-guide.md) (the
 neon from first principles, every pass and config field),
 [`effect-reference.md`](effect-reference.md) (per-parameter behaviour), and
 [`neon-renderer-reference.html`](../pages/neon-renderer-reference.html)
-(every uniform, constant and derivation in the shader). When any of them disagrees with the
+(every uniform, constant and derivation in the shader). The long version of
+this page, with diagrams of ownership, the frame and the neon's skip keys, is
+[`cpp-design.html`](../pages/cpp-design.html). When any of them disagrees with the
 headers under `lib/include/`, the headers win.
 
 ## 1. What gets built

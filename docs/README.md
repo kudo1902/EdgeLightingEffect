@@ -47,6 +47,7 @@ pass and shader stage, with renders from the library itself.
 
 | page | what it is |
 | ---- | ---------- |
+| [`cpp-design.html`](pages/cpp-design.html) | The C++ side's design and implementation: modules, ownership, one frame through the effect, the renderer contract, change detection, `NeonRenderer`'s anatomy and pass schedule, its skip keys, shared buffers, the GL wrappers and the C ABI. Read before changing the C++. |
 | [`neon-renderer-reference.html`](pages/neon-renderer-reference.html) | Full mechanism reference: every uniform, constant, derivation and gating rule, with flow charts of a frame. Read before changing a shader. |
 | [`neon-shader-outputs.html`](pages/neon-shader-outputs.html) | One frame at scale 0.5, pass by pass: what each neon program wrote, and why each is its own program. |
 | [`neon-resolution-scale-comparison.html`](pages/neon-resolution-scale-comparison.html) | Twelve scenes at six resolution scales against their 1.0 renders. Its images are what `neon-scale-check check` diffs against. |
