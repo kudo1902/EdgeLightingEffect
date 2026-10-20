@@ -243,7 +243,8 @@
   table.why td:first-child { white-space: nowrap; }
   table.why .pid { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
   section.why-sec { padding-top: 40px; scroll-margin-top: 16px; display: flex; flex-direction: column; gap: 14px; }
-  section.why-sec h2 { font-family: var(--font-display); font-size: clamp(24px, 3vw, 30px); font-weight: 400; line-height: 1.16; }
+  section.why-sec h2 { font-family: var(--font-display); font-size: clamp(24px, 3vw, 30px); font-weight: 400; line-height: 1.16; scroll-margin-top: 16px; }
+  section.why-sec ol, section.why-sec ul { padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; max-width: var(--col); }
 
   @media (max-width: 760px) {
     section.pass { grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -712,7 +713,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage, and - since it shades with scale-1.0 uniforms - multiplies the one-sided cut and the cutoffs in after its tone map itself. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice. It draws onto the caller&rsquo;s framebuffer, so nothing of it survives a frame: it runs only until the ring&rsquo;s field holds, and P2r draws the band instead - segments or none (I58). The exception is a rotating hue over a gradient ring that is not opaque at every texel, which the field cannot serve; there it runs on every frame, still frames included.</p>
+      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage, and - since it shades with scale-1.0 uniforms - multiplies the one-sided cut and the cutoffs in after its tone map itself. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice. It draws onto the caller&rsquo;s framebuffer, so nothing of it survives a frame: it runs only until the ring&rsquo;s field holds, and P2r draws the band instead - segments or none (I58). The exception is a rotating hue over a gradient ring that is not opaque at every texel, which the field cannot serve; there it runs on every frame, still frames included. Why the band has two programs: <a href="#ring-programs">below</a>.</p>
       <div class="shots">
         <figure>
           <img src="../images/neon-onboarding/pass-p2c-ring-only.png" alt="The ring band alone around the outline" width="640" height="360">
@@ -739,7 +740,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>P2c&rsquo;s picture from P1r&rsquo;s field, through the blit&rsquo;s matrix so the partition still holds. Each fragment finds its pixel in the ring&rsquo;s box, its strip against a conservative hole, and its texel; multiplies by the gathered hue; tone-maps; and then multiplies in the one-sided cut and the cutoffs from its own distance to the edge - the terms the ring&rsquo;s shading applies after its tone map, copied from <code>neon.frag</code> and fed the same uniforms. Within 1/255 of P2c. Its own program object, not P1c&rsquo;s: it draws the caller&rsquo;s framebuffer blended in the frame P1c may draw the reduced buffer unblended. 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52, AMD Radeon Pro 5300M); a one-sided glow or a cutoff used to keep the ring shading directly, and taking them here made those configs&rsquo; still frames 1.2-2.7x faster (I53, Apple M2 Pro).</p>
+      <p>P2c&rsquo;s picture from P1r&rsquo;s field, through the blit&rsquo;s matrix so the partition still holds. Each fragment finds its pixel in the ring&rsquo;s box, its strip against a conservative hole, and its texel; multiplies by the gathered hue; tone-maps; and then multiplies in the one-sided cut and the cutoffs from its own distance to the edge - the terms the ring&rsquo;s shading applies after its tone map, copied from <code>neon.frag</code> and fed the same uniforms. Within 1/255 of P2c. Its own program object, not P1c&rsquo;s: it draws the caller&rsquo;s framebuffer blended in the frame P1c may draw the reduced buffer unblended. 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52, AMD Radeon Pro 5300M); a one-sided glow or a cutoff used to keep the ring shading directly, and taking them here made those configs&rsquo; still frames 1.2-2.7x faster (I53, Apple M2 Pro). Why the band has two programs: <a href="#ring-programs">below</a>.</p>
       <div class="shots">
         <figure class="wide">
           <img src="../images/neon-onboarding/pass-p2r-ring-composite.png" alt="The ring band drawn from the ring field" width="640" height="360">
@@ -822,11 +823,42 @@
     <p><strong>The fields are what make a moving frame cheap.</strong> Without P1f there is nothing for P1c to read, and every hue-rotating frame - the library&rsquo;s default - reruns pass 1b&rsquo;s whole shading; without P1r, the ring is shaded in full on every frame, still ones included. Measured on the AMD Radeon Pro 5300M: the glow&rsquo;s field 1.98x on hue frames at 0.75, 1.55x at 0.5, 1.21x at 0.25 (I50, twelve scenes); the ring&rsquo;s 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52). And on an Apple M2 Pro the glow&rsquo;s field carries an intensity animation, scaled, where it used to be thrown away on every frame: 2.31x on intensity-pulse frames at 0.5 (I56). (Before I57 the same field stood in for a direct pass 1 at scale 1.0, where it measured 4x with the hue rotating and 9x still - I46.)</p>
     <p><strong>It cannot be the ring&rsquo;s program.</strong> Three things separate it, and each is a reason:</p>
     <ol>
-      <li><em>A different output.</em> It writes the brightness <code>Fa</code> before the tone map - one half-float channel - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame runs, and this compiler has slowed that program for code no frame executes.</li>
+      <li><em>A different output.</em> It writes the brightness before the tone map - <code>Fa</code>, and <code>Fs</code> in a second half-float channel with segments - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame runs, and this compiler has slowed that program for code no frame executes.</li>
       <li><em>A different target and blend state.</em> It draws an offscreen buffer, unblended; the ring&rsquo;s program draws the caller&rsquo;s framebuffer, blended. One program doing both is the shape that measured 93-624x slower on the AMD macOS driver - the reason P1b and the ring are already two programs.</li>
       <li><em>It costs only where it pays.</em> Built on the first frame of a config a field can serve - any config but a rotating hue over a gradient ring that is not opaque everywhere; the glow&rsquo;s field is not allocated without a rotating hue or a moving intensity, nor for a thin band it is not worth its memory for (<code>FIELD_MIN_FILL</code>) - the ring&rsquo;s, a few strips of full-resolution pixels, is, since the ring is redrawn on every frame. A host whose configs a field never serves never compiles either.</li>
     </ol>
     <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program would draw two targets in two blend states with it in one frame. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
+
+    <h2 id="ring-programs">Why the ring band has two programs</h2>
+    <p><strong>The ring is never drawn twice.</strong> P2c and P2r are alternatives: each frame draws the band with exactly one of them, and both draw the same mesh, <code>mRingMesh</code>, through the matrix the blit draws with, so either keeps the blit and the ring tiling the frame (<code>neon-scale-check partition</code>).</p>
+    <div class="why-wrap">
+      <table class="why">
+        <thead>
+          <tr><th></th><th>P2c</th><th>P2r</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Program</td><td><code>mRingShader</code></td><td><code>mRingFieldCompositeShader</code></td></tr>
+          <tr><td>Source</td><td><code>neon.frag</code>, the full shading, with its uniforms at scale 1.0</td><td><code>neon-field.frag</code> + <code>NEON_FIELD_RING</code></td></tr>
+          <tr><td>Per pixel</td><td>the whole glow: the filament, the halo and the bloom summed over the outline&rsquo;s pieces, the gather read, a coverage-table fetch per piece, the tone map, then the cut and the cutoffs</td><td>one fetch of the field P1r baked, times the gathered hue, the tone map, then the cut and the cutoffs</td></tr>
+          <tr><td>Valid</td><td>always</td><td>only while a baked field still describes the frame</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Why the ring needs a cheap path.</strong> The ring draws onto the caller&rsquo;s framebuffer, so nothing of it survives to the next frame. Everything offscreen is reused on a frame where nothing moved; the ring is not, and is re-shaded at full resolution on every frame, still frames included - a cost the resolution scale does not shrink. Its output is <code>mask &times; tonemap(col &times; Fa + segColHue &times; Fs)</code>: only the gathered hues move with time, <code>Fa</code> and <code>Fs</code> do not depend on them, and the mask - the one-sided cut and the cutoffs - depends on the pixel&rsquo;s position alone. So P1r bakes <code>Fa</code> (and <code>Fs</code>) once, and P2r rebuilds the band from them: 1.4-1.9x on still frames and 1.2-1.6x on hue frames on the AMD Radeon Pro 5300M, within 1/255 (I52).</p>
+    <p><strong>Why P2r cannot replace P2c.</strong> The field has to exist and match the frame, and <code>LazyBake</code> uses it only when it does. P2c draws the band:</p>
+    <ul>
+      <li><em>On a frame whose config just changed.</em> The field is stale, and it is baked again only once the config has held for a frame: an animation that changes the config every frame would otherwise pay a bake and a composite on every frame, which measured 5-7% slower than shading directly. (An intensity animation is the exception: the field is kept and scaled by I / I<sub>0</sub>, I56.)</li>
+      <li><em>On the first frame of a config the field can serve.</em> That frame bakes the field but still shades with P2c, so that every program&rsquo;s first draw - where this driver finishes compiling it - lands on that one frame.</li>
+      <li><em>For a config the field cannot express.</em> Under a rotating hue over a gradient ring that is not opaque at every texel, time moves the colour-stop alpha the shading reads, so the factorisation breaks; P2c draws every frame.</li>
+      <li><em>On a driver without half-float render targets.</em> The field has no 8-bit fallback (<code>LazyBake::unavailable</code>), so P2c draws for good.</li>
+    </ul>
+    <p><strong>Why not one program with a switch.</strong></p>
+    <ol>
+      <li><em>Different work.</em> P2r carries none of the glow&rsquo;s terms and P2c no field lookup. As a runtime branch, the composite&rsquo;s code would sit in the hottest program the neon has, and this compiler has slowed <code>neon.frag</code> for code no frame runs - it builds every function in a source whether <code>main()</code> reaches it or not. So the variant is a compile-time define.</li>
+      <li><em>P2c is its own object too.</em> It is the same source as P1b, compiled again so that each program draws one target in one blend state per frame: one program drawing an offscreen buffer unblended and the caller&rsquo;s framebuffer blended in the same frame measured 93-624x slower on the AMD macOS driver.</li>
+      <li><em>P2r is not P1c&rsquo;s program.</em> Both read a field, but P1c draws the reduced buffer unblended and P2r the caller&rsquo;s framebuffer blended - the same rule - and P2r also carries the four-strip lookup into the packed field (<code>RingFieldLayout</code>) and the cut and cutoffs, which P1c does not.</li>
+    </ol>
+    <p>So the band involves three programs - P1r&rsquo;s bake, shared with P1f (<code>mFieldBakeShader</code>), then P2c or P2r - and on any one frame exactly one of the last two draws it.</p>
   </section>
 
   <footer>
