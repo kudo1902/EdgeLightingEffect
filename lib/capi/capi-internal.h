@@ -3,6 +3,9 @@
 
 #include "edge-lighting-capi.h"
 
+#include <cmath>
+#include <initializer_list>
+
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
 #include "renderer/neon-renderer.h"
@@ -203,6 +206,45 @@ struct el_modulator_handle_impl
             LOG_E("%s: negative %s", fn, #index); \
             return EL_ERROR_INVALID_PARAMETER;    \
         }                                         \
+    } while (0)
+
+/// Whether every value in @p values is finite. One NaN in the config makes
+/// Config::operator== false for good, so the effect notifies every renderer on
+/// every frame and every skip they keep is defeated (I80).
+inline bool AllFinite(std::initializer_list<double> values)
+{
+    for (const double v : values)
+    {
+        if (!std::isfinite(v))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Rejects a call any of whose float arguments is NaN or infinite, returning
+/// @p failure (EL_ERROR_INVALID_PARAMETER, or nullptr from a factory).
+#define REQUIRE_FINITE(fn, failure, ...)                     \
+    do                                                       \
+    {                                                        \
+        if (!AllFinite({__VA_ARGS__}))                       \
+        {                                                    \
+            LOG_E("%s: non-finite argument (%s)", fn, #__VA_ARGS__); \
+            return failure;                                  \
+        }                                                    \
+    } while (0)
+
+/// Rejects a duration below @p minimum, or equal to it when @p strict.
+#define REQUIRE_DURATION(fn, failure, duration, strict)                  \
+    do                                                                   \
+    {                                                                    \
+        if ((strict) ? !((duration) > 0.0f) : !((duration) >= 0.0f))      \
+        {                                                                \
+            LOG_E("%s: duration %f must be %s 0", fn, (double)(duration), \
+                  (strict) ? "above" : "at least");                      \
+            return failure;                                              \
+        }                                                                \
     } while (0)
 
 /// Short-circuit setter that only logs + assigns when the incoming value

@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I80, I81, I82, I83, I84, I86, I88 |
+| open | V9, V16, V18, V29, V32, I13, I18, I81, I82, I83, I84, I86, I88 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -5784,7 +5784,7 @@ into diamond-shaped bands. **Not measured.** The cure, if it shows, is the
 other two layers': a half-float buffer read undithered, and the noise added
 once per destination pixel on the write to the caller's target.
 
-### I80. No float input is checked for NaN or infinity - OPEN
+### I80. No float input is checked for NaN or infinity - FIXED
 
 **Found** by reading the C ABI setters (`SET_AND_LOG` passes every float
 through) and the animation factories (`IntensityPulse(0)` builds an
@@ -5797,6 +5797,8 @@ top of the NaN reaching geometry and uniforms. V30's `PhaseAccumulator`
 treats a non-finite rate as 0, which covers the phases alone. The fix is to
 refuse non-finite values at the boundary - the C ABI's setters and the
 factories - as b692d63 did for enum values.
+
+**Fixed** at the C ABI. Every entry point that takes a float or double by value - 78 of them: 51 effect setters, 12 animation factories, 5 animation setters, 6 modulator functions and 4 deprecated shims - now opens with `REQUIRE_FINITE` (`capi-internal.h`), after its handle check, and returns `EL_ERROR_INVALID_PARAMETER` (`nullptr` from a factory) with an error log, leaving the staging config untouched. Durations: the preset animation factories require a duration above 0 (`IntensityPulse(0)` built an oscillator of frequency 1 / 0); `el_animation_set_duration`, `el_modulator_sequence_append` and `el_modulator_create_ease` require at least 0, since 0 is meaningful there (an animation that never wraps; an ease that is already at its end). Verified with a C probe against the Release dylib: NaN and infinity refused on scalar, colour and point setters, the value read back unchanged, a null handle still `EL_ERROR_INVALID_HANDLE`, 0 and negative durations refused or accepted as above. The C++ API is unchanged: `SetConfig` still takes any float.
 
 ### I81. Every uniform lookup builds a `std::string` - OPEN
 
@@ -6265,7 +6267,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I78 | fixed | a zero-duration animation's elapsed time was a float - 9.375 s per 10 s after a day, frozen past 6.07 days, the clock's old bug one layer up; elapsed, `ApplyAt` and `Modulator::Evaluate` are doubles, exact over 365 days |
 | I79 | fixed | eleven C ABI entry points dereferenced the null effect a created, uninitialised handle holds (SIGSEGV); they return `EL_ERROR_INVALID_HANDLE` - or an empty answer for the two queries - before init |
 | V32 | open | the lens flare writes undithered, into RGBA8 below 1.0 - the mechanism R7 and V27 fixed elsewhere, on the smoothest layer; not measured |
-| I80 | open | no float input is checked for NaN or infinity, at the C ABI or in the animation factories; one NaN makes `Config ==` false for good, defeating every skip and cache |
+| I80 | fixed | the C ABI refuses non-finite float arguments and non-positive preset durations |
 | I81 | open | `ShaderProgram::getLocation` builds a `std::string` per `SetUniform`; under libstdc++ 8 of 88 names allocate, ~7 heap allocations per neon upload per frame, invisible on macOS |
 | I82 | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
 | I83 | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
