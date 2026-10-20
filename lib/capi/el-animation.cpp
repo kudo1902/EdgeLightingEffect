@@ -125,6 +125,16 @@ el_result_e el_animation_destroy(el_animation_handle_t anim)
     {
         return EL_SUCCESS;
     }
+    // The handle is the only way a C host can have set these, and the
+    // callbacks hold the host's userData. An animation still attached to an
+    // effect keeps running after its handle is gone (the effect shares
+    // ownership), so without this its next completion or state change called
+    // back into userData the host had just freed with the handle (I89).
+    if (anim->ptr)
+    {
+        anim->ptr->OnComplete = nullptr;
+        anim->ptr->OnStateChanged = nullptr;
+    }
     delete anim;
     return EL_SUCCESS;
 }

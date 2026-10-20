@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I86, I87, I88, I89 |
+| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I86, I87, I88 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -6131,7 +6131,7 @@ runs, that is the stall the neon avoided. **Not measured.** The two layers
 should follow one rule, chosen by a measurement on the target: orphan with
 `glBufferData` (the ceiling is 34 KB), or round-robin two stores.
 
-### I89. Destroying an attached animation's handle orphans it, its C callback included - OPEN
+### I89. Destroying an attached animation's handle orphans it, its C callback included - FIXED
 
 **Found** by reading `el_animation_destroy`, which deletes the handle and
 nothing else; its header says "Detach first if attached", and nothing enforces
@@ -6145,6 +6145,8 @@ gets a use-after-free in its own code on the animation's next completion or
 state change. The cheap guard is for `el_animation_destroy` to clear both
 callbacks, which only a C host could have set through that handle; detaching
 from every effect it is attached to would need the handle to know them.
+
+**Fixed** on 2026-10-20: `el_animation_destroy` clears `OnComplete` and `OnStateChanged` before deleting the handle, and its header says so and states that an animation destroyed while attached keeps running and is removable only by `el_effect_detach_all_animations`. Probe, under AddressSanitizer: an attached one-shot whose handle and `userData` are freed before it completes - heap-use-after-free in the host callback against `1c76c3e`'s library, the callback not called and the run clean after.
 
 ### Minor, recorded rather than itemised
 
@@ -6270,7 +6272,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I86 | open | on Linux / Tizen `LOG_D` stays live in the C ABI, so 74 of 82 getters log on every call; `el_animation_update` / `apply` log at INFO on every call everywhere (120 lines per 60 frames); no level filter or platform sink |
 | I87 | open | V30's fix left seven descriptions of `uHuePhase` as `fract(time * rate)` - three shader comments, four places in three docs |
 | I88 | open | the spotlight overwrites its strip VBO with `glBufferSubData` every animated frame, where the neon orphans with `glBufferData` to avoid an implicit sync; not measured |
-| I89 | open | `el_animation_destroy` on an attached animation leaves it running, undetachable on its own, and with its C callback still holding the host's `userData` |
+| I89 | fixed | `el_animation_destroy` on an attached animation left it running with its C callback still holding the host's `userData`; destroy now clears both callbacks (use-after-free under ASan before, clean after); the orphaned animation is still removable only by `el_effect_detach_all_animations`, as the header now says |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
