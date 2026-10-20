@@ -185,6 +185,22 @@ namespace EdgeLighting
             {
                 glm::vec3 ha = (space == BlendSpace::HSV) ? RgbToHsv(glm::vec3(a)) : RgbToHsl(glm::vec3(a));
                 glm::vec3 hb = (space == BlendSpace::HSV) ? RgbToHsv(glm::vec3(b)) : RgbToHsl(glm::vec3(b));
+                // An ACHROMATIC stop - white, a grey, black - has no hue, and
+                // the conversions report 0, red, for it; blending toward that
+                // swept the hue through colours neither stop has (blue -> white
+                // peaked at pink in HSV, V33). It takes the other stop's hue,
+                // so only the saturation and the value / lightness move. Its
+                // saturation is 0, or for HSV its value is (black).
+                const auto achromatic = [space](const glm::vec3 &c)
+                { return c.y <= 1e-6f || (space == BlendSpace::HSV && c.z <= 1e-6f); };
+                if (achromatic(ha) && !achromatic(hb))
+                {
+                    ha.x = hb.x;
+                }
+                else if (achromatic(hb) && !achromatic(ha))
+                {
+                    hb.x = ha.x;
+                }
                 float dh = hb.x - ha.x;
                 if (dh > 0.5f)
                 {
