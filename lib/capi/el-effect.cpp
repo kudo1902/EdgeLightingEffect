@@ -115,8 +115,12 @@ namespace
         return EL_SUCCESS;
     }
 
-    /// Shared entry check for the calls that reorder an initialised effect.
-    bool IsInitialised(el_effect_handle_t effect, const char *fn)
+    /// Shared entry check for every call that drives, reorders or queries the
+    /// effect itself rather than the staging config: @c impl is created by
+    /// @ref InitLayers, so until el_effect_init* has run there is no effect to
+    /// call into. Those calls used to dereference it unchecked and crashed the
+    /// host on a handle that had been created but not yet initialised.
+    bool IsInitialized(el_effect_handle_t effect, const char *fn)
     {
         if (!effect->impl)
         {
@@ -2356,7 +2360,7 @@ el_result_e el_effect_set_renderer_order(el_effect_handle_t effect,
 {
     LOG_I("effect=%p, count=%d", (void *)effect, count);
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_renderer_order");
-    if (!IsInitialised(effect, "el_effect_set_renderer_order"))
+    if (!IsInitialized(effect, "el_effect_set_renderer_order"))
     {
         return EL_ERROR_INVALID_HANDLE;
     }
@@ -2404,6 +2408,10 @@ el_result_e el_effect_capture(el_effect_handle_t effect)
 {
     LOG_I("effect=%p", (void *)effect);
     VALIDATE_EFFECT_PTR(effect, "el_effect_capture");
+    if (!IsInitialized(effect, "el_effect_capture"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->config = effect->impl->GetConfig();
@@ -2419,6 +2427,10 @@ el_result_e el_effect_capture(el_effect_handle_t effect)
 el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_update");
+    if (!IsInitialized(effect, "el_effect_update"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->impl->SetConfig(effect->config);
@@ -2436,6 +2448,10 @@ el_result_e el_effect_render(el_effect_handle_t effect,
                              int32_t viewportWidth, int32_t viewportHeight)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_render");
+    if (!IsInitialized(effect, "el_effect_render"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->impl->Render(viewportWidth, viewportHeight);
@@ -2451,6 +2467,10 @@ el_result_e el_effect_render(el_effect_handle_t effect,
 el_result_e el_effect_clock_play(el_effect_handle_t effect)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+    if (!IsInitialized(effect, "el_effect_clock_play"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (effect->impl->GetClock().IsPlaying())
     {
         return EL_SUCCESS;
@@ -2463,6 +2483,10 @@ el_result_e el_effect_clock_play(el_effect_handle_t effect)
 el_result_e el_effect_clock_pause(el_effect_handle_t effect)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+    if (!IsInitialized(effect, "el_effect_clock_pause"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (!effect->impl->GetClock().IsPlaying())
     {
         return EL_SUCCESS;
@@ -2476,6 +2500,10 @@ el_result_e el_effect_clock_is_playing(el_effect_handle_t effect, el_bool_t *out
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
     VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
+    if (!IsInitialized(effect, "el_effect_clock_is_playing"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
     LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
     return EL_SUCCESS;
@@ -2488,6 +2516,10 @@ el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_h
     LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
     VALIDATE_EFFECT_PTR(effect, "el_effect_attach_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_attach_animation");
+    if (!IsInitialized(effect, "el_effect_attach_animation"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (anim->ptr)
     {
         effect->impl->Attach(anim->ptr);
@@ -2500,6 +2532,10 @@ el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_h
     LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
     VALIDATE_EFFECT_PTR(effect, "el_effect_detach_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_detach_animation");
+    if (!IsInitialized(effect, "el_effect_detach_animation"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (anim->ptr)
     {
         effect->impl->Detach(anim->ptr);
@@ -2511,6 +2547,10 @@ el_result_e el_effect_detach_all_animations(el_effect_handle_t effect)
 {
     LOG_I("effect=%p", (void *)effect);
     VALIDATE_EFFECT_PTR(effect, "el_effect_detach_all_animations");
+    if (!IsInitialized(effect, "el_effect_detach_all_animations"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     effect->impl->GetAnimationManager().DetachAll();
     return EL_SUCCESS;
 }
@@ -2519,7 +2559,7 @@ el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *ou
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
     VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
-    *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
+    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount()) : 0;
     LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
     return EL_SUCCESS;
 }
@@ -2530,7 +2570,7 @@ el_result_e el_effect_contains_animation(el_effect_handle_t effect,
     VALIDATE_EFFECT_PTR(effect, "el_effect_contains_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
     VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
-    *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
+    *outContains = (anim->ptr && effect->impl && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
     LOG_D("effect=%p, anim=%p, contains=%d", (void *)effect, (void *)anim, *outContains);
     return EL_SUCCESS;
 }

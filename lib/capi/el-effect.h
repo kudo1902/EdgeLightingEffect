@@ -1097,15 +1097,18 @@ extern "C"
      *  @details Snapshots the last-authored values (what @c SetConfig
      *           received) - does NOT include animation overlays. Use this
      *           to re-sync the staging config after external mutation
-     *           (e.g. presets applied inside the effect). */
+     *           (e.g. presets applied inside the effect).
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_capture(el_effect_handle_t effect);
 
     /** @brief Apply staging config then tick clock, animations, and renderers.
      *  @param deltaTime Seconds since the last @c update call. Values <= 0
-     *                   still process animations but advance no time. */
+     *                   still process animations but advance no time.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime);
 
-    /** @brief Draw every enabled renderer at the given viewport size. */
+    /** @brief Draw every enabled renderer at the given viewport size.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
 
@@ -1119,7 +1122,10 @@ extern "C"
 
     /** @brief Start the effect's clock (default state after init).
      *  @details Attached animations advance in lockstep with
-     *           @ref el_effect_update while the clock is playing. */
+     *           @ref el_effect_update while the clock is playing.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised,
+     *           as do @ref el_effect_clock_pause and
+     *           @ref el_effect_clock_is_playing - the clock is the effect's. */
     EL_API el_result_e el_effect_clock_play(el_effect_handle_t effect);
 
     /** @brief Freeze the effect's clock.
