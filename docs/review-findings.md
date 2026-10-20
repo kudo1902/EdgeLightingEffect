@@ -6176,7 +6176,12 @@ from every effect it is attached to would need the handle to know them.
   therefore still differ from one GPU to the next.
 - `SegmentUtils::AcquireSegment` hands out one past the highest live id; a
   config that carries an id of `0xFFFFFFFF` (ids survive serialization) makes
-  that wrap to 0, and the entry it pushes can never be found.
+  that wrap to 0, and the entry it pushes can never be found. **Fixed:** when
+  the highest id is already `UINT32_MAX` it takes the lowest free id from 10
+  up. A probe with ids 10 and `0xFFFFFFFF` got 0, never found, before, and 11,
+  found, after; ordinary configs get the same ids as before. (The old code
+  recovered when an entry after the `0xFFFFFFFF` one was 10 or more, so the
+  wrap needs that id last.)
 - `HasClippedLamp` tests a clipped lamp's `enable` and `intensity` but not its
   tint, so a clipped lamp with a black tint - which draws nothing - still pins
   the spotlight's scale to 1.0.
