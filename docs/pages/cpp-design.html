@@ -963,7 +963,7 @@
       </div>
 
       <h3>Programs, built on first use <span class="src">ensureProgram</span></h3>
-      <p>Every program goes through <code>ensureProgram(program, source, define, name, bit, blocks, consequence)</code>: build once over <code>neon.vert</code>, splice a <code>#define</code> after the version line where one is given (<code>WithDefine</code>), bind exactly the uniform blocks the source declares (binding a block a program lacks logs an error), and on failure record the program's bit in <code>mFailedPrograms</code>, log the consequence once, and never retry. A failure degrades the frame - to the fill alone for a glow program, to direct shading for a field program - instead of failing the renderer.</p>
+      <p>Every program goes through <code>ensureProgram(program, source, name, bit, blocks, consequence)</code>: build once over <code>neon.vert</code>, bind exactly the uniform blocks the source declares (binding a block a program lacks logs an error), and on failure record the program's bit in <code>mFailedPrograms</code>, log the consequence once, and never retry. A failure degrades the frame - to the fill alone for a glow program, to direct shading for a field program - instead of failing the renderer.</p>
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>Member</th><th>Source</th><th>Pass</th><th>Built</th><th>Blocks</th></tr></thead>
@@ -973,12 +973,12 @@
             <tr><td class="mono nw">mGlowCoverFillShader</td><td class="mono">neon-glow-cover-fill.frag</td><td><span class="pid">P0f</span></td><td>the first frame whose segments get a table of their own</td><td>-</td></tr>
             <tr><td class="mono nw">mGatherShader</td><td class="mono">neon-gather.frag</td><td><span class="pid">P1a</span></td><td>the first frame</td><td>segment, samples</td></tr>
             <tr><td class="mono nw">mShadeShader</td><td class="mono">neon.frag</td><td><span class="pid">P1b</span></td><td>the first frame</td><td>segment, arc</td></tr>
-            <tr><td class="mono nw">mFieldBakeShader</td><td class="mono">neon.frag + NEON_FIELD_BAKE</td><td><span class="pid">P1f P1r</span></td><td>the first frame a field can serve</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mFieldBakeShader</td><td class="mono">neon-field-bake.frag</td><td><span class="pid">P1f P1r</span></td><td>the first frame a field can serve</td><td>segment, arc</td></tr>
             <tr><td class="mono nw">mFieldCompositeShader</td><td class="mono">neon-field.frag</td><td><span class="pid">P1c</span></td><td>with the bake</td><td>-</td></tr>
             <tr><td class="mono nw">mFillShader</td><td class="mono">black-rect.frag</td><td><span class="pid">P2a</span></td><td>the first fill that draws through a shader (a clear usually stands in)</td><td>-</td></tr>
             <tr><td class="mono nw">mBlitShader</td><td class="mono">neon-blit.frag</td><td><span class="pid">P2b</span></td><td>the first frame</td><td>-</td></tr>
             <tr><td class="mono nw">mRingShader</td><td class="mono">neon.frag</td><td><span class="pid">P2c</span></td><td>the first frame</td><td>segment, arc</td></tr>
-            <tr><td class="mono nw">mRingFieldCompositeShader</td><td class="mono">neon-field.frag + NEON_FIELD_RING</td><td><span class="pid">P2r</span></td><td>the first frame the ring's field can serve</td><td>-</td></tr>
+            <tr><td class="mono nw">mRingFieldCompositeShader</td><td class="mono">neon-ring-field.frag</td><td><span class="pid">P2r</span></td><td>the first frame the ring's field can serve</td><td>-</td></tr>
           </tbody>
         </table>
       </div>
@@ -1383,7 +1383,7 @@ if (neon &amp;&amp; neon-&gt;IsReady())
       <ul class="body">
         <li><strong>Constants shared by both languages</strong> live in the four tuning headers (<code>neon-</code>, <code>droplets-</code>, <code>lens-flare-</code>, <code>spotlight-tuning.h</code>), written with <code>#define</code> - the only form valid in C++ and GLSL ES 3.00 - and injected verbatim, so a shader constant and its CPU mirror cannot drift.</li>
         <li><strong>GLSL shared by several programs</strong> lives in <code>.glsl</code> chunks (<code>neon-common</code>, <code>neon-pieces</code>, <code>neon-sdf</code>, <code>neon-grade</code>, <code>spotlight-dither</code>) injected the same way, since GLSL has no <code>#include</code>.</li>
-        <li><strong>Variants</strong> are a <code>#define</code> spliced in at build time by <code>ensureProgram</code> (<code>NEON_FIELD_BAKE</code>, <code>NEON_FIELD_RING</code>), not a runtime branch in a hot program.</li>
+        <li><strong>Variants</strong> are sources of their own over a shared chunk (the field bake is <code>neon-field-bake.frag</code> over <code>neon-shade.glsl</code>, calling <code>neonShade</code> with a constant argument), not a runtime branch in a hot program.</li>
         <li><strong>Per-index data</strong> goes in a <code>layout(std140)</code> uniform block uploaded through <code>UniformBuffer</code>, never a bare uniform array - the form is unavailable on the restricted targets the library ships to and compiles fine on desktop GL, so testing would not catch it.</li>
         <li><strong>Adding a shader</strong> touches three places: both lists in <code>lib/CMakeLists.txt</code> (<code>CMAKE_CONFIGURE_DEPENDS</code> and <code>file(READ ...)</code>) and <code>shaders.h.in</code>.</li>
       </ul>

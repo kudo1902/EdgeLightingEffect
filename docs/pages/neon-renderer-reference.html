@@ -1570,7 +1570,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <line x1="530" y1="458" x2="530" y2="472" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="474" width="660" height="46" class="dg-box"/>
           <text x="212" y="494" class="dg-t">pass 1f: glow field bake -&gt; mGlowField.buffer</text>
-          <text x="212" y="510" class="dg-t2">NEON_FIELD_BAKE; hue or intensity moving, once the config held</text>
+          <text x="212" y="510" class="dg-t2">neon-field-bake.frag; hue or intensity moving, once the config held</text>
           <path d="M530,520 V536 H359 V542" class="dg-line" marker-end="url(#fa2)"/>
           <path d="M530,520 V536 H701 V542" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="544" width="318" height="46" class="dg-box-a"/>
@@ -1585,7 +1585,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <line x1="530" y1="598" x2="530" y2="612" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="614" width="660" height="46" class="dg-box"/>
           <text x="212" y="634" class="dg-t">pass 1r: ring field bake -&gt; mRingField.buffer</text>
-          <text x="212" y="650" class="dg-t2">NEON_FIELD_BAKE over the ring, packed in four strips; once held</text>
+          <text x="212" y="650" class="dg-t2">neon-field-bake.frag over the ring, packed in four strips; once held</text>
           <line x1="530" y1="660" x2="530" y2="674" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="676" width="660" height="46" class="dg-box"/>
           <text x="212" y="696" class="dg-t">restore the target and viewport; blending on</text>
@@ -1606,7 +1606,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="212" y="930" class="dg-t2">neon.frag at scale 1.0, its own program object</text>
           <rect x="542" y="894" width="318" height="46" class="dg-box-a"/>
           <text x="554" y="914" class="dg-t">pass 2r: ring field composite</text>
-          <text x="554" y="930" class="dg-t2">neon-field.frag + NEON_FIELD_RING over mRingMesh</text>
+          <text x="554" y="930" class="dg-t2">neon-ring-field.frag over mRingMesh</text>
           <text x="530" y="922" class="dg-t2" text-anchor="middle">or</text>
           <path d="M359,940 V948 H530" class="dg-line"/>
           <path d="M701,940 V948 H530" class="dg-line"/>

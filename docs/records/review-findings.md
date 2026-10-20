@@ -461,7 +461,7 @@ the other side, on the neon halo and bloom.
 
 **Found** by reading the three writes R7 dithers - `neon-blit.frag`, the edge
 ring (`neon.frag` with `uBlitOwnsCut` 0) and the ring field's composite
-(`neon-field.frag`, `NEON_FIELD_RING`): each adds `neonDither`'s noise to its
+(`neon-ring-field.frag`): each adds `neonDither`'s noise to its
 colour unconditionally, where the glow is an exact 0 as well. Three
 consequences:
 

@@ -488,21 +488,23 @@ The final source of `neon.frag` is assembled in this order:
 
 ```
 #version 330 core                  <- @GLSL_VERSION@: "330 core" on macOS, "300 es" elsewhere
-[#define NEON_FIELD_BAKE]          <- only for the field bake variant, spliced in at RUNTIME by WithDefine()
 <contents of neon-tuning.h>        <- @NEON_TUNING@: shared constants, verbatim
 <contents of neon-common.glsl>     <- @NEON_COMMON@: starts with "precision highp float;"
 <contents of neon-pieces.glsl>     <- @NEON_PIECES@: the corner geometry and the coverage table's read
 <contents of neon-sdf.glsl>        <- @NEON_SDF@: sdRoundBox, sdRoundBoxFwidth, the band boundaries
 <contents of neon-grade.glsl>      <- @NEON_GRADE@: the tone map and the output dither
-<contents of neon.frag>
+<contents of neon-shade.glsl>      <- @NEON_SHADE@: every uniform and helper, and neonShade - the shading up to the grade
+<contents of neon.frag>            <- main(): the grade, the cut, the cutoffs, the dither
 ```
 
 `neon-gather.frag` is built the same way up to `neon-common.glsl`, with its own
 contents straight after. The coverage bake (`neon-glow-cover.frag`, P0b) takes
 the tuning header, then `#define NEON_GLOW_COVER_BAKE`, then `neon-pieces.glsl`,
 then its own source; its fill (`neon-glow-cover-fill.frag`, P0f) the same with
-`NEON_GLOW_COVER_FILL`. `neon-blit.frag` and `neon-field.frag` take the tuning
-header, `neon-grade.glsl` and `neon-sdf.glsl`; `black-rect.frag` takes only
+`NEON_GLOW_COVER_FILL`. `neon-blit.frag` takes the tuning
+header, `neon-grade.glsl` and `neon-sdf.glsl`; the two field
+composites (`neon-field.frag`, `neon-ring-field.frag`) the same, then
+`neon-field-common.glsl`; `black-rect.frag` takes only
 `neon-sdf.glsl`.
 
 - **The tuning header** (`neon-tuning.h`) is plain `#define`s, so it compiles
@@ -522,11 +524,13 @@ header, `neon-grade.glsl` and `neon-sdf.glsl`; `black-rect.frag` takes only
   and the bake that writes it (Part 7.3). `NEON_GLOW_COVER_BAKE` picks which
   half of its layout code each program compiles. `neon-sdf.glsl` and
   `neon-grade.glsl` are the rounded-box SDF and the tone map / dither, one copy
-  each for every program that draws the glow's edge or grades its output.
-- **Variants.** `neon.frag` is also compiled as the field bake from one source,
-  and `neon-field.frag` as the ring field's composite. `WithDefine` in
-  `neon-renderer.cpp` inserts `#define NEON_FIELD_BAKE` (or `NEON_FIELD_RING`)
-  right after the `#version` line, which must stay first. Part 7.4 lists what
+  each for every program that draws the glow's edge or grades its output;
+  and `neon-field-common.glsl` is what the two field composites share - their
+  uniforms and `fieldShade`.
+- **No variants.** Every program is its own source: the field bake is
+  `neon-field-bake.frag`, built the same way as `neon.frag` but with its own
+  `main()`, which calls `neonShade` with `fieldBake` set and writes what it
+  returns. `#version` stays the first line, which must stay first. Part 7.4 lists what
   each program includes.
 - **Editing a shader or a tuning header re-runs configure automatically** on
   the next build, because `CMAKE_CONFIGURE_DEPENDS` lists them all.
@@ -1327,12 +1331,12 @@ and draws.
 | `mGlowCoverFillShader` | `neon-glow-cover-fill.frag` | first frame whose segments get a table of their own | P0f |
 | `mGatherShader` | `neon-gather.frag` | first frame | P1a |
 | `mShadeShader` | `neon.frag` | first frame | P1b |
-| `mFieldBakeShader` | `neon.frag` + `NEON_FIELD_BAKE` | first frame a field can serve | P1f, P1r |
+| `mFieldBakeShader` | `neon-field-bake.frag` | first frame a field can serve | P1f, P1r |
 | `mFieldCompositeShader` | `neon-field.frag` | with it | P1c |
 | `mFillShader` | `black-rect.frag` | first fill drawn through it | P2a |
 | `mBlitShader` | `neon-blit.frag` | first frame | P2b |
 | `mRingShader` | `neon.frag`, a second program object | first frame | P2c |
-| `mRingFieldCompositeShader` | `neon-field.frag` + `NEON_FIELD_RING` | first frame the ring's field can serve | P2r |
+| `mRingFieldCompositeShader` | `neon-ring-field.frag` | first frame the ring's field can serve | P2r |
 
 Every program goes through `ensureProgram`: built on first use (the glow's
 four by `ensureGlowPrograms`), and a failure logged once and never retried.
@@ -1517,8 +1521,8 @@ Under a rotating hue or a moving intensity, P1b is factored (I46, I50, I56,
 I58): its output is `tonemap(col * Fa + segColHue * Fs)`, with only the
 gathered hues `col` and `segColHue` changing from frame to frame (`Fs` is 0
 without segments, and the blit applies the cut and the cutoffs after it, so
-nothing follows the tone map). So **P1f** - `neon.frag` compiled with
-`NEON_FIELD_BAKE`, after P1a - bakes `Fa` (and `Fs`, RG16F, with segments) into
+nothing follows the tone map). So **P1f** - `neon-field-bake.frag`, the
+same shading with the hues replaced, after P1a - bakes `Fa` (and `Fs`, RG16F, with segments) into
 `mGlowField.buffer` on the reduced buffer's own grid, and **P1c** -
 `neon-field.frag` - writes the reduced buffer in P1b's place: drop what P1b's
 discards drop (the cull `BLIT_SIDE_GUARD_PX` past the one-sided cut and
@@ -2121,9 +2125,13 @@ Notes:
 Two sources split the work. `neon-gather.frag` holds the gather loop
 (`gatherPerimeter`) and is short enough to read whole: its `main()` is the
 call and the encoded write. `neon.frag` shades from what that pass stored; it
-is compiled as P1b's program, as the ring's (P2c, a second object), and with
-`NEON_FIELD_BAKE` as the field bakes' (P1f, P1r). Both take `neon-common.glsl`
-(Part 2.1). Everything else in this section is `neon.frag`.
+is compiled as P1b's program and as the ring's (P2c, a second object), and
+`neon-field-bake.frag` runs the same shading as the field bakes' (P1f, P1r).
+Both take `neon-common.glsl` (Part 2.1). The shading up to the grade -
+`neonShade`, and every uniform and helper - is in `neon-shade.glsl`, which
+both shading programs inject; `neon.frag` itself is only the `main()` that
+grades and masks it. Everything else in this section is that shading, and
+calls it `neon.frag`.
 
 | | `neon-gather.frag` (P1a) | `neon.frag` (P1b, P2c, field bakes) |
 | - | - | - |

@@ -332,7 +332,7 @@
       <rect class="shader" x="740" y="380" width="310" height="56" rx="8"/>
       <text class="t-id" x="754" y="402">P1f &#183; P1r</text>
       <text x="834" y="402">mFieldBakeShader</text>
-      <text class="t-file" x="754" y="422">neon.frag + NEON_FIELD_BAKE &#183; settled</text>
+      <text class="t-file" x="754" y="422">neon-field-bake.frag &#183; settled</text>
       <line class="w" x1="185" y1="436" x2="185" y2="467" marker-end="url(#dg-ah)"/>
       <line class="w" x1="540" y1="436" x2="540" y2="467" marker-end="url(#dg-ah)"/>
       <line class="w" x1="895" y1="436" x2="895" y2="467" marker-end="url(#dg-ah)"/>
@@ -428,7 +428,7 @@
       <rect class="shader" x="385" y="1284" width="310" height="56" rx="8"/>
       <text class="t-id" x="399" y="1306">P2r</text>
       <text x="441" y="1306">mRingFieldCompositeShader</text>
-      <text class="t-file" x="399" y="1326">neon-field.frag &#183; from mRingField.buffer</text>
+      <text class="t-file" x="399" y="1326">neon-ring-field.frag &#183; from mRingField.buffer</text>
       <rect class="shader" x="740" y="1196" width="310" height="56" rx="8"/>
       <text class="t-id" x="754" y="1218">P2b</text>
       <text x="796" y="1218">mBlitShader</text>
@@ -592,7 +592,7 @@
       <h2 class="sec"><span class="num">P1f</span>Hue-invariant field</h2>
       <dl class="spec">
         <div><dt>Program</dt><dd><code>mFieldBakeShader</code></dd></div>
-        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_FIELD_BAKE</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-field-bake.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mGlowField.buffer</code></dd></div>
         <div><dt>Grid</dt><dd>320 &times; 180 texels here: the glow quad&rsquo;s window of the reduced buffer&rsquo;s grid (<code>GetFieldRegion</code>)</dd></div>
         <div><dt>Format</dt><dd>R16F; RG16F with segments</dd></div>
@@ -660,7 +660,7 @@
       <h2 class="sec"><span class="num">P1r</span>Ring field bake</h2>
       <dl class="spec">
         <div><dt>Program</dt><dd><code>mFieldBakeShader</code>, the same as P1f</dd></div>
-        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_FIELD_BAKE</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-field-bake.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mRingField.buffer</code></dd></div>
         <div><dt>Grid</dt><dd>458 &times; 108 texels: the ring&rsquo;s pixels, packed</dd></div>
         <div><dt>Format</dt><dd>R16F; RG16F with segments</dd></div>
@@ -732,7 +732,7 @@
       <h2 class="sec"><span class="num">P2r &middot; or P2c</span>Ring field composite</h2>
       <dl class="spec">
         <div><dt>Program</dt><dd><code>mRingField<wbr>CompositeShader</code></dd></div>
-        <div><dt>Shader</dt><dd><code>neon-field.frag</code> + <code>NEON_FIELD_RING</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-ring-field.frag</code></dd></div>
         <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
         <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
         <div><dt>Covers</dt><dd>The ring band only, in P2c&rsquo;s place</dd></div>
@@ -823,11 +823,11 @@
     <p><strong>The fields are what make a moving frame cheap.</strong> Without P1f there is nothing for P1c to read, and every hue-rotating frame - the library&rsquo;s default - reruns pass 1b&rsquo;s whole shading; without P1r, the ring is shaded in full on every frame, still ones included. Measured on the AMD Radeon Pro 5300M: the glow&rsquo;s field 1.98x on hue frames at 0.75, 1.55x at 0.5, 1.21x at 0.25 (I50, twelve scenes); the ring&rsquo;s 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52). And on an Apple M2 Pro the glow&rsquo;s field carries an intensity animation, scaled, where it used to be thrown away on every frame: 2.31x on intensity-pulse frames at 0.5 (I56). (Before I57 the same field stood in for a direct pass 1 at scale 1.0, where it measured 4x with the hue rotating and 9x still - I46.)</p>
     <p><strong>It cannot be the ring&rsquo;s program.</strong> Three things separate it, and each is a reason:</p>
     <ol>
-      <li><em>A different output.</em> It writes the brightness before the tone map - <code>Fa</code>, and <code>Fs</code> in a second half-float channel with segments - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame runs, and this compiler has slowed that program for code no frame executes.</li>
+      <li><em>A different output.</em> It writes the brightness before the tone map - <code>Fa</code>, and <code>Fs</code> in a second half-float channel with segments - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a program of its own (<code>neon-field-bake.frag</code>, the shared <code>neonShade</code> called with a constant) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame runs, and this compiler has slowed that program for code no frame executes.</li>
       <li><em>A different target and blend state.</em> It draws an offscreen buffer, unblended; the ring&rsquo;s program draws the caller&rsquo;s framebuffer, blended. One program doing both is the shape that measured 93-624x slower on the AMD macOS driver - the reason P1b and the ring are already two programs.</li>
       <li><em>It costs only where it pays.</em> Built on the first frame of a config a field can serve - any config but a rotating hue over a gradient ring that is not opaque everywhere; the glow&rsquo;s field is not allocated without a rotating hue or a moving intensity, nor for a thin band it is not worth its memory for (<code>FIELD_MIN_FILL</code>) - the ring&rsquo;s, a few strips of full-resolution pixels, is, since the ring is redrawn on every frame. A host whose configs a field never serves never compiles either.</li>
     </ol>
-    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program would draw two targets in two blend states with it in one frame. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
+    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program would draw two targets in two blend states with it in one frame. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>neonShade</code>&rsquo;s <code>fieldBake</code> branch (<code>neon-shade.glsl</code>) and the composites&rsquo; <code>fieldShade</code> (<code>neon-field-common.glsl</code>) together.</p>
 
     <h2 id="ring-programs">Why the ring band has two programs</h2>
     <p><strong>The ring is never drawn twice.</strong> P2c and P2r are alternatives: each frame draws the band with exactly one of them, and both draw the same mesh, <code>mRingMesh</code>, through the matrix the blit draws with, so either keeps the blit and the ring tiling the frame (<code>neon-scale-check partition</code>).</p>
@@ -838,7 +838,7 @@
         </thead>
         <tbody>
           <tr><td>Program</td><td><code>mRingShader</code></td><td><code>mRingFieldCompositeShader</code></td></tr>
-          <tr><td>Source</td><td><code>neon.frag</code>, the full shading, with its uniforms at scale 1.0</td><td><code>neon-field.frag</code> + <code>NEON_FIELD_RING</code></td></tr>
+          <tr><td>Source</td><td><code>neon.frag</code>, the full shading, with its uniforms at scale 1.0</td><td><code>neon-ring-field.frag</code></td></tr>
           <tr><td>Per pixel</td><td>the whole glow: the filament, the halo and the bloom summed over the outline&rsquo;s pieces, the gather read, a coverage-table fetch per piece, the tone map, then the cut and the cutoffs</td><td>one fetch of the field P1r baked, times the gathered hue, the tone map, then the cut and the cutoffs</td></tr>
           <tr><td>Valid</td><td>always</td><td>only while a baked field still describes the frame</td></tr>
         </tbody>
