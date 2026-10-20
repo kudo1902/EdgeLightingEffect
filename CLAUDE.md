@@ -150,10 +150,16 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   would fail `FIELD_MIN_FILL` for any rect smaller than the screen - after the
   gather, and `neon-field.frag`
   (`mFieldCompositeShader`, pass 1c) writes `mScaled`, unblended, in
-  pass 1b's place: drop what pass 1b's discards drop (the field is half
-  resolution and read NEAREST, so without them the shared buffer carried a
-  line of glow past pass 1b's edge - I76; the blit never reads there), read the
-  field, read the hues, tone-map. Pass 1b is skipped
+  pass 1b's place: drop what pass 1b's discards drop (without them the shared
+  buffer carried a line of glow past pass 1b's edge - I76; the blit never
+  reads there), read the field, read the hues, tone-map. Those are the ONLY
+  culls the field's pixels get: the bake makes none (V35). It draws through a
+  projection of its own, so its `vPos` differs from pass 1b's in the last bits,
+  and when it culled too, a texel on a cull's boundary that it culled and pass
+  1c kept composited its 0 - a shared-buffer texel 200 levels under pass 1b.
+  The ring field's bake culls nothing either; its composite's masks are exactly
+  0 wherever the ring would cull. A coverage decision belongs to the program
+  that draws the frame's own grid, never to a bake. Pass 1b is skipped
   on every frame where nothing moved already (`mOffscreen.reusable`), so the
   frames left for the field are the hue's and an intensity animation's -
   1.1-2.0x on hue frames on the AMD 5300M (1.55x at 0.5), 2.31x on
@@ -234,9 +240,11 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   directly. The bake STOPS at the grade (its `main` writes what `neonShade` returns and
   never runs `neon.frag`'s), so a uniform read only below the grade is dead in it, and Tizen's compiler removes it: sending it anyway logs
   `uniform '...' not found` on `NeonRenderer.Field` (Apple's GL keeps such a
-  uniform, so the Macs never show this). `uGlowSideSoftness` is the one today,
-  and `uploadNeonUniforms` does not send it to `mFieldBakeShader` (I63) - add a
-  uniform read only after the grade and it joins that exception.
+  uniform, so the Macs never show this). `uGlowSideSoftness` is one, and
+  `uGlowSide`, read only by the culls the bake does not make (V35), the other:
+  `uploadNeonUniforms` sends neither to `mFieldBakeShader` (I63,
+  `UploadEdgeMaskUniforms`' `CutReads`) - add a uniform read only after the
+  grade or only by a cull and it joins that exception.
 
   **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
   I45): with no segments, every lit arc over the whole ring and no stops of its

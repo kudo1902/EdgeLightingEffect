@@ -5,6 +5,42 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-21 - The glow field's bake no longer culls (V35)
+
+Commit `054811f`, on top of `add_shared_buffer_architecture` at `cdf4a12`;
+the finding is the thirty-seventh pass of
+[`review-findings.md`](review-findings.md).
+
+- **Found by `sequence`.** Seed 1, sequence 13, frames 69-71 failed `normal`:
+  held frames under a rotating hue at scale 1.0 with an outside cutoff, the
+  frame within 1 level and the shared buffer 200 levels off. It was one texel,
+  on the rounded corner's outside-cutoff guard edge, and `--isolate` named the
+  glow field. The shader refactor that split `neon-field.frag` and the tree
+  before it failed the same three frames.
+- **Cause.** Pass 1f bakes the field onto its own region through that
+  region's projection, so a texel's `vPos` there differs from pass 1b's in the
+  last bits, and it ran pass 1b's culls itself. On a texel right on a cull's
+  boundary it culled where pass 1b kept (alpha 199), and pass 1c, which repeats
+  the culls from pass 1b's own `vPos` (I76), kept the texel and composited the
+  bake's 0.
+- **Fix.** The bake culls nothing (`neonShade`'s `cull`, false under
+  `fieldBake`): pass 1c's culls are the only ones the field's pixels get, and
+  the ring field's composite needed none, since its masks are exactly 0
+  wherever the ring culls. That left `uGlowSide` unread in the bake, so
+  `UploadEdgeMaskUniforms` takes what each program reads of the cut
+  (`CutReads`) and no longer sends it there, as I63 did for the softness.
+- **Verified.** `sequence` 3 failing frames -> 0 (`normal` buffer 200 -> 1).
+  On 100 x 150 the same three were `normal`'s only failures in 15,000 frames,
+  and after it has none; `exact`'s one failure there, before and after, is
+  V29's (sequence 70, frame 45). `check`, `partition` and `shared-buffer` pass.
+  The bake now shades the few px between a cull and the quad edge on the frames
+  it bakes: `time --mode intensity` on four scenes at 1.0 and 0.5 (M2 Pro)
+  moved nothing past run-to-run noise. The `cover` set (306 frames) and the
+  210 page images are byte-identical before and after, and the page metrics
+  match.
+- **Open.** Unchanged: V9, V16, V18, V29, V32, I13, I18, I82, I83, I84, I86,
+  I88, I90, I91, I92.
+
 ## 2026-10-20 - Three full-tree reviews, and the fixes they led to
 
 Commits `9ee0728` to `f153e1c` on `add_shared_buffer_architecture`; the

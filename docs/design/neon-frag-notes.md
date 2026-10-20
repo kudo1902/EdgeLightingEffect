@@ -341,6 +341,27 @@ fill took the same width and had the same pixel (the fill's at 0.75), and
 along the inside diagonal of an inside cutoff `fwidth` read 0 or 2 the same
 way.
 
+**Since V35 (2026-10-21) the field bake makes none of these culls** - the
+one-sided cut's or the cutoffs' (`neonShade`'s `cull`, false under
+`fieldBake`). Pass 1f bakes the glow quad onto the field's own region, through
+that region's projection, so a texel's `vPos` there differs from pass 1b's for
+the same texel in the last bits. While the bake culled, a texel right on a
+cull's boundary could go either way in the two: `neon-scale-check sequence`
+(seed 1, sequence 13, frames 69-71 - held frames under a rotating hue at scale
+1.0, rect 671.4 x 177.4 at (455, -28), radius 55.7, an outside cutoff) found
+one on the rounded corner's outside-cutoff guard edge that the bake culled and
+pass 1b kept at alpha 199. Pass 1c, which repeats pass 1b's culls from pass
+1b's own `vPos` since I76, kept it too and composited the bake's 0: the frame
+within 1 level (the blit never reads the guard band's edge), the shared buffer
+200 levels off on that texel, as `sequence` rounds a float difference. Pass 1c's culls are now the only ones the
+field's pixels get, decided on the frame's own grid; the edge ring's
+composite never needed the bake's, since each of its masks is exactly 0
+wherever the ring culls. The bake shades the few px between a cull and the
+quad edge for nothing, on the frames it bakes. Byte-identical on the `cover`
+set and on every page image; the culls left `uGlowSide` unread in the bake, so
+it is no longer sent there (`UploadEdgeMaskUniforms`, as I63 did for the
+softness).
+
 ## sideSoft: the cut's antialiasing floor
 
 `neon.frag` line 694, before the move.

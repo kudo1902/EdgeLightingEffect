@@ -42,7 +42,7 @@ old fork survived.
 | ----- | ----- |
 | open | V9, V16, V18, V29, V32, I13, I18, I82, I83, I84, I86, I88, I90, I91, I92 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
-| fixed or changed | every other V, I and R item, through the thirty-sixth pass |
+| fixed or changed | every other V, I and R item, through the thirty-seventh pass |
 
 The R items come from a re-read after the V and I fixes landed - see
 Second pass. V8 and V9 come from a later read of
@@ -111,6 +111,10 @@ shared buffer, the GL wrappers, the modulators and the C ABI's lifecycle - see
 Thirty-sixth pass. All three
 were reproduced and all are open; that pass changed no code. It also re-found
 I13, and added a measurement to it.
+
+V35 comes from `neon-scale-check sequence` on the shared-buffer branch, after
+a shader refactor that moved no pixel failed it on the same three frames as
+the tree before it - the thirty-seventh pass, one item, fixed.
 
 ## How the visual items were reproduced
 
@@ -650,7 +654,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. The thirty-seventh fixed V35, found by `sequence`. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -738,6 +742,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | [I90](#i90-a-modulator-sequence-that-contains-itself-hangs-every-evaluation---open) | open | `Sequence::Append` (and `el_modulator_sequence_append`) accepts a stage that reaches the sequence; self and mutual cycles both return success and then `el_modulator_evaluate` never returns (killed after 5 s), and the cycle leaks |
 | [I91](#i91-a-second-eleffectinit-replaces-the-effect-and-drops-its-animations-and-clock---open) | open | a second `el_effect_init*` builds a new effect and returns success, silently dropping the attached animations and the clock state (attached 1 -> 0, paused -> playing); undocumented |
 | [I92](#i92-an-animation-attached-to-two-effects-advances-twice-a-frame---open) | open | an animation attached to two effects is advanced by both (60 frames at 1/60 on each read 2.000 s elapsed); undocumented and unguarded |
+| V35 | fixed | the glow field's bake (pass 1f) made pass 1b's culls itself, through its own region's projection, so its `vPos` differed from pass 1b's in the last bits: on a texel right on a cull's boundary it culled where pass 1b kept, and pass 1c - which repeats the culls from pass 1b's own `vPos` (I76) - composited its 0, a shared-buffer texel 200 levels under pass 1b's guard band on a rounded corner's outside cutoff, the frame within 1 (`sequence` seed 1, sequence 13, frames 69-71); the bake now culls nothing and the composites make every cull on the frame's own grid - `sequence` 3 failing frames -> 0 (on 100 x 150, `normal`'s only failures in 15,000 frames -> none), the `cover` set and the 210 page images byte-identical |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
