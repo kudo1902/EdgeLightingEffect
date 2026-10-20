@@ -39,17 +39,11 @@ namespace EdgeLighting
                 return false;
             }
 
-            // glReadPixels cannot read a multisampled attachment; catch that
-            // here rather than letting it fail with an opaque GL error.
-            GLint samples = 0;
-            glGetIntegerv(GL_SAMPLES, &samples);
-            if (samples > 1)
-            {
-                LOG_E("CaptureUtil::ReadRegion: read framebuffer is multisampled (%d samples); "
-                      "blit it into a single-sample framebuffer first.",
-                      samples);
-                return false;
-            }
+            // No GL_SAMPLES pre-check: it reports the DRAW framebuffer's
+            // samples, not the one being read, so with a multisampled window it
+            // refused every single-sample capture read after End (I85). A
+            // multisampled READ framebuffer makes glReadPixels raise
+            // GL_INVALID_OPERATION, which the check after it names.
 
             // glGetError is sticky: without draining first, an error raised
             // anywhere earlier in the frame would be blamed on glReadPixels
@@ -74,14 +68,23 @@ namespace EdgeLighting
             glGetIntegerv(GL_PACK_ALIGNMENT, &prevAlignment);
             glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
+            // A host's pixel-pack buffer would turn raw.data() into an offset
+            // into that buffer; read into client memory, and put it back.
+            GLint prevPackBuffer = 0;
+            glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prevPackBuffer);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
             glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, raw.data());
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(prevPackBuffer));
 
             glPixelStorei(GL_PACK_ALIGNMENT, prevAlignment);
 
             GLenum err = glGetError();
             if (err != GL_NO_ERROR)
             {
-                LOG_E("CaptureUtil::ReadRegion: glReadPixels failed (0x%x).", err);
+                LOG_E("CaptureUtil::ReadRegion: glReadPixels failed (0x%x)%s.", err,
+                      err == GL_INVALID_OPERATION ? " - a multisampled read framebuffer has to be blitted into a "
+                                                    "single-sample one first"
+                                                  : "");
                 return false;
             }
 
