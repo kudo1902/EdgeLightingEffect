@@ -53,8 +53,11 @@ uniform float uRayDensity;   // Angular density of the ray pattern (see the doc 
 uniform float uGhostSpacing;  // Ghost placement stretch along the sun axis (1 = reference). Scales spread only, not colour/size.
 uniform float uGhostSize;     // Uniform per-ghost size/falloff exponent, shared by every ghost so they all read the same size.
 uniform vec2  uFlareCenter;   // Ghost convergence point in normalised screen coords (0..1, y-down). (0.5, 0.5) = screen centre.
-uniform float uBloomRadius;   // Radius outside which a ghost's bloom term is exactly zero. Derived from uGhostSize on the CPU; see lens-flare-tuning.h.
+uniform float uBloomRadiusSq; // Squared radius outside which a ghost's bloom term is exactly zero. Derived from uGhostSize on the CPU; see lens-flare-tuning.h.
+uniform float uRingRadiusSq;  // Squared radius outside which a ghost's ring term is exactly zero. Same derivation.
 uniform float uRingFloor;     // Lower bound sin(l * 30) must clear before a ghost's ring term can be non-zero. Same derivation.
+uniform float uHexRadiusSq;   // Squared radius, in the hex sprite's own units, outside which its coverage is exactly zero. Same derivation.
+uniform float uHexPx;         // How far the hex sprite's argument steps per pixel: FLARE_HEX_SCALE / uResolution.y. Its closed-form edge width.
 
 // Per-ghost table as a std140 uniform block, baked by the renderer: xyz is a
 // ghost's final colour, w its distance along the sun axis.
@@ -84,7 +87,7 @@ layout(std140) uniform GhostBlock
 // of the smoothstep, so the *visible* fill boundary was razor-thin (sub-pixel)
 // no matter how wide the smoothstep band was - it aliased into stair-steps,
 // and worse in the half-res optimized pass where a pixel spans ~2x the width.
-// Building coverage straight from the polygon distance with an fwidth-sized
+// Building coverage straight from the polygon distance with a pixel-sized
 // edge keeps the boundary ~1px wide at whatever resolution the pass runs at,
 // so the hex ghosts resolve cleanly at full and half res alike.
 //
@@ -109,55 +112,99 @@ const vec2 HEX_AXIS_0 = vec2(-0.198669331,  0.980066578);
 const vec2 HEX_AXIS_1 = vec2( 0.749428406,  0.662085390);
 const vec2 HEX_AXIS_2 = vec2( 0.948096722, -0.317982085);
 
-float hexCoverage(vec2 p)
+// HEX_SPAN_* are |n.x| + |n.y| for each axis above: how far the support
+// distance moves per pixel along that axis, in units of uHexPx. Change an axis
+// and its span with it; FLARE_HEX_SPAN_MAX bounds all three.
+const float HEX_SPAN_0 = 1.178735909;
+const float HEX_SPAN_1 = 1.411513796;
+const float HEX_SPAN_2 = 1.266078807;
+
+// WHY THE EDGE WIDTH IS NOT fwidth
+//   It was fwidth(d), which kept circle() from gating the sprite: a derivative
+//   taken in non-uniform control flow is undefined in GLSL. But q is an affine
+//   function of gl_FragCoord that steps uHexPx per pixel on both axes, so on
+//   the winning axis n, fwidth(d) is exactly uHexPx * (|n.x| + |n.y|). The
+//   closed form differs from the hardware's only where a 2x2 quad straddles a
+//   change of winning axis (a hex vertex), by one level on a handful of
+//   pixels. Derivation in lens-flare-tuning.h.
+float hexCoverage(vec2 q)
 {
-    float d = max(max(abs(dot(p, HEX_AXIS_0)), abs(dot(p, HEX_AXIS_1))),
-                  abs(dot(p, HEX_AXIS_2)));
-    float w = max(fwidth(d), 1e-4);
-    return 1.0 - smoothstep(0.5 - w, 0.5 + w, d);
+    float d0 = abs(dot(q, HEX_AXIS_0));
+    float d1 = abs(dot(q, HEX_AXIS_1));
+    float d2 = abs(dot(q, HEX_AXIS_2));
+
+    float d    = d0;
+    float span = HEX_SPAN_0;
+    if (d1 > d)
+    {
+        d    = d1;
+        span = HEX_SPAN_1;
+    }
+    if (d2 > d)
+    {
+        d    = d2;
+        span = HEX_SPAN_2;
+    }
+
+    float w = max(uHexPx * span, FLARE_HEX_EDGE_FLOOR);
+    return 1.0 - smoothstep(FLARE_HEX_APOTHEM - w, FLARE_HEX_APOTHEM + w, d);
 }
 
 // One ghost group at parametric distance `dist` along the sun axis.
 //
-// The bloom and ring terms are compactly supported - each is exactly zero
-// outside a radius that depends only on `size` - so each is gated on the bound
-// the renderer solved for it. A ghost covers a few percent of the viewport but
-// used to be evaluated in full at every fragment of it. lens-flare-tuning.h
-// carries the derivation of both bounds and the constants they share with the
-// terms below.
+// All three terms are compactly supported - each is exactly zero outside a
+// disc whose radius depends only on `size` and the buffer height - so each is
+// gated on the bound the renderer solved for it, as a squared distance against
+// a squared radius. A ghost covers a few percent of the viewport but used to
+// be evaluated in full at every fragment of it; outside all three discs a
+// fragment now pays three dot products per ghost and nothing else.
+// lens-flare-tuning.h carries the derivation of every bound and the constants
+// they share with the terms below.
 //
-// The hex sprite is deliberately NOT gated the same way: hexCoverage calls
-// fwidth, and a derivative taken in non-uniform control flow is undefined in
-// GLSL. It stays at the top level of the function, where the whole quad
-// evaluates it or none of it does.
+// No derivative is taken anywhere in here (see hexCoverage), which is what
+// makes the gates legal: the control flow they create is non-uniform.
 //
 // `color` arrives from uGhosts rather than being derived here; `dist` still
 // shapes all three terms, so it is still a parameter.
 vec3 circle(vec2 p, float size, float dist, vec2 sunUV, vec3 color)
 {
-    // Bloom. `pow` is strictly increasing, so lq < uBloomRadius is exactly the
-    // condition for a non-zero term, not an approximation of it.
-    float lq = length(p + sunUV * dist);
-    float c  = 0.0;
-    if (lq < uBloomRadius)
+    // Bloom. `pow` is strictly increasing, so lq inside the bloom radius is
+    // exactly the condition for a non-zero term, not an approximation of it.
+    vec2  bp  = p + sunUV * dist;
+    float lq2 = dot(bp, bp);
+    float c   = 0.0;
+    if (lq2 < uBloomRadiusSq)
     {
-        c = max(FLARE_BLOOM_CUT - pow(lq, size * FLARE_BLOOM_EXP), 0.0) * 50.0;
+        c = max(FLARE_BLOOM_CUT - pow(sqrt(lq2), size * FLARE_BLOOM_EXP), 0.0) * 50.0;
     }
 
-    // Ring. The sin is the cheap half of the comparison and uRingFloor bounds
-    // the expensive half from below, so test the sin first and only pay for the
-    // pow on the thin annuli where the term can actually be non-zero.
-    float l  = length(p + sunUV * (dist * 4.0)) + size * FLARE_RING_L_BIAS;
-    float sl = sin(l * 30.0);
-    float c1 = 0.0;
-    if (sl > uRingFloor)
+    // Ring. The disc test is a necessary condition (sin <= 1) that turns away
+    // almost every fragment for one dot product. Inside it the sin is the cheap
+    // half of the comparison and uRingFloor bounds the expensive half from
+    // below, so test the sin first and only pay for the pow on the thin annuli
+    // where the term can actually be non-zero.
+    vec2  rp  = p + sunUV * (dist * 4.0);
+    float lr2 = dot(rp, rp);
+    float c1  = 0.0;
+    if (lr2 < uRingRadiusSq)
     {
-        c1 = max(FLARE_RING_BIAS - pow(l - FLARE_RING_SHIFT, FLARE_RING_EXP) + sl, 0.0) * 3.0;
+        float l  = sqrt(lr2) + size * FLARE_RING_L_BIAS;
+        float sl = sin(l * 30.0);
+        if (sl > uRingFloor)
+        {
+            c1 = max(FLARE_RING_BIAS - pow(l - FLARE_RING_SHIFT, FLARE_RING_EXP) + sl, 0.0) * 3.0;
+        }
     }
 
     // Flat-filled hex sprite (magnitude 0.05, matching the reference's
-    // 0.01 * 5) with an anti-aliased edge from hexCoverage.
-    float s  = hexCoverage(p * 5.0 + sunUV * dist * 5.0 + 0.9) * 0.05;
+    // 0.01 * 5) with an anti-aliased edge from hexCoverage. Gated on the
+    // hexagon's circumradius, widened by the widest edge hexCoverage can use.
+    vec2  q  = bp * FLARE_HEX_SCALE + 0.9;
+    float s  = 0.0;
+    if (dot(q, q) < uHexRadiusSq)
+    {
+        s = hexCoverage(q) * 0.05;
+    }
 
     // Brightness comes from the (c + c1 + s) shape terms and hue from the
     // baked table, so ghosts keep their falloff whatever the tint.
@@ -198,8 +245,7 @@ void main()
     // zero is a documented setting (LensFlareConfig::spread, "suppress
     // ghosts"), not a degenerate one. uSpread is a uniform, so this is uniform
     // control flow: every invocation in the draw takes the same side, which is
-    // what keeps circle()'s fwidth call legal inside it, and what makes the
-    // branch itself free.
+    // what makes the branch itself free.
     if (uSpread != 0.0)
     {
         vec2 ghostP    = uv    - flareCentre;

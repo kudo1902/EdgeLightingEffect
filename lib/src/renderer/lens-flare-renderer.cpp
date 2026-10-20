@@ -75,8 +75,8 @@ namespace EdgeLighting
         }
 
         /// Radius outside which a ghost's bloom term is exactly zero, for
-        /// @c uBloomRadius. Derivation and shared constants live in
-        /// lens-flare-tuning.h.
+        /// @c uBloomRadiusSq (squared on upload). Derivation and shared
+        /// constants live in lens-flare-tuning.h.
         ///
         /// A non-positive @p ghostSize leaves the shader's own pow exponent
         /// non-positive, where the term stops being decreasing in the radius
@@ -113,6 +113,37 @@ namespace EdgeLighting
 
             return std::pow(lMin, static_cast<float>(FLARE_RING_EXP)) -
                    static_cast<float>(FLARE_RING_BIAS);
+        }
+
+        /// Radius outside which a ghost's ring term is exactly zero, for
+        /// @c uRingRadiusSq. Derivation in lens-flare-tuning.h: sin is at most
+        /// 1, so the term needs l below this, and l = radius + ghostSize *
+        /// FLARE_RING_L_BIAS. Zero past ghostSize ~2.68, where no ring is
+        /// drawn at all. No case analysis for a small or negative ghostSize:
+        /// the bound only grows there, and stays a necessary condition.
+        inline float GetGhostRingRadius(float ghostSize)
+        {
+            const double lMax = FLARE_RING_SHIFT + std::pow(FLARE_RING_BIAS + 1.0, 1.0 / FLARE_RING_EXP);
+            return std::max(static_cast<float>(lMax) - ghostSize * static_cast<float>(FLARE_RING_L_BIAS), 0.0f);
+        }
+
+        /// How far the hex sprite's argument steps per pixel of a target
+        /// @p height tall, for @c uHexPx: the closed form of its fwidth.
+        /// Derivation in lens-flare-tuning.h.
+        inline float GetHexPixelStep(float height)
+        {
+            return static_cast<float>(FLARE_HEX_SCALE) / height;
+        }
+
+        /// Radius, in the hex sprite's own units, outside which its coverage is
+        /// exactly zero, for @c uHexRadiusSq: the hexagon's circumradius,
+        /// widened by the widest edge the shader can use at @p hexPx.
+        inline float GetHexRadius(float hexPx)
+        {
+            const float cos30 = std::sqrt(3.0f) * 0.5f;
+            const float wMax = std::max(hexPx * static_cast<float>(FLARE_HEX_SPAN_MAX),
+                                        static_cast<float>(FLARE_HEX_EDGE_FLOOR));
+            return (static_cast<float>(FLARE_HEX_APOTHEM) + wMax) / cos30;
         }
 
         /// Bakes the table the shader reads as @c uGhosts: xyz is a ghost's
@@ -214,6 +245,26 @@ namespace EdgeLighting
         const float scale = GetClampedFlareScale(config);
         const glm::ivec2 target = GetFlareTargetSize(viewportWidth, viewportHeight, scale);
 
+        // Nothing the pass reads has moved since the buffer was drawn: it
+        // already holds this frame's flare, so Render blits it as it stands.
+        // Byte-identical - the buffer is a pure function of FlareInputs, and
+        // nothing else writes it. The common case is a still sun with the
+        // rays not spinning (rotationRate 0, the default). No capture, no
+        // bind, no draw: the caller's target is never left.
+        const FlareInputs inputs = getFlareInputs(target, scale, viewportWidth, viewportHeight, time, config);
+        if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid())
+        {
+            mFrame.scaledReady = true;
+            // The blend state a drawn frame leaves, so a reused one leaves the
+            // same for the layers after it.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            return;
+        }
+        // From here the buffer is being rewritten: until the draw below lands,
+        // it describes nothing, whichever return is taken.
+        mScaledCache.drawn = false;
+
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because this phase has to put both back.
         // The framebuffer is not always the window's: an offscreen frame
@@ -265,6 +316,8 @@ namespace EdgeLighting
         // Back to the caller's target and viewport, both at once.
         prevTarget.Restore();
         mFrame.scaledReady = true;
+        mScaledCache.drawn = true;
+        mScaledCache.inputs = inputs;
 
         // The blend state this layer's Render leaves, for the layers that
         // composite before it.
@@ -346,10 +399,11 @@ namespace EdgeLighting
     void LensFlareRenderer::OnConfigChanged(const Config &config)
     {
         // Almost nothing to cache. Every value this renderer draws from is
-        // read out of the Config that the two phases are handed, and the two
-        // support bounds (uBloomRadius / uRingFloor) are genuinely cheap
-        // enough to rebuild in drawFlare - they are uniform setters, whose own last-value
-        // caching skips the upload when they have not moved.
+        // read out of the Config that the two phases are handed, and the
+        // support bounds (uBloomRadiusSq, uRingRadiusSq, uRingFloor,
+        // uHexRadiusSq, uHexPx) are genuinely cheap enough to rebuild in
+        // drawFlare - they are uniform setters, whose own last-value caching
+        // skips the upload when they have not moved.
         //
         // The ghost table is the exception, and the difference is the
         // mechanism rather than the size: it reaches the shader through a UBO,
@@ -393,6 +447,9 @@ namespace EdgeLighting
         if (!UsesScaledBuffer(config))
         {
             mScaledBuffer.Release();
+            // A released buffer holds nothing to reuse - nor does the one a
+            // later Resize allocates in its place.
+            mScaledCache = ScaledCache{};
         }
     }
 
@@ -450,12 +507,9 @@ namespace EdgeLighting
         // which is what keeps the direct path bit-identical to the
         // single-pass renderer this replaced.
         const glm::vec2 resolution(static_cast<float>(target.x), static_cast<float>(target.y));
-        glm::vec2 sunPosFrag = GeometryUtils::GetSunFragPosition(config.lensFlare, config.geometry,
-                                                                 viewportWidth, viewportHeight);
-        sunPosFrag *= scale;
 
         mFlareShader.SetUniform("uResolution", resolution);
-        mFlareShader.SetUniform("uSunPos", sunPosFrag);
+        mFlareShader.SetUniform("uSunPos", getSunPosition(scale, viewportWidth, viewportHeight, config));
         mFlareShader.SetUniform("uSunColor", config.lensFlare.color);
         mFlareShader.SetUniform("uIntensity", config.lensFlare.intensity);
         mFlareShader.SetUniform("uSpread", config.lensFlare.spread);
@@ -471,13 +525,24 @@ namespace EdgeLighting
         // renderer can assume it still owns.
         mGhostBlock.BindBase(GHOST_BLOCK_BINDING);
 
-        // Support bounds for the two compactly-supported ghost terms, so the
-        // shader can skip each where it is provably zero. Both are pure
-        // functions of ghostSize, which makes them exactly the kind of work
-        // that belongs here rather than in every one of the viewport's
+        // Support bounds for the three compactly-supported ghost terms, so the
+        // shader can skip each where it is provably zero. All are pure
+        // functions of ghostSize and the height of the target drawn into
+        // (the scaled buffer below 1.0), which makes them exactly the kind of
+        // work that belongs here rather than in every one of the viewport's
         // fragments - the same split the neon emission pre-pass is built on.
-        mFlareShader.SetUniform("uBloomRadius", GetGhostBloomRadius(config.lensFlare.ghostSize));
+        // The radii go up squared, so the shader's gates are a dot product
+        // each. A degenerate ghostSize's FLT_MAX bloom radius squares to +inf,
+        // which keeps that gate open as meant.
+        const float bloomRadius = GetGhostBloomRadius(config.lensFlare.ghostSize);
+        const float ringRadius = GetGhostRingRadius(config.lensFlare.ghostSize);
+        const float hexPx = GetHexPixelStep(resolution.y);
+        const float hexRadius = GetHexRadius(hexPx);
+        mFlareShader.SetUniform("uBloomRadiusSq", bloomRadius * bloomRadius);
+        mFlareShader.SetUniform("uRingRadiusSq", ringRadius * ringRadius);
         mFlareShader.SetUniform("uRingFloor", GetGhostRingFloor(config.lensFlare.ghostSize));
+        mFlareShader.SetUniform("uHexRadiusSq", hexRadius * hexRadius);
+        mFlareShader.SetUniform("uHexPx", hexPx);
         mFlareShader.SetUniform("uFlareCenter", config.lensFlare.flareCenter);
         mFlareShader.SetUniform("uSize", config.lensFlare.size);
 
@@ -489,7 +554,7 @@ namespace EdgeLighting
         // integrated rather than multiplied by the time (mRotation): animated,
         // time * rate spun the rays faster the longer the clock had run.
         constexpr float TWO_PI = 6.28318530717958647692f;
-        mFlareShader.SetUniform("uRotation", mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate) * TWO_PI);
+        mFlareShader.SetUniform("uRotation", getRotationTurns(time, config) * TWO_PI);
         // Quantise the [0, 1] density into an integer slot count for the
         // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
         // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so
@@ -502,6 +567,31 @@ namespace EdgeLighting
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mFlareShader.Unuse();
+    }
+
+    glm::vec2 LensFlareRenderer::getSunPosition(float scale, int viewportWidth, int viewportHeight,
+                                                const Config &config)
+    {
+        return GeometryUtils::GetSunFragPosition(config.lensFlare, config.geometry, viewportWidth, viewportHeight) *
+               scale;
+    }
+
+    float LensFlareRenderer::getRotationTurns(double time, const Config &config)
+    {
+        return mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate);
+    }
+
+    LensFlareRenderer::FlareInputs LensFlareRenderer::getFlareInputs(const glm::ivec2 &target, float scale,
+                                                                     int viewportWidth, int viewportHeight,
+                                                                     double time, const Config &config)
+    {
+        FlareInputs inputs;
+        inputs.flare = config.lensFlare;
+        inputs.target = target;
+        inputs.sunPos = getSunPosition(scale, viewportWidth, viewportHeight, config);
+        inputs.rotationTurns = getRotationTurns(time, config);
+        inputs.ghostUploads = mGhostBlock.GetUploadCount();
+        return inputs;
     }
 
 } // namespace EdgeLighting
