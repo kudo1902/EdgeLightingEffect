@@ -6184,7 +6184,11 @@ from every effect it is attached to would need the handle to know them.
   wrap needs that id last.)
 - `HasClippedLamp` tests a clipped lamp's `enable` and `intensity` but not its
   tint, so a clipped lamp with a black tint - which draws nothing - still pins
-  the spotlight's scale to 1.0.
+  the spotlight's scale to 1.0. **Not a defect:** deliberate, as the comment
+  above `HasClippedLamp` in `spotlight-renderer.cpp` says - it takes the same
+  `enable && intensity > 0` test as `buildStrips`' drawn-lamp count rather than
+  a second copy of `DeriveLamp`'s black-tint bail, and over-counting only
+  costs the scale, the harmless direction.
 - The spotlight's direct path (scale 1.0) adds its dither to every fragment of
   its strips, including unlit ones, colour and alpha alike: I82's case for this
   layer. Its blit already leaves an exact 0 alone.
