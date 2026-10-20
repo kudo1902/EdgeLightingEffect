@@ -1626,7 +1626,7 @@ namespace EdgeLighting
         /// @pre Blending disabled.
         /// @return false if the reduced buffer could not be allocated.
         bool renderFieldCompositePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const glm::ivec4 &window,
-                                      const UVMap &gatherUV, float gain);
+                                      const UVMap &gatherUV, float gain, float scale, const Config &config);
 
         // P1r and P2r - the edge ring, factored into a field of its own.
         // The ring is re-shaded on EVERY frame, still frames included: it

@@ -2592,7 +2592,7 @@ namespace EdgeLighting
                     if (field.use)
                     {
                         glowReady = renderFieldCompositePass(scaledProj, scaledRegion.texels, glowWindow, gatherUV,
-                                                             field.gain);
+                                                             field.gain, scale, config);
                     }
                     else
                     {
@@ -4527,7 +4527,8 @@ namespace EdgeLighting
     }
 
     bool NeonRenderer::renderFieldCompositePass(const glm::mat4 &mvp, const glm::ivec2 &texels,
-                                                const glm::ivec4 &window, const UVMap &gatherUV, float gain)
+                                                const glm::ivec4 &window, const UVMap &gatherUV, float gain,
+                                                float scale, const Config &config)
     {
         // Pass 1b's target, set up as renderShadePass sets it up - the host's
         // scissor lifted, the reduced buffer sized, bound and cleared - for
@@ -4552,6 +4553,11 @@ namespace EdgeLighting
         mFieldCompositeShader.SetUniform("uFieldGain", gain);
         mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.texelScale);
         mFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+        // Pass 1b's discards, which the composite repeats so the shared
+        // buffer ends where pass 1b's does (I76).
+        uploadShapeUniforms(mFieldCompositeShader, mvp, scale, config);
+        mFieldCompositeShader.SetUniform("uResolutionScale", scale);
+        UploadEdgeMaskUniforms(mFieldCompositeShader, scale, config, false);
         bindGatherBuffer(mFieldCompositeShader, gatherUV);
         mGlowMesh.Draw();
         mFieldCompositeShader.Unuse();

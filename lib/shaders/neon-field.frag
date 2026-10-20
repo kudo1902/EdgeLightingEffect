@@ -63,10 +63,15 @@ uniform sampler2D uField;       ///< Fa (.r) and, with segments, Fs (.g): R16F o
 uniform vec2      uRingLo;      ///< vPos (full-res px) of the ring box's lower-left pixel corner.
 uniform vec4      uRingHole;    ///< Box pixels the ring never draws: [x0, x1) x [y0, y1), as x0, y0, x1, y1.
 uniform vec2      uRingRows;    ///< First atlas row of the left strip and of the right strip.
+#else
+uniform vec2      uFieldOrigin; ///< vPos of the field's texel (0, 0) corner.
+uniform vec2      uFieldTexelScale; ///< Field texels per vPos unit: the reduced buffer's texels per scaled px.
+uniform float     uResolutionScale; ///< The reduced buffer's scale: converts its px to destination px, as neon.frag does.
+#endif
 
-// The one-sided cut and the cutoffs, as the ring's own shading takes them
-// (uploadNeonUniforms at scale 1.0): full-res px, a disabled cutoff at
-// CUTOFF_NEUTRALISED.
+// The one-sided cut and the cutoffs, as the shading they stand in for takes
+// them (UploadEdgeMaskUniforms): the ring's at scale 1.0, pass 1b's at the
+// reduced scale; a disabled cutoff at CUTOFF_NEUTRALISED.
 #define GLOW_SIDE_BOTH    0
 #define GLOW_SIDE_INSIDE  1
 #define GLOW_SIDE_OUTSIDE 2
@@ -78,10 +83,6 @@ uniform float uInsideCutoff;
 uniform float uInsideCutoffSoftness;
 uniform float uOutsideCutoff;
 uniform float uOutsideCutoffSoftness;
-#else
-uniform vec2      uFieldOrigin; ///< vPos of the field's texel (0, 0) corner.
-uniform vec2      uFieldTexelScale; ///< Field texels per vPos unit: the reduced buffer's texels per scaled px.
-#endif
 uniform sampler2D uGather;      ///< The gather buffer: the hue in .rgb.
 uniform sampler2D uGatherSeg;   ///< Its second attachment: the segment hue in .rgb. Read only when uFieldSegments is set.
 uniform int       uFieldSegments; ///< 1 when the field carries Fs in .g (the config has segments), else 0.
@@ -115,6 +116,30 @@ void main() {
     }
     vec2 field = texelFetch(uField, texel, 0).rg;
 #else
+    // Pass 1b's discards, term for term (neon.frag with uBlitOwnsCut 1): the
+    // cull BLIT_SIDE_GUARD_PX past the one-sided cut and BLIT_CUTOFF_GUARD_PX
+    // past each cutoff's ramp. The field is half this buffer's resolution and
+    // read NEAREST, so without them a texel just past the edge read a field
+    // texel whose centre was inside it and the shared buffer carried a line
+    // of glow pass 1b leaves at 0 (I76). The blit never reads past them, so
+    // no frame pixel moves. The derivative sits above every discard.
+    {
+        vec2  halfSize = uRectSize * 0.5;
+        float d        = sdRoundBox(vPos, halfSize, uCornerRadius);
+        float sideAA   = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius) * uResolutionScale, 1e-6);
+        if (uGlowSide == GLOW_SIDE_INSIDE  && d >  BLIT_SIDE_GUARD_PX) discard;
+        if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -BLIT_SIDE_GUARD_PX) discard;
+        float inHalf  = 0.5 * max(uInsideCutoffSoftness,  sideAA);
+        float outHalf = 0.5 * max(uOutsideCutoffSoftness, sideAA);
+        float inMid   = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
+        float outMid  = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
+        float dOut = (uGlowSide == GLOW_SIDE_INSIDE)
+                         ? -CUTOFF_NEUTRALISED
+                         : bandOuterDistance(vPos, d, halfSize, uCornerRadius, outMid);
+        float dIn  = (uGlowSide == GLOW_SIDE_OUTSIDE) ? CUTOFF_NEUTRALISED : bandInnerDistance(d, inMid);
+        if (dOut >  outHalf + BLIT_CUTOFF_GUARD_PX ) discard;
+        if (dIn  < -(inHalf + BLIT_CUTOFF_GUARD_PX)) discard;
+    }
     vec2 field = texelFetch(uField, ivec2(floor((vPos - uFieldOrigin) * uFieldTexelScale)), 0).rg;
 #endif
     vec2 gatherUV = vPos * uGatherUVScale + uGatherUVOffset;

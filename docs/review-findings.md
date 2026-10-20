@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I76, I80, I81, I82, I83, I84, I86, I88 |
+| open | V9, V16, V18, V29, V32, I13, I18, I80, I81, I82, I83, I84, I86, I88 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-fourth pass |
 
@@ -5410,7 +5410,7 @@ segment-table path (pass 0s / 0f, `segDirect`); not pinned down. Only 1 level, b
 the split is documented exact and verified byte for byte against a full bake,
 so this is a hole in that verification, not a tolerance.
 
-### I76. Under a field the shared buffer carries glow past pass 1b's discard edge - OPEN
+### I76. Under a field the shared buffer carries glow past pass 1b's discard edge - FIXED
 
 **Found** by `normal` on `sequence --seed 1` (sequences 13 and 15): on held
 frames with the hue rotating and a one-sided glow or a cutoff, the frame within
@@ -5438,6 +5438,8 @@ blit does sees no difference. The likely fix is the same discards in
 recomputes the mask from the pixel's position, I53); it moves no frame pixel,
 so `check` and `cover` should stay byte-identical, and this mode's `normal`
 buffer column then falls to the field's 1-level bound.
+
+**Fixed.** `neon-field.frag`'s glow composite (pass 1c) now runs pass 1b's discards term for term - the cull `BLIT_SIDE_GUARD_PX` past the one-sided cut and `BLIT_CUTOFF_GUARD_PX` past each cutoff's ramp - fed by `uploadShapeUniforms` and `UploadEdgeMaskUniforms` as pass 1b is. `sequence --seed 1`: the `normal` run's buffer max went from 213 levels to 1, and the frame stays within 2; `exact` is still byte-identical. `check`, `shared-buffer` and `partition` pass; the 210 `generate --images` PNGs are byte-identical to the build before. No uniform-not-found log.
 
 ---
 
@@ -6256,7 +6258,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
 | V28 | fixed | the arc block's abutment flags depend on the perimeter but were repacked only when the arcs or segments changed, so a resized rect kept the old ones - up to 3 levels; the gate is gone: the blocks are packed every frame and `UniformBuffer::SetData` skips an unchanged upload - `sequence` 24 failing frames -> 0 |
 | V29 | open | a segment step on a sharp-cornered, arc-less rect left a 1-level stale texel that only re-baking the coverage table's ARC pieces clears - the per-type split (I42) is not exact there; narrowed by elimination (thirty-fourth pass) to the bake's colour write mask in direct mode - likely a driver variant per mask - with an experiment to settle it, untested |
-| I76 | open | under the glow field the shared buffer holds one texel column of glow past pass 1b's discard edge (the field is half resolution and read NEAREST) - up to 213 levels, no frame pixel; fix: the same discards in the composite (confirmed in the code, thirty-fourth pass) |
+| I76 | fixed | the glow field's composite repeats pass 1b's discards, so the shared buffer ends where pass 1b's does |
 | V30 | fixed | the hue, the flare's rays and the droplets' field took their phase as `time * rate`, which races whenever the rate moves - the `HueRotationEaseReverse` preset moved the hue 0.12 / 0.44 turn a frame started 10 / 60 s into the clock against the 0.013 its rate allows; each is now a `PhaseAccumulator`, the rate integrated over the clock, bit-identical to the old phase while a rate holds (every check image, `clock` frame and `generate` PNG unchanged); a rate set to 0 now holds the phase where it stopped |
 | V31 | fixed | the droplets' rebuild gate missed `glowSide`, which their band's extent reads, so a side change kept the old ring - 2,914 of 14,117 lit px for INSIDE -> OUTSIDE; now gated on the extent itself, all six transitions byte-identical to a fresh renderer |
 | I77 | fixed | an animation callback that attached or detached changed the vector the manager (and `AnimationGroup`) was walking - heap-use-after-free or container-overflow under ASan in 8 of 9 cases, and a callback clearing itself destroyed its own `std::function`; both now walk an allocation-free snapshot and invoke a copy of the callback - all 9 clean under ASan and UBSan |
