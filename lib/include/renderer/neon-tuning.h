@@ -85,7 +85,7 @@
 //     engaging while the unfloored peak error is still 12 to 18 levels;
 //     tightening MIN_SHARE to cover that would stop the default case being
 //     bit-identical, so the crossover sits here deliberately. See
-//     docs/corner-crease-and-filament-nyquist.md section 2.8.
+//     docs/design/corner-crease-and-filament-nyquist.md section 2.8.
 //
 //     The line does read WIDER at a reduced scale wherever the floor engages,
 //     and that part is not a defect to tune away: a line the buffer cannot
@@ -97,7 +97,7 @@
 //     deep in saturation, so scaling the linear amplitude barely moves the
 //     8-bit value while it does measurably dim the peak (error 15-23/255
 //     against 0-10 without it). See
-//     docs/corner-crease-and-filament-nyquist.md section 2.
+//     docs/design/corner-crease-and-filament-nyquist.md section 2.
 //
 //     GATED to scales below 1.0 in both consumers. At scale 1.0 the reduced
 //     buffer is full size and the blit copies it 1:1, so there is nothing to
@@ -222,7 +222,7 @@
 //         agree only where the rate is length(w). Every other point of the two
 //         lines through an arc centre carried a C1 kink: an L-shaped seam per
 //         corner, and on a circle an unmistakable dark cross. See
-//         docs/review-findings.md V12.
+//         docs/records/review-findings.md V12.
 //
 //     rho == r gives rate r and weight 1, so a fragment on the tube is
 //     bit-identical to the rate-r form and this calibration is untouched. The
@@ -255,8 +255,8 @@
 //     it never runs, because what decides this block is REGISTER PRESSURE, not
 //     structure: with a per-arc bloom pedestal it was heavy enough to cost the
 //     sharp path 1.14x. Re-time a cornerRadius 0 scene as well as a rounded one
-//     after touching this. See docs/corner-crease-and-filament-nyquist.md
-//     sections 1.7 to 1.9, and docs/review-findings.md V4, V10 and V12. ---
+//     after touching this. See docs/design/corner-crease-and-filament-nyquist.md
+//     sections 1.7 to 1.9, and docs/records/review-findings.md V4, V10 and V12. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
@@ -379,7 +379,7 @@
 //     within one halo width of a straight, and 16 inside and 16 outside a
 //     corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
 //     perimeter. Sizing it, against an exact per-piece reference (V21 in
-//     docs/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
+//     docs/records/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
 //     32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
 //     under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
 //     rect.
@@ -410,7 +410,7 @@
 //     shares one table.
 //
 //     Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the 1024-wide
-//     table (docs/neon-glow-cover-resolution-plan.md step 2): 250 configs -
+//     table (docs/design/neon-glow-cover-resolution-plan.md step 2): 250 configs -
 //     rects 200 x 120 to 3600 x 2000, glowRadius 1 / 2 / 5 / 10 / 20,
 //     cornerRadius 0 / 40 / a circle, both windings, three partial arcs with
 //     and without colour stops and with two segments, at scales 1.0 / 0.5 /
@@ -468,7 +468,7 @@
 //     segment table's bake on a band of 8 segments from 0.75 to 0.58 (timer
 //     units, AMD Radeon Pro 5300M), at most 1 level, on up to 1.6% of a
 //     frame's lit pixels (0.15% on average over the cover set; I61 in
-//     docs/review-findings.md). An 8-node rule on top halved it again but
+//     docs/records/review-findings.md). An 8-node rule on top halved it again but
 //     read 3 levels off a long, bright segment, and was not taken. ---
 #define GLOW_COVER_BELL_REACH            3.0
 #define GLOW_COVER_SEG_OVERHANG          16
@@ -540,13 +540,13 @@
 //     drawn INTO the buffer place its boundary sub-texel. That was the best the
 //     buffer could do, and it still softened the boundary across a buffer
 //     texel and snapped it toward the buffer grid: on the bounded_band scene of
-//     docs/neon-resolution-scale-comparison.html it read p99 41/255 against the
+//     docs/pages/neon-resolution-scale-comparison.html it read p99 41/255 against the
 //     1.0 render at scale 0.5, and 69 at 0.25, and the band spread past its
 //     own cutoffs as the scale fell (50,703 lit px at 0.5 and 53,568 at 0.25,
 //     against 47,012 at 1.0). Drawn by the blit instead it reads p99 4 at 0.5
 //     and 12 at 0.25, with 47,012 lit px at every scale; what is left is the
 //     reduced-resolution glow inside the band, not its edges. See
-//     docs/neon-resolution-scale-plan.md, step 2.
+//     docs/design/neon-resolution-scale-plan.md, step 2.
 //
 //     NOT used by the edge ring, whose masks and culls are its own. See
 //     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
@@ -573,7 +573,7 @@
 //     Calibrated over lineWidth {1, 2, 4, 8, 16} x filamentFalloff
 //     {0.5, 1, 2, 4} x glowRadius {0, 2, 5, 20}, each config rendered at
 //     scales 0.75, 0.5 and 0.25 and compared against its own 1.0 render
-//     (docs/neon-resolution-scale-plan.md, step 5). Worst error over all 80:
+//     (docs/design/neon-resolution-scale-plan.md, step 5). Worst error over all 80:
 //
 //       RING_GUARD_TEXELS    scale 0.75    scale 0.5    scale 0.25
 //              0.5               3            12            3
@@ -626,7 +626,7 @@
 //     at 720p and 1080p read 1-2 at a floor of 0 and 0.0625 alike - and is
 //     kept as a cheap guard: the gather buffer is clipped to the viewport, so
 //     at the floor it is at most 128 x 80 texels at 1080p. See
-//     docs/neon-resolution-scale-plan.md section 13. ---
+//     docs/design/neon-resolution-scale-plan.md section 13. ---
 #define GATHER_TEXELS_PER_KERNEL  2.0
 #define GATHER_MIN_SCALE          0.0625
 
@@ -642,7 +642,7 @@
 //     478 px) is not touched.
 //
 //     It replaces the split gate at 1.0 (FULL_RES_SPLIT_GATHER_MAX_SCALE /
-//     FULL_RES_SPLIT_MIN_AREA_PX, removed - docs/neon-shader-cleanup-plan.md
+//     FULL_RES_SPLIT_MIN_AREA_PX, removed - docs/design/neon-shader-cleanup-plan.md
 //     step 3), which ran the gather INLINE in neon.frag where splitting it
 //     out did not pay: on an AMD Radeon Pro 5300M, where the first offscreen
 //     pass of a frame costs ~0.15 ms, for a still cutoff band under ~140k px

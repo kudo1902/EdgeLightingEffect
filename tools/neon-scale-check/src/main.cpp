@@ -1,4 +1,4 @@
-// neon-scale-check: the harness behind docs/neon-resolution-scale-comparison.html.
+// neon-scale-check: the harness behind docs/pages/neon-resolution-scale-comparison.html.
 //
 //   neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE]
 //       Renders the twelve scenes at six scales and writes <outdir>/<label>.json
@@ -16,7 +16,7 @@
 //       and the share of lit pixels off by 1, 2, 3-4, 5-8 and more levels.
 //       Exits non-zero when any file's max exceeds N (default 2) or fewer than
 //       PCT percent (default 99.9) of its lit pixels are within 1 level -
-//       docs/neon-glow-cover-resolution-plan.md section 5's criterion.
+//       docs/design/neon-glow-cover-resolution-plan.md section 5's criterion.
 //
 //   neon-scale-check check [--images-dir DIR]
 //       A regression gate. Exits non-zero when scale 1.0 has drifted from the
@@ -727,7 +727,7 @@ namespace
         return std::getline(in, line) ? line : std::string("unknown");
     }
 
-    /// `diff <dirA> <dirB>`: the measure docs/neon-glow-cover-resolution-plan.md
+    /// `diff <dirA> <dirB>`: the measure docs/design/neon-glow-cover-resolution-plan.md
     /// section 5 judges a step that may move pixels by. RGB and alpha are
     /// reported apart (a layer's coverage alpha can move where its colour on
     /// black cannot); the distribution is over LIT pixels, any RGB channel

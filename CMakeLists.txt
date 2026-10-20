@@ -116,9 +116,9 @@ add_subdirectory(lib)
 add_subdirectory(demo)
 add_subdirectory(demo-capi)
 
-# Off by default: the harness behind docs/neon-resolution-scale-comparison.html
+# Off by default: the harness behind docs/pages/neon-resolution-scale-comparison.html
 # and a regression check for the neon's resolution scale, and the generator of
-# docs/neon-onboarding-guide.md's figures. Not part of the library or the
+# docs/guides/neon-onboarding-guide.md's figures. Not part of the library or the
 # demos. See tools/neon-scale-check/README.md and
 # tools/neon-guide-figures/README.md.
 option(EDGE_LIGHTING_BUILD_TOOLS "Build tools/neon-scale-check and tools/neon-guide-figures" OFF)

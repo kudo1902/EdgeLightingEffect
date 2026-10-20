@@ -256,7 +256,7 @@ namespace EdgeLighting
     /// loop and filtered LUT reads that used to run in it are all
     /// fragment-invariant and moved to @c neon-emission.frag, which is why its
     /// cost no longer scales with the arc or segment count. See
-    /// docs/emission-prepass.md.
+    /// docs/design/emission-prepass.md.
     ///
     /// The three baked LUTs stay bound, but for the POINTWISE reads only - the
     /// colour-stop alpha, taken at the fragment's own perimeter position:
@@ -291,7 +291,7 @@ namespace EdgeLighting
     /// full resolution. The gather buffer covers only the part of the frame
     /// its readers reach (@ref GetBufferRegion); the reduced buffer covers
     /// the whole viewport, as the shared buffer below. See
-    /// docs/neon-resolution-scale-plan.md sections 12 and 13.
+    /// docs/design/neon-resolution-scale-plan.md sections 12 and 13.
     ///
     /// With a colour-stop alpha time cannot move, the shading is factored:
     /// neon.frag's output is tonemap(col * Fa + segColHue * Fs) with only the
@@ -303,8 +303,8 @@ namespace EdgeLighting
     /// with only the time moved, 1.1-2.0x on them, and under an intensity
     /// animation, scaled (I56). The ring has a field of its own (pass 1r / 2r),
     /// still frames included. A frame whose config just changed shades
-    /// directly. See docs/neon-perf-plan.md section 11, and I46, I50, I52 and
-    /// I56 in docs/review-findings.md.
+    /// directly. See neon-perf-plan.md section 11, and I46, I50, I52 and
+    /// I56 in docs/records/review-findings.md.
     ///
     /// Every pixel-valued uniform is multiplied by the scale (a no-op at 1.0)
     /// and the shader converts its own full-res px constants with
@@ -426,7 +426,7 @@ namespace EdgeLighting
         /// @c NeonConfig::enable is off. A host that calls it without
         /// RenderOffscreen for the same frame (EdgeLightingEffect never does)
         /// gets that phase run first, here. The passes in their declaration
-        /// order below, and docs/neon-shader-outputs.html, show each one.
+        /// order below, and docs/pages/neon-shader-outputs.html, show each one.
         ///
         /// With @c DebugConfig::opaqueOnly, the fill alone. A program that
         /// fails to build leaves the frame the fill alone too.
@@ -1062,7 +1062,7 @@ namespace EdgeLighting
             /// GetGlowCoverDirtySegmentPieces), so a segment
             /// travelling along one straight re-bakes that band rather than the
             /// table - 1.18-1.91x on such frames on an Apple M2 Pro
-            /// (docs/neon-perf-plan.md, item 5). The shape, the winding and the
+            /// (neon-perf-plan.md, item 5). The shape, the winding and the
             /// glow radius dirty all eight, as do the brightest arc's intensity
             /// and any light covering the whole ring.
             ///
@@ -1085,7 +1085,7 @@ namespace EdgeLighting
 
             /// Seconds of frame time @c mGlowCover.buffer has gone unread - the ring
             /// lit uniformly, or the layer off. @ref Update releases the table at
-            /// GLOW_COVER_RELEASE_SECONDS (docs/neon-perf-plan.md item 10).
+            /// GLOW_COVER_RELEASE_SECONDS (neon-perf-plan.md item 10).
             float unreadSeconds = 0.0f;
         } GlowCoverTable;
 
@@ -1212,7 +1212,7 @@ namespace EdgeLighting
             /// at scale 0.5 (3.1-5.5x across neon-scale-check's twelve scenes),
             /// 10.3x at 1.0 and 2.1x at 0.125; frames whose config changes are
             /// unaffected, since every change clears it (AMD Radeon Pro 5300M,
-            /// 1920 x 1080, 2026-10-08). First built as docs/neon-perf-plan.md
+            /// 1920 x 1080, 2026-10-08). First built as neon-perf-plan.md
             /// item 4.
             bool reusable = false;
 
@@ -1456,7 +1456,7 @@ namespace EdgeLighting
         ///
         /// It used to be "any config change" (@c mEmissionDirty), deliberately
         /// wide because a field list would drift from the shader; the version
-        /// numbers have no field list. See docs/emission-prepass.md section 3.
+        /// numbers have no field list. See docs/design/emission-prepass.md section 3.
         /// @pre @ref packLightBlocks has run this frame: the blocks' counts
         ///      are part of the key, and only the pack moves them.
         bool isEmissionTableStale(float huePhase, const Config &config) const;
@@ -1512,7 +1512,7 @@ namespace EdgeLighting
         void bindGatherBuffer(ShaderProgram &shader, const UVMap &gatherUV);
 
         // --- The passes, in the order Render runs them -----------------------
-        // The order is the frame's (docs/neon-shader-outputs.html), and the
+        // The order is the frame's (docs/pages/neon-shader-outputs.html), and the
         // .cpp defines them in the same order - keep the three in step. The
         // data dependency is the real contract: pass 0 bakes the
         // table the gather reads, pass 1a's gather buffer is what pass 1b and
@@ -1538,7 +1538,7 @@ namespace EdgeLighting
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmission.buffer, at the clamped sample count so texel i here is
         /// sample i in the gather. Retargets the framebuffer and viewport, so
-        /// it restores both before returning - see docs/emission-prepass.md.
+        /// it restores both before returning - see docs/design/emission-prepass.md.
         ///
         /// Records what it baked (@c mEmission.bake) on the way out, so
         /// @ref isEmissionTableStale reads a snapshot written by the only
@@ -1553,7 +1553,7 @@ namespace EdgeLighting
         /// for each piece of the emitter, the arcs' and the segments' coverage
         /// over that piece's own extent, weighted by the halo's and the bloom's
         /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
-        /// V21 in docs/review-findings.md).
+        /// V21 in docs/records/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
         /// returning, and clears both of @c mGlowCover's dirty masks on the
         /// way out. Bakes only the pieces they name, by drawing its quad onto

@@ -52,7 +52,7 @@ They composite in the order they are registered, which is the order below.
   one out: not a perimeter effect at all. Each lamp carries its own position,
   direction, beam angle, throw, softness, intensity and colour temperature,
   and gets a strip of geometry solved to hug exactly the region it lights.
-  See [`docs/spotlight-renderer.md`](docs/spotlight-renderer.md).
+  See [`docs/guides/spotlight-renderer.md`](docs/guides/spotlight-renderer.md).
 - **DebugRenderer** - the debug annotations in one layer: the baked ring as a
   LUT strip, a disc per colour stop, and a 1 px `GL_LINE_LOOP` bounding box.
   Registered **last**, because it annotates what the layers under it drew.
@@ -136,7 +136,8 @@ lib/                        core library
   include/renderer/         BaseRenderer + concrete renderers
   include/animation/        Modulator family + Animation presets
   include/gl/               RAII wrappers (ShaderProgram, VAO, FBO, Texture)
-  include/util/             log, color, frame capture, contour tracer, stb-image
+  include/util/             log, colour, geometry, GL state guards, frame capture,
+                            segment pools, stb-image
   shaders/*.{vert,frag}     GLSL sources, embedded at configure time
   capi/                     extern "C" ABI for FFI
 
@@ -151,6 +152,17 @@ demo/
 demo-capi/                  the same UI, compiled against only the C ABI
                             (its include path excludes lib/include/, which is
                             what proves the ABI is self-sufficient)
+
+docs/                       documentation - see docs/README.md for the index
+  guides/                   how it works today, every config field, upgrade notes
+  pages/                    HTML pages with diagrams and renders
+  design/                   built plans and the studies behind decisions (history)
+  perf/                     the lens flare's performance review
+  records/                  progress log, review findings, naming audit
+  images/                   every figure (written by tools/)
+
+tools/                      neon-scale-check, neon-guide-figures (both opt-in:
+                            -DEDGE_LIGHTING_BUILD_TOOLS=ON), check-doc-links.py
 
 external/                   GLFW binary, GLAD, GLM, ImGui, stb_image
 res/                        demo image assets (see res/CREDITS.md)
@@ -186,6 +198,7 @@ upstream license.
 
 ## Working on this repo
 
-See [`CLAUDE.md`](CLAUDE.md) for architecture notes aimed at Claude Code and
+The documentation starts at [`docs/README.md`](docs/README.md). See
+[`CLAUDE.md`](CLAUDE.md) for architecture notes aimed at Claude Code and
 other AI assistants, and [`AGENTS.md`](AGENTS.md) for the naming conventions in
 full detail.

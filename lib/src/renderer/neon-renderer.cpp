@@ -276,7 +276,7 @@ namespace EdgeLighting
         /// the edge ring shade from - multiplied by intensity, the falloffs and
         /// the bloom, then tone-mapped - so a storage step is amplified, not
         /// hidden. Measured on the twelve scenes of `probe scenes`
-        /// (docs/neon-resolution-scale-plan.md section 13): RGBA8 holds 3/255
+        /// (docs/design/neon-resolution-scale-plan.md section 13): RGBA8 holds 3/255
         /// of the 1.0 render, RGBA16F 1-2, better than the 2-3 of the edge
         /// ring before the gather was split out, which also stored it in
         /// RGBA8. The buffer is usually one or two hundred texels a side
@@ -922,7 +922,7 @@ namespace EdgeLighting
         /// rect at glowRadius 2 shaded the whole interior to write zeros, and
         /// an inside cutoff placed past where anything was lit - changing no
         /// pixel - took the frame from 6.0 ms to 2.8 ms (AMD Radeon Pro 5300M).
-        /// docs/neon-perf-review.md section 6 had set this aside because the
+        /// neon-perf-review.md section 6 had set this aside because the
         /// demo's rect is smaller than twice the glow reach.
         ///
         /// WHY NOT SIMPLY `reach`. Past neon.frag's `reach` the filament and
@@ -3184,7 +3184,7 @@ namespace EdgeLighting
         // One program drawing two differently configured targets in a frame -
         // an offscreen buffer unblended and the caller's framebuffer blended -
         // is the shape that measured 93-624x slower on the AMD macOS driver
-        // (docs/neon-resolution-scale-plan.md section 7, build AB). A second
+        // (docs/design/neon-resolution-scale-plan.md section 7, build AB). A second
         // compile on the first frame is the price of never finding out
         // which half of that difference the driver keys on.
         const char *noGlow = "the glow is not drawn";

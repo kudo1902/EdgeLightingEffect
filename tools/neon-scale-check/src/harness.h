@@ -2,7 +2,7 @@
 #define _NEON_SCALE_CHECK_HARNESS_H_
 
 // Rendering and measurement for neon-scale-check. Everything here is fixed by
-// docs/neon-resolution-scale-comparison.html: the frame, the clear colour and
+// docs/pages/neon-resolution-scale-comparison.html: the frame, the clear colour and
 // every metric are the ones that page reports, and the metric definitions
 // reproduce its first version's stored numbers exactly when run on its stored
 // images. Change one and the page's numbers stop being comparable across runs.
@@ -92,7 +92,7 @@ namespace NeonScaleCheck
     /// never in it. The other modes put that work back, the way a host's frame
     /// loop does: each frame writes the mode's change through SetConfig and
     /// then calls Update(1/60) - both inside the timed region, so the figure
-    /// includes the library's CPU path too. See docs/neon-perf-plan.md.
+    /// includes the library's CPU path too. See neon-perf-plan.md.
     typedef enum class TimeMode
     {
         STILL,          ///< Nothing changes; Render() only.
@@ -106,7 +106,7 @@ namespace NeonScaleCheck
 
     /// The lights TimeMode::LIGHTS draws, in place of the scene's own: the
     /// frames of a host animating several arcs or segments at once
-    /// (docs/neon-animation-perf-analysis.md), which arc-wipe and
+    /// (neon-animation-perf-analysis.md), which arc-wipe and
     /// segment-travel - one light each - do not cover.
     ///
     /// @c arcs arcs evenly spaced over 0.6 of the ring, each length moving

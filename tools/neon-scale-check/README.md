@@ -1,7 +1,7 @@
 # neon-scale-check
 
 The harness behind
-[`docs/neon-resolution-scale-comparison.html`](../../docs/neon-resolution-scale-comparison.html),
+[`docs/pages/neon-resolution-scale-comparison.html`](../../docs/pages/neon-resolution-scale-comparison.html),
 and the regression check for `NeonConfig::resolutionScale`. It renders the
 neon layer offscreen for twelve fixed scenes at six scales, measures every
 reduced scale against the same scene's 1.0 render, and either reports pass /
@@ -14,7 +14,7 @@ ring's guarantees - scale 1.0 unchanged, every scale within a couple of levels
 of it, a moving line that stays on its edge - had no other check. Twice it
 lived only in a session scratch directory and was lost, and the second rebuild
 had to recover the scenes from the old page's pixels; see
-[`docs/neon-resolution-scale-plan.md`](../../docs/neon-resolution-scale-plan.md),
+[`docs/design/neon-resolution-scale-plan.md`](../../docs/design/neon-resolution-scale-plan.md),
 decision 4.
 
 ## Build
@@ -48,7 +48,7 @@ The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 Every image the tool measures is the STEADY frame - the second after the
 config is set, each over a fresh clear - because at scale 1.0 the neon draws
 the first frame after a config change directly and its hue-invariant field
-takes over from the next (I46 in `docs/review-findings.md`).
+takes over from the next (I46 in `docs/records/review-findings.md`).
 
 Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 
@@ -284,7 +284,7 @@ and the rect's centre out of `GatherInputs` - on the default 16 x 90: `exact`
 failed 26 frames, every one cleared by `rebuild`, and `normal` 14 levels off,
 cleared by `gather` (and by `emission`, whose bypass moves the gather's key
 every frame). On this tree it found V28 and I76 in
-[`docs/review-findings.md`](../../docs/review-findings.md) on the default run,
+[`docs/records/review-findings.md`](../../docs/records/review-findings.md) on the default run,
 and with V28's one-line fix applied, V29 in a 100 x 150 run (`exact` failed 1
 frame of 15,000; `normal` only on I76). Apple M2 Pro: the default run takes
 about 14 s; 100 x 150 with `--isolate` (16 effects per frame) took most of an
@@ -346,12 +346,20 @@ does, with `SetConfig` and `Update` inside the timed region, so their figures
 include the library's CPU path. A change that saves work on unchanged frames
 should be measured with `still` AND the animated modes, to show both what it
 saves and that it costs the moving frames nothing. The JSON records the mode.
-See [`docs/neon-perf-plan.md`](../../docs/neon-perf-plan.md).
 
 `--set cover` times the `cover` scenes (below) instead of the page's, each at
 its own frame size, as its frame 0 configures it; `--scene a,b` and
 `--scales 1,0.5` narrow either set. Every figure is also printed, one line per
 scene and scale.
+
+**The CPU share of a moving frame is overstated.** `time` never swaps, so the
+driver submits mid-frame whenever a pass renders into a texture an earlier,
+unsubmitted frame read: once per hue frame, about five times per
+segment-travel frame. The frame totals are still right - those frames are
+GPU-bound either way (0.26 ms per intensity frame with and without a
+`glFlush` per frame, Apple M2 Pro) - but a host that swaps submits once per
+frame, and its `Render` measured 0.015-0.018 ms of CPU on a still frame and
+0.04-0.07 ms on a moving one.
 
 `--gpu` adds a `GL_TIME_ELAPSED` query round each `Render` (median of 120
 frames, each flushed as a swap would), and `--passes` each pass's share, from
@@ -370,7 +378,7 @@ rotated each round, and take the MEDIAN per figure over the rounds the builds
 ran in together. Not the minimum: it was measurably biased toward whichever
 build ran first on a cooler GPU (0.770 ms against 0.806 and 0.802 for one
 figure). That is how
-[`docs/neon-resolution-scale-perf-comparison.md`](../../docs/neon-resolution-scale-perf-comparison.md)
+`neon-resolution-scale-perf-comparison.md`
 was made. (The comparison page's own timings are still merged by minimum - see
 step 3 below - because they come from interleaved runs of only two builds; read
 them as the page's figures, not as a before / after measurement.)
@@ -384,7 +392,7 @@ them as the page's figures, not as a before / after measurement.)
 
 The `cover` set ([`src/cover.h`](src/cover.h)) is the measure for a change to
 the glow coverage table
-([`docs/neon-glow-cover-resolution-plan.md`](../../docs/neon-glow-cover-resolution-plan.md)).
+([`docs/design/neon-glow-cover-resolution-plan.md`](../../docs/design/neon-glow-cover-resolution-plan.md)).
 Its scenes MOVE: arcs and segments change length every frame, some segments
 travel, so every frame is the first after a config change - shaded directly,
 after a re-bake of whatever pieces of the table it reached - which is the path

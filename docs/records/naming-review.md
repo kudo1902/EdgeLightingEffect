@@ -1,0 +1,543 @@
+# Naming review
+
+A pass over every identifier in `lib/`, `demo/` and `demo-capi/` against
+[`AGENTS.md`](../../AGENTS.md), plus a semantic pass for names that mislead or that
+pair inconsistently with each other.
+
+Mechanical conformance is high enough that the interesting findings are all in
+the second half. The rule violations below are five small ones; the semantic
+issues are where the cost actually is, because a name that describes a mechanism
+the code no longer has will send the next reader down the wrong path.
+
+**Status:** N3, S3 and S8 are fixed, along with the `AGENTS.md` gap. S1 was applied
+and then reverted by decision - see there. S2 is moot: the renderers it names
+are gone. The spotlight layer had a second
+pass of its own after the clip area landed - see
+[Spotlight clip pass](#spotlight-clip-pass); everything it found is fixed except
+the `SpotLight` casing, held by decision. `demo/`, `demo-capi/` and the C ABI
+were explicitly left out of that pass, so N1, N2, N4 and N5 stand open by scope
+rather than by judgement.
+
+Both N2 and N3 briefly got wider. `add_spotlight_renderer` added three structs
+to N2 - the first violations of that rule to live in `lib/` - and reopened N3 in
+both demos' `DebugUI`. Both are now back to the state this pass left them in;
+see the notes in place. Neither was caught before the branch landed, which is
+the argument for the script in [Conformance summary](#conformance-summary)
+running on something other than a person remembering to run it.
+
+## Conformance summary
+
+Checked by script over 47 headers and 21 translation units (`stb-image`
+excluded as vendored).
+
+Counts re-checked against `add_spotlight_renderer`, which moved two of these
+rows and has since been brought back into line.
+
+| rule | result |
+| ---- | ------ |
+| files `kebab-case` | clean |
+| header guards present, `#define` matching, stem correct | clean |
+| enum values `ALL_CAPS` | clean |
+| public methods `PascalCase`, private `camelCase` | clean |
+| member `mFoo`, global `gFoo` | 2 violations (N1, `demo-capi` only) |
+| struct / enum `typedef` self-alias | 2 violations (N2, `demo-capi` only) |
+| separate `private:` sections for methods and members | 2 violations (N3, fixed) |
+| C ABI: 212 `el_*` functions, 16 `_e` enums, 3 `_handle_t`, 99 `EL_*` | clean |
+
+The C ABI is worth calling out: 330 exported identifiers, zero deviations. It
+is the most consistently named surface in the project.
+
+---
+
+## Rule violations
+
+### N1. `demo-capi` uniform-location members use the GLSL `u` prefix
+
+```cpp
+// demo-capi/src/background-quad.h:78
+GLuint mProg = 0;
+GLuint mVao  = 0;
+GLuint mVbo  = 0;
+GLint  uCheckerSize = -1, uColorA = -1, uColorB = -1;   // <- members, not uniforms
+```
+
+Same in [`demo-capi/src/image-quad.h`](../../demo-capi/src/image-quad.h) with
+`uViewport`, `uRect`, `uTex`. They sit in the same `private:` block as
+correctly-prefixed members, so the class contradicts itself.
+
+The `u` prefix is the convention for *GLSL uniforms*; these are the host-side
+`glGetUniformLocation` results. `mCheckerSizeLoc` / `mViewportLoc` says both
+things - it is a member, and it holds a location rather than a value.
+
+`demo/` does not have this problem: it goes through
+`EdgeLighting::ShaderProgram`, which caches locations internally.
+`demo-capi/` cannot see `lib/include/`, so it hand-rolls them - the cost of the
+fork being a fork (see I8 in [`review-findings.md`](review-findings.md)).
+
+### N2. Two structs missing the `typedef` self-alias
+
+- `AnimEntry` in [`demo-capi/src/debug-ui.h`](../../demo-capi/src/debug-ui.h)
+- `SampledStop` in [`demo-capi/src/border-color-picker.h`](../../demo-capi/src/border-color-picker.h)
+
+Both are local helper structs, so nothing breaks; they are simply the only two
+in the tree that skip the alias `AGENTS.md` calls mandatory.
+
+> **Was briefly five.** `add_spotlight_renderer` added `StripVertex`,
+> `KelvinAnchor` and `LampSolve` in
+> [`lib/src/renderer/spotlight-renderer.cpp`](../../lib/src/renderer/spotlight-renderer.cpp)
+> - the first violations of this rule to live in `lib/`, which would have taken
+> the item out of "open by scope". **Fixed**: all three now carry the alias, so
+> every anonymous-namespace struct in `lib/src/renderer/` uses the same form -
+> `BandExtent` in the droplets, `GhostBlockData` in the lens flare,
+> `SegmentBlockData`, `LoopSamplesBlockData`, `ArcBlockData` and
+> `EmissionFormat` in the neon, and now these three. Found in the sixth pass of
+> [`review-findings.md`](review-findings.md).
+>
+> A sweep of `lib/` for this rule turns up `el_effect_handle_impl`,
+> `el_animation_handle_impl` and `el_modulator_handle_impl` in
+> `capi-internal.h`. Those are NOT violations and should not be "fixed": they
+> are the definitions behind the C opaque-handle idiom, whose alias is the
+> `typedef struct ... *el_*_handle_t;` in the public headers. Recorded here
+> because a script that only looks for `typedef struct X { ... } X;` will flag
+> them.
+
+### N3. `private:` sections mix methods and members - FIXED, REGRESSED, RE-FIXED
+
+`AGENTS.md` is explicit that a class gets two `private:` labels, methods first,
+then member variables.
+
+A first scan reported nine classes. That number was wrong: the detector matched
+assignments like `mFbo = 0;` **inside** a method body as if they were member
+declarations, so `Framebuffer`, `Animation` and five of the animation subclasses
+were false positives - all of them already correct. Re-run with brace tracking,
+`lib/` has exactly two:
+
+- `EdgeLightingEffect` ([`edge-lighting.h`](../../lib/include/core/edge-lighting.h))
+- `ArcWipe` ([`neon-animations.h`](../../lib/include/animation/neon-animations.h))
+
+Worth noting against myself twice over: I added `mInitialized` to the
+`EdgeLightingEffect` block during the I6 fix and propagated the violation, and
+then over-reported the scale of it here. Both are now split; `DebugUI` is the
+only remaining case and lives in `demo/`.
+
+> **Regressed in both demos, then re-fixed.** `add_spotlight_renderer` inserted
+> `int mSpotlightSelected = 0;` into the private METHOD block of
+> [`demo/src/debug-ui.h`](../../demo/src/debug-ui.h) and
+> [`demo-capi/src/debug-ui.h`](../../demo-capi/src/debug-ui.h), between
+> `buildDebugSection` and `buildDropletsSection` in each - four declarations
+> away from the `buildSpotlightSection` it belongs to, and in `demo-capi` a case
+> the sentence above did not cover at all. **Fixed** by moving each declaration
+> into its class's existing member block, under a `// --- Spotlights ---`
+> heading beside the other per-section state. Found in the sixth pass of
+> [`review-findings.md`](review-findings.md).
+>
+> Twice now this rule has been broken by an addition rather than by the original
+> code, which is what the note above already says about `mInitialized`. It is
+> the cheapest of the five to check mechanically and the easiest to reintroduce.
+
+### N4. C ABI header guards drop the project prefix
+
+| file | guard |
+| ---- | ----- |
+| `lib/include/**/*.h` (34 files) | `_EDGE_LIGHTING_<STEM>_H_` |
+| `demo/src/*.h` (6) | `_EDGE_LIGHTING_DEMO_<STEM>_H_` |
+| `demo-capi/src/*.h` (7) | `_EDGE_LIGHTING_CAPI_DEMO_<STEM>_H_` |
+| `lib/capi/*.h` (6) | `_EL_EFFECT_H_`, `_EL_TYPES_H_`, `_CAPI_INTERNAL_H_`, ... |
+
+These are the **public installed headers**, so they are the ones most exposed to
+a collision in a consumer's translation unit, and `_CAPI_INTERNAL_H_` in
+particular is generic enough to hit one. `_EL_EFFECT_H_` would be safer as
+`_EDGE_LIGHTING_CAPI_EL_EFFECT_H_`, or at least `_EL_CAPI_EFFECT_H_`.
+
+Separately, and project-wide rather than a `capi` issue: an identifier that
+begins with an underscore followed by a capital letter is reserved to the
+implementation in both C and C++. Every guard in the project is technically in
+reserved space. In practice no toolchain collides here, and changing it is a
+47-file sweep, so this is recorded as a standards nit rather than a
+recommendation.
+
+### N5. `#endif` guard comments are inconsistent in `demo-capi`
+
+Five of the seven headers end with a bare `#endif`; `gl-mini.h` and
+`ui-controls.h` carry the guard name, as every `lib/` and `demo/` header does.
+
+---
+
+## Semantic issues
+
+Ordered by how misleading the name is, not by churn. Churn is noted per item
+because several of these reach the frozen C ABI.
+
+### S1. Three different word orders for "the half-res variant" - RESOLVED
+
+| | neon | lens flare |
+| - | ---- | ---------- |
+| renderer class | ~~`NeonOptimizedRenderer`~~ | `LensFlareOptimizedRenderer` |
+| config struct | ~~`Optimized`**`Neon`**`Config`~~ | `LensFlare`**`Optimized`**`Config` |
+| config field | ~~`optimizedNeon`~~ | `optimizedLensFlare` |
+
+The renderers agreed with each other. The config fields agreed with each other.
+The config *structs* did not - `OptimizedNeonConfig` was the only one that led
+with the qualifier, disagreeing with both its own renderer and its counterpart
+struct.
+
+**Resolved by deletion, not by renaming.** The neon column no longer exists:
+`NeonOptimizedRenderer` and `OptimizedNeonConfig` were folded into
+`NeonRenderer` / `NeonConfig`, where the half-res path is the
+`resolutionScale` field rather than a separate type. The three word orders were
+a symptom of naming a fork three times; there is no fork to name.
+
+The lens-flare column is untouched and still internally consistent, so nothing
+is left to trade off. The C ABI constraint that made the original rename
+unattractive also went away in a direction nobody had considered: the
+`el_effect_*_optimized_*` functions still exist, frozen as required, but they
+are now shims onto `NeonConfig`, so the frozen ABI name no longer pins any C++
+identifier.
+
+If the ABI is ever revised (see S2), the `el_effect_*_optimized_*` group is
+the remaining piece: the names now describe a renderer that does not exist, and
+`el_effect_set_neon_resolution_scale` and friends would say what they actually
+do. Not urgent - they work, and they are documented as deprecated in
+`el-effect.h`.
+
+### S2. "Optimized" does not say what the optimisation is - MOOT
+
+**Moot since the two unifications** ([`neon-unification-plan.md`](../design/neon-unification-plan.md)):
+`NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` no longer exist - each
+layer carries its reduced-resolution path as a `resolutionScale` on one
+renderer. The name survives only in the twelve deprecated C shims
+(`el_effect_set_optimized_*` / `el_effect_get_optimized_*`, in
+`lib/capi/el-deprecated.cpp`), which map onto those scales and are frozen by
+the ABI. The original finding follows.
+
+Both variants are half-resolution renders blitted back up. "Optimized" is the
+kind of qualifier that ages badly: it says a change was made, not what it was,
+and it gives no hint that enabling both a renderer and its "optimized" twin
+draws the effect twice (which `CLAUDE.md` has to warn about in prose).
+
+`NeonHalfResRenderer` / `halfResNeon` would be self-describing, and the
+double-draw hazard would read as obviously redundant at the call site.
+
+**Not recommended now:** the C ABI exports 4 `el_effect_*_optimized_*`
+functions plus `EL_RENDERER_*` flags. Worth doing only if the ABI is broken for
+another reason.
+
+### S3. `EARLY_OUT_RADIUS_FACTOR` names a mechanism that was removed - FIXED
+
+There is no early-out any more. The per-fragment `discard` it was named for is
+gone; the shaders say so themselves:
+
+> `// (Far early-out lives on the CPU: the draw quad is sized to rect + earlyOut...`
+
+The constant now does two things: it sizes the draw quad in `setupGeometry`, and
+the shaders recompute the same expression to place the bloom pedestal. The code
+around it has already moved on to the right word - `setupGeometry` calls its
+local `glowReach`, the shaders call theirs `reach` - and only the constant, plus
+the comments that echo it, still say "early out".
+
+**Fixed:** now `GLOW_REACH_RADIUS_FACTOR`, matching the `glowReach` / `reach`
+locals it feeds and the `QUAD_FADE_START_FRAC` naming beside it. One definition,
+two shader uses, two `.cpp` uses; no ABI impact, since it is a tuning constant.
+
+The comments that echoed the old name went with it - ten sites where `earlyOut`
+was used as if it named a live quantity now say `glowReach`. Four uses of
+"early-out" survive on purpose, because they describe actual early returns: the
+`opaqueOnly` return in `NeonRenderer`, the `bell < 0.005` skip in the pre-pass,
+and the two lines in `neon-tuning.h` that explain what the constant used to be
+calibrated for.
+
+### S4. `SegmentBoost::boost` also names a removed mechanism
+
+Its own doc comment admits it:
+
+> The `boost` sets its peak brightness (**was a multiplier under the old
+> multiplicative model**; now the segment's absolute amplitude in the additive
+> compose).
+
+So the field is an absolute peak brightness wearing the name of the multiplier
+it replaced, and the type `SegmentBoost` is a travelling coloured light named
+after that same multiplier. `peak` or `amplitude` for the field; the type is
+really just a segment.
+
+**Not recommended now:** `el_effect_set_segment_boost` and friends are ABI. The
+field doc is at least honest about the history, which is why this ranks below
+S3 despite being the same category of error.
+
+### S5. `PreservedSegment` and `preservedSegmentBoosts` disagree
+
+| pool | type | config field |
+| ---- | ---- | ------------ |
+| transient | `SegmentBoost` | `segmentBoosts` |
+| preserved | `PreservedSegment` | `preservedSegmentBoosts` |
+
+The type drops "Boost" and the field keeps it, for the two halves of one pool
+that `SegmentUtils::FillEffectiveSegments` merges. Whichever way S4 is resolved,
+these two should match each other.
+
+### S6. `filamentFalloff` runs the opposite way to its name
+
+```
+/// Lower values give a smoother, softer roll-off; higher values sharpen the edge.
+float filamentFalloff = 1.0f;
+```
+
+A higher "falloff" produces *less* gradual falloff - a flatter top and a sharper
+shoulder. The quantity is the generalized-Gaussian exponent; the shader is
+explicit that `N = 2 * uFilamentFalloff`.
+
+`filamentShape` (what it controls) or `filamentExponent` (what it is) both read
+correctly in both directions. **Medium churn:** ABI (`el_effect_set_filament_falloff`),
+a `FieldBoundAnimation` field id, and a demo slider.
+
+### S7. `Cutoff::size` is a distance, not a size
+
+```
+size - distance in pixels from the rect edge to the cutoff boundary
+```
+
+The doc has to open by correcting the field name. `distance` or `extent` says
+it directly. Same ABI caveat as S6.
+
+---
+
+### S8. `GeometryUtils` did not follow the project's own `Get` rule - FIXED
+
+Surveying all six util namespaces turns up a rule nobody wrote down but almost
+everything follows:
+
+> **`Get*` when the function derives a value from a described thing; a bare verb
+> or conversion name otherwise.**
+
+| namespace | `Get*` | other |
+| --------- | ------ | ----- |
+| `PathUtils` (since removed with the contour tracer: dead code, used by nothing) | `GetPathAABB`, `GetPathLength`, `GetPointOnPath` | - |
+| `GLUtils` | `GetCap`, `GetExtensions` | `CheckExtension`, `CheckGLError`, `LogCaps`, `LogExtensions`, `LogRendererInfo` |
+| `ColorUtils` | - | `SampleRing`, `SampleSpan`, `SortStops`, `BlendStops`, `RgbToHsv`, ... |
+| `SegmentUtils` | - | `AcquireSegment`, `FillEffectiveSegments`, `FindPreservedSegment`, `ReleaseSegment` |
+| `CaptureUtil` | - | `ReadRegion`, `ReadFramebuffer`, `WritePNG`, `TimestampedPath` |
+
+`ColorUtils` and `SegmentUtils` have no `Get*` because they contain no
+derive-a-value function - every entry is a verb (sample, sort, blend, acquire)
+or a conversion (`RgbToHsv`). They are not counter-examples to the rule; they
+simply never trigger it.
+
+Against that, `GeometryUtils` had exactly one violation, and it was mine:
+`EffectiveCornerRadius` derives a scalar property from a geometry description,
+which is the same shape as `GetPathLength(path)`, but carried no prefix.
+
+**Fixed:**
+
+| before | after |
+| ------ | ----- |
+| `EffectiveCornerRadius` | `GetEffectiveCornerRadius` |
+| `Detail::GetPointOnRectCW` | `Detail::GetPointOnRectangleCW` |
+| `Detail::GetPointOnRectCCW` | `Detail::GetPointOnRectangleCCW` |
+
+The second pair is a separate slip: the public entry point spelled it
+`Rectangle` and the two helpers it delegates to spelled it `Rect`.
+
+`AppToLocal` and `Detail::SafeFrac` keep their bare names correctly - a
+coordinate conversion and a guarded division are not "get a property of a
+thing".
+
+Recorded because I got this backwards once already: asked whether
+`EffectiveCornerRadius` should take a `Get`, I said no, reasoning from
+`GeometryUtils` alone, where the split was 2-2 and looked arbitrary. Widening to
+all six namespaces made the rule obvious and the answer the opposite. Worth a
+line in `AGENTS.md` if it is ever formalised.
+
+## What is already right
+
+Worth recording so it does not get "tidied" later:
+
+- **`SampleRing` / `SampleSpan`** ([`color-utils.h`](../../lib/include/util/color-utils.h))
+  is the model for a pair. Both are marked, both are named for the data shape
+  rather than for the operation, and neither is the unmarked default - which is
+  what makes reaching for the wrong one visible at the call site. The previous
+  `SampleStops` / `SampleStopsClamped` split is what allowed V6 in
+  [`review-findings.md`](review-findings.md).
+- **The `On` prefix** is used consistently and only for callbacks
+  (`OnConfigChanged`, `OnDurationChanged`, `OnResize`, `OnKey`).
+- **Boolean members** carry `Is` / `Has` where the accessor does
+  (`mIsPlaying`, `mHasBaked`, `mHasRun`), and `mLoop` mirrors its own
+  `SetLoop` rather than being an inconsistency.
+- **The C ABI**, as above.
+
+## A gap in `AGENTS.md` itself
+
+The document specifies `public` and `private` method casing but says nothing
+about `protected`. The codebase has a clear de-facto rule - protected virtuals
+use `PascalCase` (`RestoreBaseline`, `ApplyAt`, `OnDurationChanged`) - and that
+is the right call, because a protected virtual is subclass-facing API rather
+than an implementation detail. But because the rule is unwritten, any checker
+run against `AGENTS.md` reports all 36 of them as violations, which is how they
+surfaced in this review.
+
+Worth one line in `AGENTS.md`: *protected methods follow the public rule
+(`PascalCase`) - they are API for subclasses.*
+
+---
+
+---
+
+## Spotlight clip pass
+
+A second read of the spotlight layer, this time including
+`SpotlightConfig::clipArea` and everything that arrived with it on
+`add_clipping_area_for_spotlight`. The clip landed after the pass above, so none
+of it had been audited.
+
+**Mechanical conformance: clean.** No `AGENTS.md` violation anywhere in the
+layer. Worth recording because the previous spotlight branch broke two rules
+here (N2's three structs, N3's `mSpotlightSelected` in both demos) - both stayed
+fixed, and the clip's own new struct `ClipSolve` carries the `typedef`
+self-alias. Header guard, two `private:` labels, `mFoo` members, `ALL_CAPS`
+constants, public `PascalCase` / private `camelCase`: all correct.
+
+Everything below is semantic, and all of it is applied. The one item deliberately
+**not** applied is the first, which is the layer's own S1.
+
+### The noun is `lamp`, and `SpotLight` is the exception - BY DECISION
+
+The layer had two words for its central noun. The implementation said "lamp"
+almost everywhere (`lampCount`, `DeriveLamp`, `LampSolve`, `HasClippedLamp`,
+`WarnOnLampOverflow`, `VERTS_PER_LAMP`) while the config said "light"
+(`SpotlightConfig::lights`, `SPOT_MAX_LIGHTS`, `SpotLight`), and the two
+collided inside single functions - `SPOT_MAX_LIGHTS` sat directly above
+`VERTS_PER_LAMP` in one `constexpr` block. Counted over
+`spotlight-renderer.{h,cpp}`: 95 uses of lamp against 49 of light.
+
+The C ABI had already resolved it the same way - "lamp" 33 times to "light" 6
+in its docs, `el_effect_set_spotlight_count` rather than a light count, and
+`spotlight` joined in all 24 exported function names.
+
+**Resolved as `lamp`:**
+
+| before | after |
+| ------ | ----- |
+| `SpotlightConfig::lights` | `SpotlightConfig::lamps` |
+| `SPOT_MAX_LIGHTS` | `SPOT_MAX_LAMPS` |
+| `DeriveLamp(const SpotLight &light, ...)` | `DeriveLamp(const SpotLight &lamp, ...)` |
+| `drawing` (an `int`, read as a bool) | `drawnLamps` |
+| demo locals `lights` / `maxLights` | `lamps` / `maxLamps` |
+
+No ABI impact: the C side reaches `lamps` through internal accessors and exports
+no name containing it. The mass noun is untouched - "cones of light", "light only
+adds", "where light was written" are all correct English and all stayed.
+
+**`SpotLight` the TYPE is left alone, and that is a decision rather than an
+oversight.** It is the only identifier in the layer that splits the word - 46
+uses against 130 that join it (`SpotlightRenderer`, `SpotlightField`,
+`SpotlightConfig`, `SpotlightSlot`, `SpotlightBinding`, every `SPOT_*` macro,
+`EL_RENDERER_SPOTLIGHT`, all 24 `el_effect_*_spotlight_*` functions). Fixing it
+is mechanical and ABI-free. It was deferred because it is a public C++ type and
+because renaming it and settling the noun are two separate calls that should not
+ride in one commit. So the layer currently reads
+`std::vector<SpotLight> lamps;`, which is the honest halfway state: **if the
+casing is ever fixed, this is the item to pick up.**
+
+### One rounded-box SDF had two names - FIXED
+
+`spotlight.frag` declared `spotClipSDF`, character-for-character identical to
+the `sdRoundBox` in `black-rect.frag`, `neon.frag`, `neon-blit.frag` and
+`droplets.frag`. The name misled twice over: it implied the function knew about
+the clip area (it does not - `spotClipMask` is the one that does), and `SDF` as
+a suffix broke the `sd*` prefix the other four share.
+
+**Fixed:** now `sdRoundBox`, with a comment saying it is the shared primitive.
+`spotlight.frag` was also the only shader mixing function brace styles - `main()`
+same-line, its three helpers next-line - so the helpers now match the
+eight-shader majority.
+
+### The bloom cluster had three words for two quantities - FIXED
+
+One float wore four names on its way to the GPU:
+
+| stage | was |
+| ----- | --- |
+| tuning constant (the FACTOR, 8.0) | `SPOT_BLOOM_SUPPORT` |
+| `LampSolve` field (the PRODUCT) | `bloomWindow` |
+| `StripVertex::p1[3]`, `aP1`, `vP1` docs | `bloomSupport` |
+| shader local | `sup` |
+
+So "support" named both the factor and its product, and the product also
+answered to "window" and "sup". Meanwhile `bloomBound` was a genuinely
+different quantity - `min(bloomWindow, the inverse-square core's own visibility
+limit)` - drawing on the same vocabulary.
+
+**Fixed** by giving each quantity one word:
+
+| word | meaning |
+| ---- | ------- |
+| **window** | the artificial cutoff: `SPOT_BLOOM_WINDOW_INNER` / `SPOT_BLOOM_WINDOW_OUTER` and the per-lamp `bloomWindow` px they produce |
+| **reach** | where the bloom stops mattering: `bloomReach`, formerly `bloomBound`. Pairs with `SolveConeReach` |
+| **support** | reserved for the STRIP's support (`SupportAt`), a different thing - the union of cone and bloom the geometry must cover |
+
+`SPOT_BLOOM_WINDOW_OUTER` now also sits next to `_INNER` as the two edges of one
+smoothstep, which is what they always were.
+
+### `SolveClip` borrowed "Solve" from another meaning - FIXED
+
+`SolveConeAcross` and `SolveConeReach` invert the shader's falloff in closed
+form; that is the sense of "solve" the whole renderer rests on. `SolveClip`
+inverts nothing - it normalises `ClipArea`'s top-left-plus-size into a centred
+box with a clamped radius - and its own doc comment opened *"Resolve the clip
+area"*, two lines below the wrong word.
+
+**Fixed:** now `DeriveClip`, matching `DeriveLamp`. Both helpers are `Derive*`
+producing a `*Solve` bundle, and "Solve" survives only as a verb for actual
+inversion.
+
+### Four of eight packed shader slots had no name - FIXED
+
+`spotlight.frag` named `nearW`, `thr` and `sup`, then read `vP0.x`
+(tanHalfBeam), `vP0.z` (softK), `vP0.w` (intensity) and `vP1.y` (bloom
+strength) as raw swizzles - so `exp(-lat * lat * vP0.z)` and
+`vColor * vP0.w * (...)` could not be checked against the falloff derivation at
+the top of the file without counting components against a comment.
+
+**Fixed:** all eight are unpacked into named locals before first use. Every one
+is a `flat` varying, so the cost is zero and the term stack now reads like the
+derivation it implements.
+
+### Smaller - ALL FIXED
+
+| was | now | why |
+| --- | --- | --- |
+| `LampSolve::floor`, `DeriveLamp`'s `floor` param | `visibilityFloor` | shadowed `::floor`, and names what it holds a share of (`SPOT_VISIBILITY_FLOOR`) |
+| `LampSolve::thr` | `throwLength` | the only three-letter field among spelled-out ones, reading like "threshold", while all three doc comments for its own slot said `throwLength` |
+| `LampSolve::nearW` | `apertureWidth` | same defect - a floored config value wearing an abbreviation. `tanHalf` and `softK` keep theirs: they are derived quantities with no config counterpart |
+| `MIN_APERTURE` / `MIN_THROW` in the .cpp, bare `1.0` in the shader | `SPOT_MIN_APERTURE` / `SPOT_MIN_THROW` in the tuning header | the one pair of constants in this layer that BOTH sides apply, and so the one pair that had to be shared - which is what the tuning header is for |
+
+### Verification
+
+Every item above is a rename. Eight offscreen scenes at 480x320 - both clip
+modes, a rotated rig, a zero-intensity lamp, a zero-size clip area, a hard-edged
+clip, a wide beam with a large bloom, and the scaled path - were captured before
+the first rename and re-captured after the last. **Byte-identical, same SHA-256
+over all eight**, which is the claim a pure-rename change has to be able to
+make. The clip-pin check from the twelfth pass of
+[`review-findings.md`](review-findings.md) was re-run unchanged.
+
+Two documents were left holding the old spellings on purpose:
+[`review-findings.md`](review-findings.md) quotes the code verbatim as evidence
+at a point in time, and `spotlight-tuning.h`'s own history note has to name
+`SPOT_BLOOM_SUPPORT` to explain what it replaced.
+
+## What is left
+
+| item | state |
+| ---- | ----- |
+| N3, S3, S8, `AGENTS.md` gap | fixed - N3 regressed once via `add_spotlight_renderer` and was re-fixed |
+| S1 | declined - half-fix only while the ABI freezes the field name |
+| N1, N2, N5 | open - `demo-capi` only, out of scope for the `lib/` pass; N2's three `lib/` additions were fixed as they appeared |
+| N4 | open - `lib/capi/`, and the reserved-identifier half is a 47-file sweep |
+| S5 | open - the field rename reaches `lib/capi/`, so it cannot be done `lib`-only |
+| S2 | moot - the renderers it names were folded into one each; only deprecated C shims keep the word |
+| S4, S6, S7 | recorded for whenever the C ABI is next revised; none worth doing alone |
+| spotlight clip pass | fixed, except the `SpotLight` casing - deferred by decision, and the one item to pick up if it is ever revisited |
+
+Verified after the fixes: clean rebuild of all four artifacts, and the probe
+suite from [`review-findings.md`](review-findings.md) unchanged - base vs
+optimized still mean |diff| 0.161 / max 7, the corner-wedge and radius-clamp
+cases still byte-identical.

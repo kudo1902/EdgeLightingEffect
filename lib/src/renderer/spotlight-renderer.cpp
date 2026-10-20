@@ -191,7 +191,7 @@ namespace EdgeLighting
         /// others, so under the GL_ONE / GL_ONE this used to be, two beams
         /// crossing at ~0.6 each summed to ~1.2 and the RGBA8 target clipped
         /// the overlap to a flat white disc with a hard rim - V12a in
-        /// docs/review-findings.md. Screened, the same pair reads ~0.84 and
+        /// docs/records/review-findings.md. Screened, the same pair reads ~0.84 and
         /// shades smoothly through the crossing, and the blend costs exactly
         /// what the add did.
         ///
@@ -456,7 +456,7 @@ namespace EdgeLighting
         /// evaluation of the shader: at most 5 clipped channels out of 2.76
         /// million, every one at value 1, which is the rounding coin-flip at
         /// the boundary rather than this gap. See I17 in
-        /// docs/review-findings.md.
+        /// docs/records/review-findings.md.
         float SupportAt(const LampSolve &s, float a)
         {
             float c = SolveConeAcross(s, a);

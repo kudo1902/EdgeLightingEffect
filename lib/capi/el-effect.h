@@ -147,7 +147,7 @@ extern "C"
      *           A cutoff on the side the glow side already culls does nothing
      *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
      *           INSIDE subsumes the outside one. See
-     *           docs/glow-side-comparison.md. */
+     *           docs/design/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
@@ -209,7 +209,7 @@ extern "C"
      *
      *           The cut is coverage applied to the graded output, so a non-zero
      *           value fades the layer rather than dimming its emission into the
-     *           tone map. See docs/glow-side-comparison.md. */
+     *           tone map. See docs/design/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 
@@ -459,7 +459,7 @@ extern "C"
      *           the same gather result, so the
      *           line and every edge near it look as they do at 1.0 (within
      *           2/255 down to 0.125 on the scenes in
-     *           docs/neon-resolution-scale-comparison.html, but for a very
+     *           docs/pages/neon-resolution-scale-comparison.html, but for a very
      *           small rect).
      *
      *           Not a guaranteed saving: the ring, the composite and the

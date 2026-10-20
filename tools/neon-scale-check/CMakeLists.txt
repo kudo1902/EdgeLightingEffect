@@ -1,4 +1,4 @@
-# neon-scale-check - the harness behind docs/neon-resolution-scale-comparison.html.
+# neon-scale-check - the harness behind docs/pages/neon-resolution-scale-comparison.html.
 #
 # Two ways in:
 #

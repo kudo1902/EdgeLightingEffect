@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Rewrite the data behind docs/neon-resolution-scale-comparison.html.
+"""Rewrite the data behind docs/pages/neon-resolution-scale-comparison.html.
 
     update-page.py --after head-1.json [head-2.json ...] --before old-1.json [old-2.json ...]
-                   [--page docs/neon-resolution-scale-comparison.html]
+                   [--page docs/pages/neon-resolution-scale-comparison.html]
 
 Each --after / --before file is one `neon-scale-check generate` run. Several
 runs of the same build are merged: every metric must agree exactly between
@@ -42,7 +42,7 @@ def merge(paths, label):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--page", default="docs/neon-resolution-scale-comparison.html")
+    ap.add_argument("--page", default="docs/pages/neon-resolution-scale-comparison.html")
     ap.add_argument("--after", nargs="+", required=True, help="runs of the build the page describes")
     ap.add_argument("--before", nargs="+", required=True, help="runs of the build it is compared against")
     args = ap.parse_args()
