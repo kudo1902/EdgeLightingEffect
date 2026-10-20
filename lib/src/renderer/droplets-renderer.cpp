@@ -19,6 +19,9 @@ namespace EdgeLighting
         {
             float inner; ///< Nearest distance written (negative = inside the rect).
             float outer; ///< Furthest distance written.
+
+            bool operator==(const BandExtent &o) const { return inner == o.inner && outer == o.outer; }
+            bool operator!=(const BandExtent &o) const { return !(*this == o); }
         } BandExtent;
 
         /// @ref BandExtent for the live glow side.
@@ -161,19 +164,26 @@ namespace EdgeLighting
 
     void DropletsRenderer::OnConfigChanged(const Config &config)
     {
-        // The quad is sized from the rect's extents and the band's outward
-        // reach, so it is rebuilt when either moves and left alone otherwise -
-        // every other droplet parameter is a per-frame uniform. Dragging Rain
-        // Amount or Speed must not re-upload a VBO.
+        // The ring is sized from the rect's extents and the band's extent, so
+        // it is rebuilt when either moves and left alone otherwise - every
+        // other droplet parameter is a per-frame uniform. Dragging Rain Amount
+        // or Speed must not re-upload a VBO.
+        //
+        // The band is compared as the extent setupGeometry builds from
+        // (GetBandExtent), not as a list of the fields behind it, so the gate
+        // cannot miss one. It did: the extent follows NeonConfig::glowSide as
+        // well as the band's width and offset, and a gate on those two alone
+        // kept the ring built for the old side - switching OUTSIDE to INSIDE
+        // drew 8409 of a fresh renderer's 12891 lit px, the inner third of the
+        // band falling into the old ring's hole.
         //
         // geometry.position is compared along with the rest of RectGeometry
         // even though setupGeometry ignores it (Render's transform carries the
         // position instead): one redundant rebuild on a move is cheaper than a
-        // gate that silently stops matching if the quad ever grows a
+        // gate that silently stops matching if the ring ever grows a
         // dependency on it.
         const bool geometryDirty = config.geometry != mCurrentConfig.geometry ||
-                                   config.droplets.bandWidth != mCurrentConfig.droplets.bandWidth ||
-                                   config.droplets.bandOffset != mCurrentConfig.droplets.bandOffset;
+                                   GetBandExtent(config) != GetBandExtent(mCurrentConfig);
 
         mCurrentConfig = config;
 
