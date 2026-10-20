@@ -13,7 +13,6 @@
 #include <cmath>
 #include <iterator>
 #include <cstdint>
-#include <string>
 
 namespace EdgeLighting
 {
@@ -561,36 +560,6 @@ namespace EdgeLighting
                 LOG_E("NeonRenderer: %zu %s configured but only %d fit - the rest are ignored.",
                       now, what, cap);
             }
-        }
-
-        /// @p src with `#define NAME` spliced in after its first line for each
-        /// space-separated NAME in @p defines.
-        ///
-        /// How one shader file yields several programs. Every embedded source
-        /// starts with the @GLSL_VERSION@ line, which must stay first, so the
-        /// defines go immediately after it - ahead of everything else, the
-        /// injected tuning header and neon-common.glsl included. Today that is
-        /// neon.frag's one variant, the field bake's NEON_FIELD_BAKE; see
-        /// @ref NeonRenderer::ensureFieldPrograms.
-        inline std::string WithDefine(const char *src, const char *defines)
-        {
-            std::string lines;
-            const std::string names(defines);
-            size_t start = 0;
-            while (start < names.size())
-            {
-                const size_t end = names.find(' ', start);
-                const std::string name = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                if (!name.empty())
-                {
-                    lines += "#define " + name + "\n";
-                }
-                start = (end == std::string::npos) ? names.size() : end + 1;
-            }
-            std::string out(src);
-            const size_t eol = out.find('\n');
-            out.insert(eol == std::string::npos ? out.size() : eol + 1, lines);
-            return out;
         }
 
         /// Floor, in FULL-RES px, under every glow cutoff ramp's width. Mirrors
@@ -1366,24 +1335,24 @@ namespace EdgeLighting
         /// hue is needed: the ring is re-shaded on every frame, still frames
         /// included. A one-sided glow or a cutoff is no bar either: the ring
         /// applies both after its tone map, and so does its composite, from the
-        /// pixel's own distance to the edge (neon-field.frag, NEON_FIELD_RING).
+        /// pixel's own distance to the edge (neon-ring-field.frag).
         inline bool IsRingFieldEligible(const Config &config, bool ringOpaque)
         {
             return IsShadingFactorable(config, ringOpaque);
         }
 
         /// The one-sided cut and the cutoffs, for @p shader at @p scale: what
-        /// neon.frag and the ring field's composite (neon-field.frag,
-        /// NEON_FIELD_RING) apply after their tone map, and so the same numbers
+        /// neon.frag and the ring field's composite (neon-ring-field.frag)
+        /// apply after their tone map, and so the same numbers
         /// to both - the ring's composite has to multiply in exactly what the
         /// ring's own shading would. Pixel-valued, so multiplied by @p scale,
         /// as uploadShapeUniforms' are; a disabled cutoff at its sentinel.
         ///
-        /// @p cutSoftness is false for the field bake (neon.frag with
-        /// NEON_FIELD_BAKE), which returns at the grade, ahead of the one-sided
-        /// cut. The cut's softness has no other reader, so a compiler that
-        /// drops what follows a return drops uGlowSideSoftness from that
-        /// program, and setting it logged "uniform 'uGlowSideSoftness' not
+        /// @p cutSoftness is false for the field bake (neon-field-bake.frag),
+        /// which stops at the grade, ahead of the one-sided cut. The cut's
+        /// softness has no other reader, so a compiler that drops what the
+        /// bake never reads (neonShade's edge.sideSoft) drops
+        /// uGlowSideSoftness from that program, and setting it logged "uniform 'uGlowSideSoftness' not
         /// found" on NeonRenderer.Field. Everything else here also feeds the
         /// discards above the grade, so the bake keeps it.
         /// @pre @p shader is in use.
@@ -2159,7 +2128,7 @@ namespace EdgeLighting
         // time a frame needs it - see ensureGlowPrograms,
         // ensureGlowCoverProgram, ensureFieldPrograms, ensureRingFieldPrograms
         // and ensureFillProgram.
-        if (!ensureProgram(mEmissionShader, ShaderSource::NEON_EMISSION_FRAG_SRC, nullptr, "NeonRenderer.Emission",
+        if (!ensureProgram(mEmissionShader, ShaderSource::NEON_EMISSION_FRAG_SRC, "NeonRenderer.Emission",
                            PROGRAM_EMISSION, BLOCK_SEGMENT | BLOCK_ARC, "the neon layer is disabled"))
         {
             LOG_E("Failed to compile/link NeonRenderer shaders.");
@@ -3127,9 +3096,8 @@ namespace EdgeLighting
         return decision;
     }
 
-    bool NeonRenderer::ensureProgram(ShaderProgram &program, const char *fragSrc, const char *define,
-                                     const char *name, unsigned int programBit, unsigned int blocks,
-                                     const char *consequence)
+    bool NeonRenderer::ensureProgram(ShaderProgram &program, const char *fragSrc, const char *name,
+                                     unsigned int programBit, unsigned int blocks, const char *consequence)
     {
         if (program.IsValid())
         {
@@ -3143,8 +3111,7 @@ namespace EdgeLighting
             return false;
         }
 
-        const std::string source = define ? WithDefine(fragSrc, define) : std::string(fragSrc);
-        program = ShaderProgram(ShaderSource::NEON_VERT_SRC, source.c_str(), name);
+        program = ShaderProgram(ShaderSource::NEON_VERT_SRC, fragSrc, name);
         if (!program.IsValid())
         {
             mFailedPrograms |= programBit;
@@ -3188,13 +3155,13 @@ namespace EdgeLighting
         // compile on the first frame is the price of never finding out
         // which half of that difference the driver keys on.
         const char *noGlow = "the glow is not drawn";
-        return ensureProgram(mGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
+        return ensureProgram(mGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, "NeonRenderer.Gather",
                              PROGRAM_GATHER, BLOCK_SEGMENT | BLOCK_SAMPLES, noGlow) &&
-               ensureProgram(mShadeShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Shade",
+               ensureProgram(mShadeShader, ShaderSource::NEON_FRAG_SRC, "NeonRenderer.Shade",
                              PROGRAM_SHADE, BLOCK_SEGMENT | BLOCK_ARC, noGlow) &&
-               ensureProgram(mRingShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Ring",
+               ensureProgram(mRingShader, ShaderSource::NEON_FRAG_SRC, "NeonRenderer.Ring",
                              PROGRAM_RING, BLOCK_SEGMENT | BLOCK_ARC, noGlow) &&
-               ensureProgram(mBlitShader, ShaderSource::NEON_BLIT_FRAG_SRC, nullptr, "NeonRenderer.Blit",
+               ensureProgram(mBlitShader, ShaderSource::NEON_BLIT_FRAG_SRC, "NeonRenderer.Blit",
                              PROGRAM_BLIT, 0, noGlow);
     }
 
@@ -3212,9 +3179,8 @@ namespace EdgeLighting
         //
         // The neon vertex shader over the NDC quad, the fragment shader keyed
         // off gl_FragCoord - the emission pre-pass's arrangement.
-        return ensureProgram(mGlowCoverShader, ShaderSource::NEON_GLOW_COVER_FRAG_SRC, nullptr,
-                             "NeonRenderer.GlowCover", PROGRAM_GLOW_COVER, BLOCK_SEGMENT | BLOCK_ARC,
-                             "a partly lit ring will draw no glow");
+        return ensureProgram(mGlowCoverShader, ShaderSource::NEON_GLOW_COVER_FRAG_SRC, "NeonRenderer.GlowCover",
+                             PROGRAM_GLOW_COVER, BLOCK_SEGMENT | BLOCK_ARC, "a partly lit ring will draw no glow");
     }
 
     bool NeonRenderer::ensureGlowCoverFillProgram()
@@ -3226,7 +3192,7 @@ namespace EdgeLighting
         {
             return true;
         }
-        if (!ensureProgram(mGlowCoverFillShader, ShaderSource::NEON_GLOW_COVER_FILL_FRAG_SRC, nullptr,
+        if (!ensureProgram(mGlowCoverFillShader, ShaderSource::NEON_GLOW_COVER_FILL_FRAG_SRC,
                            "NeonRenderer.GlowCoverFill", PROGRAM_GLOW_COVER_FILL, 0,
                            "segments are baked into the glow coverage table directly"))
         {
@@ -3238,16 +3204,17 @@ namespace EdgeLighting
 
     bool NeonRenderer::ensureFieldPrograms()
     {
-        // The bake is neon.frag reading the gather (as the shading does at
-        // either scale) with NEON_FIELD_BAKE: hue 1 in, field out. It shades,
+        // The bake is the shading (neonShade, neon-shade.glsl) reading the
+        // gather as it does at either scale, with fieldBake set: hue 1 in,
+        // field out (neon-field-bake.frag). It shades,
         // so it takes the arc block; it does not gather, so not the sample
         // block. One object for both scales: it only ever draws the field
         // buffer, unblended, and the composite draws one target per frame.
         const char *direct = "the glow is shaded directly";
-        if (!ensureProgram(mFieldBakeShader, ShaderSource::NEON_FRAG_SRC, "NEON_FIELD_BAKE", "NeonRenderer.Field",
+        if (!ensureProgram(mFieldBakeShader, ShaderSource::NEON_FIELD_BAKE_FRAG_SRC, "NeonRenderer.Field",
                            PROGRAM_FIELD_BAKE, BLOCK_SEGMENT | BLOCK_ARC, direct) ||
-            !ensureProgram(mFieldCompositeShader, ShaderSource::NEON_FIELD_FRAG_SRC, nullptr,
-                           "NeonRenderer.FieldComposite", PROGRAM_FIELD_COMPOSITE, 0, direct))
+            !ensureProgram(mFieldCompositeShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NeonRenderer.FieldComposite",
+                           PROGRAM_FIELD_COMPOSITE, 0, direct))
         {
             mGlowField.schedule.unavailable = true;
             return false;
@@ -3262,7 +3229,7 @@ namespace EdgeLighting
             mRingField.schedule.unavailable = true;
             return false;
         }
-        if (!ensureProgram(mRingFieldCompositeShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_FIELD_RING",
+        if (!ensureProgram(mRingFieldCompositeShader, ShaderSource::NEON_RING_FIELD_FRAG_SRC,
                            "NeonRenderer.RingFieldComposite", PROGRAM_RING_FIELD_COMPOSITE, 0,
                            "the ring is shaded directly"))
         {
@@ -3277,7 +3244,7 @@ namespace EdgeLighting
         // Built on first use rather than in Initialize: a host that never sets
         // an OpaqueMode, or whose fill is always a clear (FillsWholeViewport),
         // never compiles it.
-        return ensureProgram(mFillShader, ShaderSource::BLACK_RECT_FRAG_SRC, nullptr, "NeonRenderer.Fill",
+        return ensureProgram(mFillShader, ShaderSource::BLACK_RECT_FRAG_SRC, "NeonRenderer.Fill",
                              PROGRAM_FILL, 0, "opaque mode will draw no fill");
     }
 

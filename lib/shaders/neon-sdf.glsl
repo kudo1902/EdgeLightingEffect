@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // The rounded box's signed distance, its antialiasing width and the cutoff
-// band's two boundaries, shared by neon.frag, neon-blit.frag, neon-field.frag
-// and black-rect.frag.
+// band's two boundaries, shared by neon.frag, neon-blit.frag, neon-field.frag,
+// neon-ring-field.frag and black-rect.frag.
 //
 // Not a shader: it has no main(). shaders.h.in injects it into the four
 // programs that have to agree on the shape to the pixel - the glow, the

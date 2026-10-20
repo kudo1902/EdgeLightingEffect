@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // The neon's grade: the tone map from linear light to the output, shared by
-// neon.frag and neon-field.frag, and the output dither, shared by those two and
-// neon-blit.frag.
+// neon.frag and the field composites (through neon-field-common.glsl), and the
+// output dither, shared by neon.frag, neon-ring-field.frag and neon-blit.frag.
 //
 // Not a shader: it has no main(). shaders.h.in injects it, after the tuning
 // header (TONE_MAP_SHOULDER, GAMMA_EXPONENT, OUTPUT_DITHER_LSB), into the glow,
-// the hue-invariant field's composite, which tone-maps col * Fa where neon.frag
+// the hue-invariant field's two composites, which tone-map col * Fa where neon.frag
 // tone-maps its own result - the two have to agree to the bit for the field
 // to stand in for pass 1 (I46) - and the blit, which only dithers.
 // ---------------------------------------------------------------------------

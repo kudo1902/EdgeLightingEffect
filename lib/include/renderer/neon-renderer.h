@@ -851,7 +851,7 @@ namespace EdgeLighting
         /// TRANSPOSED above those, so each runs along the atlas's width. Every
         /// texel sits on one of the viewport's pixels, so the composite reads
         /// the texel of its own pixel.
-        /// neon-field.frag (NEON_FIELD_RING) reads this layout and
+        /// neon-ring-field.frag reads this layout and
         /// @ref renderRingFieldPass bakes it: change the three together.
         ///
         /// @par The box and its strips
@@ -1223,17 +1223,16 @@ namespace EdgeLighting
         } OffscreenState;
 
         // --- Programs: built once, on first use ------------------------------
-        /// Build @p program from @p fragSrc over neon.vert, with @p define
-        /// spliced in (none for @c nullptr), once - every program goes through
-        /// here, the emission pre-pass's from @ref Initialize and the rest on
+        /// Build @p program from @p fragSrc over neon.vert, once - every
+        /// program goes through here, the emission pre-pass's from @ref Initialize and the rest on
         /// first use. Returns true if it is ready. A failed build is
         /// recorded in @c mFailedPrograms under @p programBit, logged once with
         /// @p consequence, and never retried, so a broken driver costs one
         /// compile and one log line, not one per frame. @p blocks (@c BLOCK_*)
         /// names the uniform blocks the source declares, each bound to its
         /// binding point.
-        bool ensureProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
-                           unsigned int programBit, unsigned int blocks, const char *consequence);
+        bool ensureProgram(ShaderProgram &program, const char *fragSrc, const char *name, unsigned int programBit,
+                           unsigned int blocks, const char *consequence);
 
         /// Make sure every program the glow draws with is built, building any
         /// that are not: neon-gather.frag, neon.frag twice (pass 1b and the
@@ -1256,8 +1255,8 @@ namespace EdgeLighting
         /// main table's own bake for good (@c GlowCoverTable::fillUnavailable).
         bool ensureGlowCoverFillProgram();
 
-        /// Make sure the field's two programs - neon.frag with NEON_FIELD_BAKE,
-        /// and neon-field.frag - are built, building them if not. Called on
+        /// Make sure the field's two programs - neon-field-bake.frag and
+        /// neon-field.frag - are built, building them if not. Called on
         /// every frame whose config the field can serve, so they are built on
         /// the first such frame - which shades directly, and is compiling its
         /// path's programs too - rather than stalling the bake frame after it.
@@ -1265,8 +1264,8 @@ namespace EdgeLighting
         /// used and the shading draws as before.
         bool ensureFieldPrograms();
 
-        /// Make sure the ring field's composite (neon-field.frag with
-        /// NEON_FIELD_RING) and the bake (@ref ensureFieldPrograms) are built.
+        /// Make sure the ring field's composite (neon-ring-field.frag) and the
+        /// bake (@ref ensureFieldPrograms) are built.
         /// A failure is recorded in @c mFailedPrograms; the ring is then shaded
         /// directly.
         bool ensureRingFieldPrograms();
@@ -1772,12 +1771,12 @@ namespace EdgeLighting
         ShaderProgram mGlowCoverFillShader;      ///< P0f, neon-glow-cover-fill.frag. Built on the first frame with a segment table.
         ShaderProgram mGatherShader;             ///< P1a, neon-gather.frag. Built on the first frame.
         ShaderProgram mShadeShader;              ///< P1b, neon.frag, into the reduced buffer. Built on the first frame.
-        ShaderProgram mFieldBakeShader;          ///< P1f and P1r, neon.frag + NEON_FIELD_BAKE. Built on the first field-eligible frame.
+        ShaderProgram mFieldBakeShader;          ///< P1f and P1r, neon-field-bake.frag. Built on the first field-eligible frame.
         ShaderProgram mFieldCompositeShader;     ///< P1c, neon-field.frag. Built with it.
         ShaderProgram mFillShader;               ///< P2a, black-rect.frag. Built the first time a fill draws through it.
         ShaderProgram mBlitShader;               ///< P2b, neon-blit.frag. Built on the first frame.
         ShaderProgram mRingShader;               ///< P2c, neon.frag again, its own object - see ensureGlowPrograms. Built on the first frame.
-        ShaderProgram mRingFieldCompositeShader; ///< P2r, neon-field.frag + NEON_FIELD_RING. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
+        ShaderProgram mRingFieldCompositeShader; ///< P2r, neon-ring-field.frag. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.

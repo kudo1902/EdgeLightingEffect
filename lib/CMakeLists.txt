@@ -40,13 +40,17 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-shade.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field-common.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field-bake.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring-field.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
@@ -69,12 +73,14 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field-bake.frag" NEON_FIELD_BAKE_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag" NEON_GATHER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag" NEON_GLOW_COVER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag" NEON_GLOW_COVER_FILL_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag" NEON_FIELD_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring-field.frag" NEON_RING_FIELD_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
@@ -88,7 +94,8 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-blit.frag" SPOTLIGHT_BLIT_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
-# neon-emission.frag, neon-glow-cover.frag, neon-glow-cover-fill.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
+# neon-field-bake.frag, neon-emission.frag, neon-glow-cover.frag, neon-glow-cover-fill.frag, neon-blit.frag,
+# neon-field.frag and neon-ring-field.frag via @NEON_TUNING@
 # in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 
@@ -108,12 +115,24 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
 
 # The rounded box's signed distance, its antialiasing width and the cutoff
 # band's boundaries, injected via @NEON_SDF@ into neon.frag, neon-blit.frag,
-# neon-field.frag and black-rect.frag - the four programs that draw the glow's
-# edge and have to agree on it to the pixel - and
-# the tone map, via @NEON_GRADE@ into neon.frag and neon-field.frag, after
+# neon-field.frag, neon-ring-field.frag and black-rect.frag - the programs that
+# draw the glow's edge and have to agree on it to the pixel - and
+# the tone map, via @NEON_GRADE@ into neon.frag and the two field composites, after
 # @NEON_TUNING@. One copy each; neither is a shader on its own.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl" NEON_SDF)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl" NEON_GRADE)
+
+# The neon's shading up to the grade - every uniform, helper and term, as
+# neonShade - injected via @NEON_SHADE@ into neon.frag (which grades and
+# masks what it returns) and neon-field-bake.frag (which writes it as the
+# field), after @NEON_GRADE@. Not a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-shade.glsl" NEON_SHADE)
+
+# What the hue-invariant field's two composites share - the uniforms, and
+# fieldShade, the field under the gathered hues, tone-mapped - injected via
+# @NEON_FIELD_COMMON@ into neon-field.frag and neon-ring-field.frag, after
+# @NEON_SDF@. Not a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field-common.glsl" NEON_FIELD_COMMON)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
