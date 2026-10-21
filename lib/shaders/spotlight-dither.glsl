@@ -27,8 +27,10 @@ precision highp float;
 /// destination pixel, or the noise is sampled at the wrong pitch and stops
 /// being noise. spotlight.frag hands it vLocal (a rotation plus a translation
 /// of the framebuffer, so the pattern travels with the beam and two
-/// overlapping lamps dither independently); spotlight-blit.frag hands it
-/// gl_FragCoord, since by then the lamps are one summed image.
+/// overlapping lamps dither independently); spotlight-blit.frag hands it the
+/// destination pixel, since by then the lamps are one summed image - from its
+/// interpolated position (`uv * uViewportSize`), not gl_FragCoord, which alone
+/// cost that pass 1.29x the scaled frame (see spotlight-blit.frag).
 float spotDither(vec2 p) {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
 }
