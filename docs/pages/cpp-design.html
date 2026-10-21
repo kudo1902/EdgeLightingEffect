@@ -954,7 +954,7 @@
             <tr><td class="mono nw">EmissionInputs / EmissionBake</td><td>Pass 0's key and its record (section 11).</td></tr>
             <tr><td class="mono nw">GatherInputs / GatherCache</td><td>Pass 1a's key and what it last drew, region and bounds included.</td></tr>
             <tr><td class="mono nw">LazyBake</td><td>When a field is baked and when it is used - one schedule type, two instances, so the glow's field and the ring's cannot drift apart.</td></tr>
-            <tr><td class="mono nw">RingFieldLayout</td><td>How the ring's pixels pack into four strips of one atlas. The C++ that computes it, the bake that writes it and the shader that reads it change together.</td></tr>
+            <tr><td class="mono nw">FieldLayout</td><td>How a field's texels pack into four strips of one atlas - the edge ring's, and since I94 the glow's, each an annulus less its hole, the side strips transposed into as many columns as makes the smallest atlas no wider than one column&rsquo;s. The C++ that computes it (<code>packFieldStrips</code>), the bake that writes it (<code>drawFieldStrips</code>) and the lookup that reads it (<code>fieldStripTexel</code>) change together.</td></tr>
             <tr><td class="mono nw">ShadeLimits</td><td>The quad's fade margin and the corner-skip distance, one pair for pass 1b (scaled px) and one for the ring (full-res px).</td></tr>
             <tr><td class="mono nw">EmissionTable, GlowCoverTable, GatherTarget, GlowField, RingField</td><td>One struct per offscreen buffer: the <code>Framebuffer</code> plus everything that says what it holds - format tier, layout, dirty masks, cache, schedule.</td></tr>
             <tr><td class="mono nw">OffscreenState, FrameState</td><td>Whether passes 1a and 1b can be skipped this frame; what <code>RenderOffscreen</code> leaves for <code>Render</code>.</td></tr>
@@ -998,7 +998,7 @@
             <tr><td class="mono nw">mGlowCover.segBuffer</td><td><span class="pid">P0s</span></td><td>from 128 wide x 128, RG16F</td><td>when segments get a table of their own</td><td>with the main table; when segments go back to direct</td></tr>
             <tr><td class="mono nw">mGather.buffer</td><td><span class="pid">P1a</span></td><td>the gather quad's region at <code>GetGatherScale</code>; 1-2 attachments, RGBA16F, else RGBA8</td><td>the first frame</td><td>layer off</td></tr>
             <tr><td class="mono nw">mScaled (SharedBuffer)</td><td><span class="pid">P1b P1c</span></td><td>the whole viewport at the scale, RGBA16F, else RGBA8 - 4.1 MB at 1080p and 0.5</td><td>the first frame (<code>BeginWrite</code>)</td><td>layer off; destructor</td></tr>
-            <tr><td class="mono nw">mGlowField.buffer</td><td><span class="pid">P1f</span></td><td>the glow quad's window of the reduced grid, R16F or RG16F; no 8-bit fallback</td><td>the first bake</td><td>when the config can no longer use it</td></tr>
+            <tr><td class="mono nw">mGlowField.buffer</td><td><span class="pid">P1f</span></td><td>the glow quad's window of the reduced grid less its hole, packed (<code>FieldLayout</code>), R16F or RG16F; no 8-bit fallback</td><td>the first bake</td><td>when the config can no longer use it</td></tr>
             <tr><td class="mono nw">mRingField.buffer</td><td><span class="pid">P1r</span></td><td>the ring packed into four strips, full resolution, R16F or RG16F</td><td>the first bake</td><td>when the config can no longer use it</td></tr>
           </tbody>
         </table>

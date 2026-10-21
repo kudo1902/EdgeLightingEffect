@@ -13,12 +13,15 @@
 // (IsFieldEligible): the only frames that redraw pass 1b with nothing but the
 // time, or the gain, moved.
 //
-// The texel a fragment wants is floor((vPos - uFieldOrigin) * uFieldTexelScale),
-// rect-local, and so independent of where the host's viewport starts. The
-// field is a window of whole texels of the reduced buffer's grid (the buffer
-// covers the whole viewport; the field the glow quad's box), vPos is in scaled
-// px, and the scale is that buffer's texels per scaled px - just under 1,
-// since its texel count is the viewport's truncated. Not gl_FragCoord: a select
+// The box texel a fragment wants is floor((vPos - uFieldOrigin) *
+// uFieldTexelScale), rect-local, and so independent of where the host's
+// viewport starts. The field's box is a window of whole texels of the reduced
+// buffer's grid (the buffer covers the whole viewport; the field the glow
+// quad's box), vPos is in scaled px, and the scale is that buffer's texels per
+// scaled px - just under 1, since its texel count is the viewport's truncated.
+// The field stores that box less the quad's hole, packed as the ring's is
+// (fieldStripTexel, neon-field-common.glsl): on a screen-sized rect the glow
+// never reaches the middle, which the plain box held anyway (I94). Not gl_FragCoord: a select
 // between the two cost the old full-resolution composite ~30% on an AMD Radeon
 // Pro 5300M. The bake discards nothing (V35): the culls below are the only
 // ones the field's pixels get, and a texel the quad did not reach holds 0,
@@ -27,6 +30,8 @@
 
 uniform vec2      uFieldOrigin; ///< vPos of the field's texel (0, 0) corner.
 uniform vec2      uFieldTexelScale; ///< Field texels per vPos unit: the reduced buffer's texels per scaled px.
+uniform vec4      uFieldHole;   ///< Box texels the quad never draws: [x0, x1) x [y0, y1), as x0, y0, x1, y1.
+uniform vec2      uFieldSides;  ///< The side rows' first atlas row, and how many each atlas column holds.
 uniform float     uResolutionScale; ///< The reduced buffer's scale: converts its px to destination px, as neon.frag does.
 
 void main() {
@@ -57,7 +62,8 @@ void main() {
         if (dOut >  outHalf + BLIT_CUTOFF_GUARD_PX ) discard;
         if (dIn  < -(inHalf + BLIT_CUTOFF_GUARD_PX)) discard;
     }
-    vec2 field = texelFetch(uField, ivec2(floor((vPos - uFieldOrigin) * uFieldTexelScale)), 0).rg;
+    ivec2 q = ivec2(floor((vPos - uFieldOrigin) * uFieldTexelScale));
+    vec2 field = texelFetch(uField, fieldStripTexel(q, ivec4(uFieldHole), ivec2(uFieldSides)), 0).rg;
     vec3 result = fieldShade(field);
 
     // Not dithered: this writes the reduced buffer, which the blit reads

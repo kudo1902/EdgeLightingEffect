@@ -1955,12 +1955,20 @@ namespace EdgeLighting
 
         /// The hue-invariant field (pass 1f) is used only where the glow quad
         /// fills at least this share of the box the field has to cover. The
-        /// field is a box - its texels sit on the viewport's pixels - while the
+        /// field was a box - its texels sit on the viewport's pixels - while the
         /// quad may be a thin frame: the production band's quad is ~7% of its
         /// box, so its field was ~8 MB for a frame that measured 1.02x, the
         /// shading there being too little for the field to save. At a half the
-        /// field holds at most two texels per shaded pixel, counted in the
+        /// field held at most two texels per shaded pixel, counted in the
         /// reduced buffer's texels.
+        ///
+        /// Since I94 the field is packed (FieldLayout), the quad's hole left
+        /// out, so the memory half of that reason has mostly gone; the time
+        /// half - 1.02x on the band - has not, and this still decides which
+        /// configs take the field. The fill is still measured against the BOX,
+        /// so a config takes the field exactly where it did before packing.
+        /// Lowering it would hand the field to thin bands, whose frames it was
+        /// measured not to speed up.
         constexpr float FIELD_MIN_FILL = 0.5f;
 
         /// The whole viewport at @p scale, for the rect centred at
@@ -2068,8 +2076,8 @@ namespace EdgeLighting
         }
 
         /// Whether a glow quad of @p glowArea FULL-RES px, drawn at @p scale,
-        /// fills enough of @p region for the field to be worth its memory
-        /// (FIELD_MIN_FILL).
+        /// fills enough of @p region - its box, not its packed strips - for the
+        /// field to be worth its bake (FIELD_MIN_FILL).
         inline bool FieldFillsRegion(float glowArea, const BufferRegion &region, float scale)
         {
             const float box = static_cast<float>(region.texels.x) * static_cast<float>(region.texels.y);
@@ -2189,6 +2197,7 @@ namespace EdgeLighting
         mBlitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mGatherMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mRingField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mGlowField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         // The atlas bakes and the glow quad's interior hole read the merged
         // transient+preserved view, which OnConfigChanged normally keeps
@@ -2443,7 +2452,7 @@ namespace EdgeLighting
         if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
             !bypasses(NeonBypass::RING_FIELD) && IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
         {
-            const RingFieldLayout layout =
+            const FieldLayout layout =
                 computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
             const bool firstFrame = !mRingFieldCompositeShader.IsValid();
             if (layout.atlas.x > 0 && layout.atlas.y > 0 && ensureRingFieldPrograms())
@@ -2483,21 +2492,18 @@ namespace EdgeLighting
             }
 
             // How pass 1f runs: bake the field over @p region - its own, a
-            // window of the reduced buffer's grid (GetFieldRegion) - through
-            // that region's projection at
-            // this frame's scale, after the gather it reads. Unblended: the
-            // buffer is data. Records how pass 1c finds a fragment's texel: the
-            // region's origin and its texels per px, both in the composite's
-            // vPos space (scaled px). A failed bake composites nothing: the
-            // frame shades directly.
+            // window of the reduced buffer's grid (GetFieldRegion), less the
+            // quad's hole, packed (computeGlowFieldLayout) - at this frame's
+            // scale, after the gather it reads. Unblended: the buffer is data.
+            // The bake records the layout, which is how pass 1c finds a
+            // fragment's texel. A failed bake composites nothing: the frame
+            // shades directly.
             auto bakeFieldPass = [&](const BufferRegion &region, const UVMap &uv)
             {
-                const bool baked =
-                    renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, huePhase, config);
+                const bool baked = renderFieldPass(computeGlowFieldLayout(region, mGlowBounds.hole, scale), uv, scale,
+                                                   huePhase, config);
                 field.use = field.use && baked;
                 mGlowField.schedule.OnBaked(baked, config.neon.intensity);
-                mGlowField.origin = region.origin * scale;
-                mGlowField.texelScale = glm::vec2(region.texels) / (region.size * scale);
             };
 
             // The offscreen buffers cover a REGION of the frame, not the
@@ -3955,11 +3961,10 @@ namespace EdgeLighting
         mBlitMesh.Upload(blitVerts.data(), blitVerts.size());
     }
 
-    NeonRenderer::RingFieldLayout NeonRenderer::computeRingFieldLayout(const Annulus &ring,
-                                                                       const glm::vec2 &centerFull, int viewportWidth,
-                                                                       int viewportHeight)
+    NeonRenderer::FieldLayout NeonRenderer::computeRingFieldLayout(const Annulus &ring, const glm::vec2 &centerFull,
+                                                                   int viewportWidth, int viewportHeight)
     {
-        RingFieldLayout layout;
+        FieldLayout layout;
         // The box, in viewport px: every pixel whose centre the ring's outer
         // box can reach, with a pixel of slack each side, clipped to the
         // viewport - the ring is never rasterised past it.
@@ -3986,18 +3991,91 @@ namespace EdgeLighting
                 h1 = b;
             }
         }
-        layout.hole = glm::ivec4(h0, h1);
+        packFieldStrips(layout, h0, h1);
+        return layout;
+    }
 
-        // Bottom rows, then the top's, then the two side strips' - each as
-        // many rows as it is wide, and as long as the hole is tall.
+    NeonRenderer::FieldLayout NeonRenderer::computeGlowFieldLayout(const BufferRegion &region, const glm::vec2 &hole,
+                                                                   float scale)
+    {
+        // The box is the region itself: its texels are the reduced buffer's,
+        // and pass 1c finds its own from vPos, scaled px, at the region's
+        // density - the map the bake records and the composite applies.
+        FieldLayout layout;
+        layout.size = region.texels;
+        layout.origin = region.origin * scale;
+        layout.texelScale = glm::vec2(region.texels) / (region.size * scale);
+
+        // The hole, in box texels: those whose centre, q + 0.5 in the box's
+        // texel coordinates u = (vPos - origin) * texelScale, lies more than
+        // a texel inside the quad's hole - the ring's rule on this grid.
+        // mGlowBounds.hole is 0 on both axes when the quad has none.
+        glm::ivec2 h0(0, layout.size.y);
+        glm::ivec2 h1(0, layout.size.y);
+        if (hole.x > 0.0f && hole.y > 0.0f)
+        {
+            const glm::vec2 lo = (-hole * scale - layout.origin) * layout.texelScale;
+            const glm::vec2 hi = (hole * scale - layout.origin) * layout.texelScale;
+            const glm::ivec2 a = glm::clamp(glm::ivec2(glm::ceil(lo + 0.5f)), glm::ivec2(0), layout.size);
+            const glm::ivec2 b = glm::clamp(glm::ivec2(glm::floor(hi - 1.5f)) + 1, glm::ivec2(0), layout.size);
+            if (b.x > a.x && b.y > a.y)
+            {
+                h0 = a;
+                h1 = b;
+            }
+        }
+        packFieldStrips(layout, h0, h1);
+        return layout;
+    }
+
+    void NeonRenderer::packFieldStrips(FieldLayout &layout, const glm::ivec2 &h0, const glm::ivec2 &h1)
+    {
+        // Bottom rows, then the top's, then the side strips' - transposed, so
+        // each box column beside the hole is an atlas row as long as the hole
+        // is tall: the left strip's columns, then the right's, one run of side
+        // rows cut into as many columns of rows, side by side, as makes the
+        // smallest atlas no wider than the box. One column is the two strips
+        // stacked, the ring's usual shape; a wide box with a short hole - a
+        // screen-sized rect's glow - takes two or more, whose side rows
+        // stacked would leave most of every atlas row they take empty.
         const int bottom = h0.y;
         const int top = layout.size.y - h1.y;
         const int mid = h1.y - h0.y;
-        const int left = (mid > 0) ? h0.x : 0;
-        const int right = (mid > 0) ? layout.size.x - h1.x : 0;
-        layout.rows = glm::ivec2(bottom + top, bottom + top + left);
-        layout.atlas = glm::ivec2(std::max(layout.size.x, mid), bottom + top + left + right);
-        return layout;
+        const int sideRows = (mid > 0) ? h0.x + (layout.size.x - h1.x) : 0;
+        const int below = bottom + top;
+        // Never wider than one column's max(size.x, mid), what the box and the
+        // hole each fit in already: a wider atlas can pass GL_MAX_TEXTURE_SIZE
+        // where the viewport does not - two columns of a ring round a whole
+        // 3840 x 2160 screen would be ~4140 wide, on GPUs that report 4096 -
+        // and a failed allocation turns the field off for good (LazyBake).
+        const int maxColumns = (mid > 0) ? std::max(layout.size.x / mid, 1) : 1;
+        const int64_t boxArea = int64_t(layout.size.x) * layout.size.y;
+        int64_t best = boxArea;
+        int bestColumns = 0;
+        int bestPerColumn = 1;
+        for (int columns = 1; columns <= std::min(std::max(sideRows, 1), maxColumns); ++columns)
+        {
+            const int perColumn = std::max((sideRows + columns - 1) / columns, 1);
+            const int64_t area = int64_t(std::max(layout.size.x, columns * mid)) * (below + perColumn);
+            if (area < best)
+            {
+                best = area;
+                bestColumns = columns;
+                bestPerColumn = perColumn;
+            }
+        }
+        // No packing smaller than the box - a hole too small to pay for its
+        // side strips' slack: the plain box, no hole, as before packing.
+        if (bestColumns == 0)
+        {
+            layout.hole = glm::ivec4(0, layout.size.y, 0, layout.size.y);
+            layout.sides = glm::ivec2(layout.size.y, 1);
+            layout.atlas = layout.size;
+            return;
+        }
+        layout.hole = glm::ivec4(h0, h1);
+        layout.sides = glm::ivec2(below, bestPerColumn);
+        layout.atlas = glm::ivec2(std::max(layout.size.x, bestColumns * mid), below + bestPerColumn);
     }
 
     NeonRenderer::EmissionInputs NeonRenderer::getEmissionInputs(const Config &config) const
@@ -4162,6 +4240,91 @@ namespace EdgeLighting
         shader.SetUniform("uGatherSeg", 4);
         shader.SetUniform("uGatherUVScale", gatherUV.scale);
         shader.SetUniform("uGatherUVOffset", gatherUV.offset);
+    }
+
+    void NeonRenderer::drawFieldStrips(const FieldLayout &layout, Mesh &box)
+    {
+        // What is drawn is the whole BOX, a texel past it each side, not the
+        // field's own quad: each strip's viewport clips it to the strip, so
+        // every texel of every strip is baked and no edge of the draw passes
+        // near a texel centre. Drawing the ring's own mesh left the composite
+        // reading texels the bake never wrote. A ring edge that snaps onto a
+        // pixel centre goes to one side of it by the rasteriser's fill rule,
+        // and transposing a strip turns a left edge into a bottom one, which
+        // that rule hands the other way: the composite drew the pixel, the
+        // bake skipped its texel, and the cleared 0 composited to nothing - a
+        // dark seam a pixel wide between the ring and the blit, the height of
+        // a side strip, on about 1% of configs on an AMD Radeon Pro 5300M
+        // (V24). The box costs the layout's slack - one to two texels each
+        // side of the band - on a bake that runs only once a config settles;
+        // the frame that bakes measured no slower.
+        const glm::vec2 texel = glm::vec2(1.0f) / layout.texelScale;
+        const glm::vec2 boxLo = layout.origin - texel;
+        const glm::vec2 boxHi = layout.origin + glm::vec2(layout.size) * texel + texel;
+        // clang-format off
+        const float boxVerts[] = {
+            boxLo.x, boxHi.y,  boxLo.x, boxLo.y,  boxHi.x, boxLo.y,
+            boxLo.x, boxHi.y,  boxHi.x, boxLo.y,  boxHi.x, boxHi.y,
+        };
+        // clang-format on
+        box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
+
+        // One draw per strip: the strip's atlas texels as the viewport, and a
+        // projection taking vPos onto them at the layout's density - to box
+        // texels, translated to the strip's corner and, for the two side
+        // strips, transposed (x and y swapped), so each runs along the atlas.
+        // At a density of 1 (the ring's) the matrices are the ones this bake
+        // has always built, bit for bit.
+        const glm::mat4 toBox = glm::scale(glm::mat4(1.0f), glm::vec3(layout.texelScale, 1.0f)) *
+                                glm::translate(glm::mat4(1.0f), glm::vec3(-layout.origin, 0.0f));
+        glm::mat4 transpose(0.0f);
+        transpose[0][1] = 1.0f;
+        transpose[1][0] = 1.0f;
+        transpose[2][2] = 1.0f;
+        transpose[3][3] = 1.0f;
+        auto drawStrip = [&](const glm::ivec2 &at, int width, int height, const glm::mat4 &toStrip)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+            glViewport(at.x, at.y, width, height);
+            mFieldBakeShader.SetUniform(
+                "uMVP", glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -1.0f, 1.0f) *
+                            toStrip);
+            box.Draw();
+        };
+        const glm::ivec4 hole = layout.hole;
+        const int bottom = hole.y;
+        const int top = layout.size.y - hole.w;
+        const int mid = hole.w - hole.y;
+        auto toCorner = [&](int x, int y)
+        { return glm::translate(glm::mat4(1.0f), glm::vec3(-static_cast<float>(x), -static_cast<float>(y), 0.0f)); };
+        drawStrip(glm::ivec2(0, 0), layout.size.x, bottom, toCorner(0, 0) * toBox);
+        drawStrip(glm::ivec2(0, bottom), layout.size.x, top, toCorner(0, hole.w) * toBox);
+        if (mid <= 0)
+        {
+            return;
+        }
+        // The side rows - the left strip's box columns 0 .. x0, then the
+        // right's x1 .. size.x - in columns of sides.y rows. A piece is a run
+        // of one strip's columns inside one atlas column, drawn as its own
+        // viewport, since the two strips map onto the run with different
+        // offsets. With one column these are the two stacked strips, drawn as
+        // they always were.
+        const int left = hole.x;
+        const int sideRows = left + (layout.size.x - hole.z);
+        const int perColumn = layout.sides.y;
+        for (int r0 = 0; r0 < sideRows;)
+        {
+            const int column = r0 / perColumn;
+            const int stripEnd = (r0 < left) ? left : sideRows;
+            const int r1 = std::min((column + 1) * perColumn, stripEnd);
+            const int x0 = (r0 < left) ? r0 : hole.z + (r0 - left);
+            drawStrip(glm::ivec2(column * mid, layout.sides.x + r0 - column * perColumn), mid, r1 - r0,
+                      transpose * (toCorner(x0, hole.y) * toBox));
+            r0 = r1;
+        }
     }
 
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
@@ -4436,8 +4599,8 @@ namespace EdgeLighting
         return true;
     }
 
-    bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV,
-                                       float scale, float huePhase, const Config &config)
+    bool NeonRenderer::renderFieldPass(const FieldLayout &layout, const UVMap &gatherUV, float scale,
+                                       float huePhase, const Config &config)
     {
         // An offscreen target: the host's scissor is in the wrong coordinates
         // here - see renderShadePass.
@@ -4448,25 +4611,45 @@ namespace EdgeLighting
         // so 8 bits would move whole levels - a driver that cannot render to
         // half float shades directly instead. NEAREST: the composite reads one
         // texel per fragment, its own.
+        //
+        // Allocated with rows to spare, which nothing reads: the atlas follows
+        // the quad's hole, which moves with the intensity, and under an
+        // intensity animation the field is baked again on every frame the
+        // intensity rises (LazyBake) - sized exactly, a +/-10% pulse
+        // reallocated it on 8-9 of 120 frames where the box it replaced
+        // allocated once, and with this twice. So the
+        // buffer keeps its height while that is at least the atlas's and
+        // under two REGION_ALLOC_STEPs more, and is otherwise sized one step
+        // over it - capped at the box's height, past which the atlas never
+        // grows anyway (packFieldStrips keeps the box when no packing beats it).
         const FieldFormat format = GetFieldFormat(mEffectiveSegments);
-        if (!mGlowField.buffer.Resize(texels.x, texels.y, format.internalFormat, format.format, GL_HALF_FLOAT,
+        const int held = mGlowField.buffer.IsValid() ? mGlowField.buffer.GetHeight() : 0;
+        const bool heightHolds = held >= layout.atlas.y && held < layout.atlas.y + 2 * REGION_ALLOC_STEP &&
+                                 mGlowField.buffer.GetWidth() == layout.atlas.x;
+        const int rows = heightHolds ? held
+                                     : std::max(std::min(layout.atlas.y + REGION_ALLOC_STEP, layout.size.y),
+                                                layout.atlas.y);
+        if (!mGlowField.buffer.Resize(layout.atlas.x, rows, format.internalFormat, format.format, GL_HALF_FLOAT,
                                       GL_NEAREST))
         {
             LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
             return false;
         }
-        // Cleared to 0: a texel the quad does not reach composites to nothing.
-        // The bake culls nothing (V35) - pass 1c makes every cull, from pass
-        // 1b's own vPos.
+        mGlowField.layout = layout;
+        // Cleared to 0 for the atlas texels no strip covers, which are never
+        // read. The bake culls nothing (V35) - pass 1c makes every cull, from
+        // pass 1b's own vPos - and draws every strip texel, those past the
+        // quad's edge included: pass 1c never draws them.
         mGlowField.buffer.Bind();
         mGlowField.buffer.ClearBuffer();
 
         // Every uniform pass 1b takes, from the same upload, so the bake shades
-        // exactly what that pass would, with the hue at 1.
+        // exactly what that pass would, with the hue at 1. Only the transform
+        // changes per strip, set by drawFieldStrips.
         mFieldBakeShader.Use();
-        uploadNeonUniforms(mFieldBakeShader, mvp, scale, huePhase, mGlowLimits, true, config);
+        uploadNeonUniforms(mFieldBakeShader, glm::mat4(1.0f), scale, huePhase, mGlowLimits, true, config);
         bindGatherBuffer(mFieldBakeShader, gatherUV);
-        mGlowMesh.Draw();
+        drawFieldStrips(layout, mGlowField.box);
         mFieldBakeShader.Unuse();
         return true;
     }
@@ -4532,9 +4715,11 @@ namespace EdgeLighting
         mFieldCompositeShader.SetUniform("uMVP", mvp);
         mGlowField.buffer.BindTexture(6);
         mFieldCompositeShader.SetUniform("uField", 6);
-        mFieldCompositeShader.SetUniform("uFieldOrigin", mGlowField.origin);
+        mFieldCompositeShader.SetUniform("uFieldOrigin", mGlowField.layout.origin);
         mFieldCompositeShader.SetUniform("uFieldGain", gain);
-        mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.texelScale);
+        mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.layout.texelScale);
+        mFieldCompositeShader.SetUniform("uFieldHole", glm::vec4(mGlowField.layout.hole));
+        mFieldCompositeShader.SetUniform("uFieldSides", glm::vec2(mGlowField.layout.sides));
         mFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
         // Pass 1b's discards, which the composite repeats so the shared
         // buffer ends where pass 1b's does (I76) - the only ones, since the
@@ -4556,7 +4741,7 @@ namespace EdgeLighting
 
         // Half float, one channel or two, NEAREST - as the shading's field,
         // for its reasons (renderFieldPass).
-        const RingFieldLayout &layout = mRingField.layout;
+        const FieldLayout &layout = mRingField.layout;
         const FieldFormat format = GetFieldFormat(mEffectiveSegments);
         if (!mRingField.buffer.Resize(layout.atlas.x, layout.atlas.y, format.internalFormat, format.format,
                                       GL_HALF_FLOAT, GL_NEAREST))
@@ -4572,75 +4757,15 @@ namespace EdgeLighting
 
         // Every uniform the ring takes (renderRingPass), so the bake shades
         // exactly what pass 2c would - with the hue at 1. Only the transform
-        // changes per strip.
+        // changes per strip, set by drawFieldStrips.
         mFieldBakeShader.Use();
         uploadNeonUniforms(mFieldBakeShader, glm::mat4(1.0f), 1.0f, huePhase, mRingLimits, false,
                            config);
         bindGatherBuffer(mFieldBakeShader, gatherUV);
 
-        // One draw per strip: the strip's atlas rows as the viewport, and a
-        // projection taking its rect-local px onto them at one texel per px -
-        // translated to the strip's corner and, for the two side strips,
-        // transposed (x and y swapped), so each runs along the atlas.
-        //
-        // What is drawn is the whole BOX, a pixel past it each side, not the
-        // ring: the viewport clips it to the strip, so every texel of every
-        // strip is baked and no edge of the draw passes near a texel centre.
-        // Drawing the ring's own mesh left the composite reading texels the
-        // bake never wrote. A ring edge that snaps onto a pixel centre goes
-        // to one side of it by the rasteriser's fill rule, and transposing a
-        // strip turns a left edge into a bottom one, which that rule hands
-        // the other way: the composite drew the pixel, the bake skipped its
-        // texel, and the cleared 0 composited to nothing - a dark seam a pixel
-        // wide between the ring and the blit, the height of a side strip, on
-        // about 1% of configs on an AMD Radeon Pro 5300M (V24). The box costs
-        // the layout's slack - one to two pixels each side of the band - on a
-        // bake that runs only once a config settles; the frame that bakes
-        // measured no slower.
-        const glm::vec2 boxLo = layout.origin - glm::vec2(1.0f);
-        const glm::vec2 boxHi = layout.origin + glm::vec2(layout.size) + glm::vec2(1.0f);
-        // clang-format off
-        const float boxVerts[] = {
-            boxLo.x, boxHi.y,  boxLo.x, boxLo.y,  boxHi.x, boxLo.y,
-            boxLo.x, boxHi.y,  boxHi.x, boxLo.y,  boxHi.x, boxHi.y,
-        };
-        // clang-format on
-        mRingField.box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
-
-        glm::mat4 transpose(0.0f);
-        transpose[0][1] = 1.0f;
-        transpose[1][0] = 1.0f;
-        transpose[2][2] = 1.0f;
-        transpose[3][3] = 1.0f;
-        auto drawStrip = [&](int row, int width, int height, const glm::mat4 &toStrip)
-        {
-            if (width <= 0 || height <= 0)
-            {
-                return;
-            }
-            glViewport(0, row, width, height);
-            mFieldBakeShader.SetUniform(
-                "uMVP", glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -1.0f, 1.0f) *
-                            toStrip);
-            mRingField.box.Draw();
-        };
-        const glm::vec2 o = layout.origin;
-        const glm::ivec4 hole = layout.hole;
-        const int bottom = hole.y;
-        const int top = layout.size.y - hole.w;
-        const int mid = hole.w - hole.y;
-        const int left = layout.rows.y - layout.rows.x;
-        const int right = layout.atlas.y - layout.rows.y;
-        const glm::vec2 sideCorner(o.x, o.y + static_cast<float>(hole.y));
-        drawStrip(0, layout.size.x, bottom, glm::translate(glm::mat4(1.0f), glm::vec3(-o, 0.0f)));
-        drawStrip(bottom, layout.size.x, top,
-                  glm::translate(glm::mat4(1.0f), glm::vec3(-o.x, -(o.y + static_cast<float>(hole.w)), 0.0f)));
-        drawStrip(layout.rows.x, mid, left,
-                  transpose * glm::translate(glm::mat4(1.0f), glm::vec3(-sideCorner, 0.0f)));
-        drawStrip(layout.rows.y, mid, right,
-                  transpose * glm::translate(glm::mat4(1.0f),
-                                             glm::vec3(-(sideCorner.x + static_cast<float>(hole.z)), -sideCorner.y,
-                                                       0.0f)));
+        // One draw per strip, the box through each strip's viewport - see
+        // drawFieldStrips.
+        drawFieldStrips(layout, mRingField.box);
         mFieldBakeShader.Unuse();
         return true;
     }
@@ -4965,7 +5090,7 @@ namespace EdgeLighting
         // fragment reading its own pixel's texel of the packed field - and,
         // like the ring's own shading at scale 1.0, the rect's shape and the
         // cut and cutoffs it multiplies in after the tone map.
-        const RingFieldLayout &layout = mRingField.layout;
+        const FieldLayout &layout = mRingField.layout;
         mRingFieldCompositeShader.Use();
         uploadShapeUniforms(mRingFieldCompositeShader, mvp, 1.0f, config);
         UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, CutReads::ALL);
@@ -4973,7 +5098,7 @@ namespace EdgeLighting
         mRingFieldCompositeShader.SetUniform("uField", 7);
         mRingFieldCompositeShader.SetUniform("uRingLo", layout.origin);
         mRingFieldCompositeShader.SetUniform("uRingHole", glm::vec4(layout.hole));
-        mRingFieldCompositeShader.SetUniform("uRingRows", glm::vec2(layout.rows));
+        mRingFieldCompositeShader.SetUniform("uRingSides", glm::vec2(layout.sides));
         mRingFieldCompositeShader.SetUniform("uFieldGain", gain);
         mRingFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
         bindGatherBuffer(mRingFieldCompositeShader, gatherUV);

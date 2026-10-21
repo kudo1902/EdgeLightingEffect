@@ -1371,8 +1371,8 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | every frame it gathers; resized then (no-op if unchanged) |
 | `mScaled` | the neon's shared buffer (`SharedBuffer`, `SharedBufferId::NEON`): the whole viewport at `resolutionScale` (`GetViewportRegion`), what the blit and any other renderer read | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | every frame that draws P1b or P1c, through `BeginWrite` - resized then, and cleared only over the glow quad's window and the last write's |
-| `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback | only on configs the field serves (Part 5.5) |
-| `mRingField.buffer` | the edge ring's four strips, packed (`RingFieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
+| `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`), less the quad's hole: its four strips, packed (`FieldLayout`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback | only on configs the field serves (Part 5.5) |
+| `mRingField.buffer` | the edge ring's four strips, packed (`FieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
 
 `OnConfigChanged` releases the reduced buffer, the gather buffer and the
 coverage table when the layer is disabled, the segment table also whenever the
@@ -1523,7 +1523,8 @@ gathered hues `col` and `segColHue` changing from frame to frame (`Fs` is 0
 without segments, and the blit applies the cut and the cutoffs after it, so
 nothing follows the tone map). So **P1f** - `neon-field-bake.frag`, the
 same shading with the hues replaced, after P1a - bakes `Fa` (and `Fs`, RG16F, with segments) into
-`mGlowField.buffer` on the reduced buffer's own grid, and **P1c** -
+`mGlowField.buffer` on the reduced buffer's own grid - packed as the ring's
+field is, the quad's hole left out (I94) - and **P1c** -
 `neon-field.frag` - writes the reduced buffer in P1b's place: drop what P1b's
 discards drop (the cull `BLIT_SIDE_GUARD_PX` past the one-sided cut and
 `BLIT_CUTOFF_GUARD_PX` past each cutoff's ramp, so the shared buffer ends where

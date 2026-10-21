@@ -20,9 +20,15 @@
 // segments Fs is 0 and the field is one channel (R16F); with them it is two
 // (RG16F), and uFieldSegments says which (D3).
 //
+// Both fields are PACKED the same way (NeonRenderer::FieldLayout): each covers
+// an axis-aligned annulus - a box of texels minus a hole - so its texels are
+// four strips, the bottom and the top as they are and the left and the right
+// transposed into rows, cut into columns side by side. fieldStripTexel finds a
+// box texel's place in them.
+//
 // Not a shader: it has no main(). shaders.h.in injects it into the two
 // composites, after neon-grade.glsl and neon-sdf.glsl, so both read the
-// field's inputs and tone-map them one way.
+// field's inputs, find its texels and tone-map them one way.
 // ---------------------------------------------------------------------------
 
 precision highp float;
@@ -71,4 +77,32 @@ vec3 fieldShade(vec2 field) {
         linear += segColHue * field.g;
     }
     return neonToneMap(linear);
+}
+
+// The atlas texel holding box texel @p q of a field packed with @p hole -
+// [x0, x1) x [y0, y1) as x0, y0, x1, y1, the box texels the composite never
+// draws - and @p sides, the side rows' first atlas row and how many each atlas
+// column holds: bottom strip, top strip stacked on it, then the side strips
+// transposed - each box column beside the hole an atlas row, the left strip's
+// then the right's - in columns side by side. The layout
+// NeonRenderer::computeRingFieldLayout / computeGlowFieldLayout build and
+// drawFieldStrips bakes - change them together. The hole is conservative, so
+// every texel a composite draws is in a strip.
+ivec2 fieldStripTexel(ivec2 q, ivec4 hole, ivec2 sides) {
+    if (q.y < hole.y)
+    {
+        return q;
+    }
+    if (q.y >= hole.w)
+    {
+        return ivec2(q.x, q.y - hole.w + hole.y);
+    }
+    // The column by a FLOAT division, which is exact here - (row + 0.5) /
+    // sides.y lies at least half a row from a column's edge, and the
+    // division's error at any atlas size is orders of magnitude under that -
+    // where an int division is a long emulated sequence: with it pass 1c ran
+    // 1.5-2x as long at 4K on an Apple M2 Pro.
+    int row    = (q.x < hole.x) ? q.x : hole.x + q.x - hole.z;
+    int column = int((float(row) + 0.5) / float(sides.y));
+    return ivec2(column * (hole.w - hole.y) + q.y - hole.y, sides.x + row - column * sides.y);
 }
