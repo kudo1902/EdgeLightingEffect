@@ -115,8 +115,12 @@ namespace
         return EL_SUCCESS;
     }
 
-    /// Shared entry check for the calls that reorder an initialised effect.
-    bool IsInitialised(el_effect_handle_t effect, const char *fn)
+    /// Shared entry check for every call that drives, reorders or queries the
+    /// effect itself rather than the staging config: @c impl is created by
+    /// @ref InitLayers, so until el_effect_init* has run there is no effect to
+    /// call into. Those calls used to dereference it unchecked and crashed the
+    /// host on a handle that had been created but not yet initialised.
+    bool IsInitialized(el_effect_handle_t effect, const char *fn)
     {
         if (!effect->impl)
         {
@@ -137,6 +141,7 @@ el_result_e el_effect_set_geometry(el_effect_handle_t effect,
                                    float width, float height, float posX, float posY, float cornerRadius)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_geometry");
+    REQUIRE_FINITE("el_effect_set_geometry", EL_ERROR_INVALID_PARAMETER, width, height, posX, posY, cornerRadius);
     auto &g = effect->config.geometry;
     glm::vec2 pos(posX, posY);
     if (g.width == width && g.height == height && g.position == pos && g.cornerRadius == cornerRadius)
@@ -173,6 +178,7 @@ el_result_e el_effect_get_geometry(el_effect_handle_t effect,
 el_result_e el_effect_set_winding(el_effect_handle_t effect, el_winding_e winding)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_winding");
+    VALIDATE_ENUM(el_winding_e, winding, "el_effect_set_winding");
     SET_AND_LOG(effect->config.geometry.winding, static_cast<EdgeLighting::Winding>(winding),
                 "effect=%p, winding=%d", (void *)effect, (int)winding);
 }
@@ -207,6 +213,7 @@ el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bo
 el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
+    VALIDATE_ENUM(el_opaque_mode_e, mode, "el_effect_set_opaque_mode");
     SET_AND_LOG(effect->config.neon.opaqueMode,
                 static_cast<EdgeLighting::OpaqueMode>(mode),
                 "effect=%p, mode=%d", (void *)effect, static_cast<int>(mode));
@@ -225,6 +232,7 @@ el_result_e el_effect_set_opaque_color(el_effect_handle_t effect,
                                        float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_color");
+    REQUIRE_FINITE("el_effect_set_opaque_color", EL_ERROR_INVALID_PARAMETER, r, g, b, a);
     SET_AND_LOG(effect->config.neon.opaqueColor, glm::vec4(r, g, b, a),
                 "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
 }
@@ -249,6 +257,7 @@ el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect, el_cutoff_sid
                                         el_bool_t enable, float size, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_cutoff");
+    REQUIRE_FINITE("el_effect_set_opaque_cutoff", EL_ERROR_INVALID_PARAMETER, size, softness);
     EdgeLighting::Cutoff *c = OpaqueCutoffSlot(effect, side, "el_effect_set_opaque_cutoff");
     if (!c)
     {
@@ -284,6 +293,7 @@ el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                         el_bool_t enable, float size, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
+    REQUIRE_FINITE("el_effect_set_inside_cutoff", EL_ERROR_INVALID_PARAMETER, size, softness);
     if (AssignCutoff(effect->config.neon.insideCutoff, enable, size, softness))
     {
         LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
@@ -307,6 +317,7 @@ el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
                                          el_bool_t enable, float size, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
+    REQUIRE_FINITE("el_effect_set_outside_cutoff", EL_ERROR_INVALID_PARAMETER, size, softness);
     if (AssignCutoff(effect->config.neon.outsideCutoff, enable, size, softness))
     {
         LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
@@ -329,6 +340,7 @@ el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
 el_result_e el_effect_set_line_width(el_effect_handle_t effect, float width)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_line_width");
+    REQUIRE_FINITE("el_effect_set_line_width", EL_ERROR_INVALID_PARAMETER, width);
     SET_AND_LOG(effect->config.neon.lineWidth, width,
                 "effect=%p, width=%f", (void *)effect, width);
 }
@@ -345,6 +357,7 @@ el_result_e el_effect_get_line_width(el_effect_handle_t effect, float *outWidth)
 el_result_e el_effect_set_filament_falloff(el_effect_handle_t effect, float falloff)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_filament_falloff");
+    REQUIRE_FINITE("el_effect_set_filament_falloff", EL_ERROR_INVALID_PARAMETER, falloff);
     SET_AND_LOG(effect->config.neon.filamentFalloff, falloff,
                 "effect=%p, falloff=%f", (void *)effect, falloff);
 }
@@ -361,6 +374,7 @@ el_result_e el_effect_get_filament_falloff(el_effect_handle_t effect, float *out
 el_result_e el_effect_set_intensity(el_effect_handle_t effect, float intensity)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_intensity");
+    REQUIRE_FINITE("el_effect_set_intensity", EL_ERROR_INVALID_PARAMETER, intensity);
     SET_AND_LOG(effect->config.neon.intensity, intensity,
                 "effect=%p, intensity=%f", (void *)effect, intensity);
 }
@@ -377,6 +391,7 @@ el_result_e el_effect_get_intensity(el_effect_handle_t effect, float *outIntensi
 el_result_e el_effect_set_glow_radius(el_effect_handle_t effect, float radius)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_radius");
+    REQUIRE_FINITE("el_effect_set_glow_radius", EL_ERROR_INVALID_PARAMETER, radius);
     SET_AND_LOG(effect->config.neon.glowRadius, radius,
                 "effect=%p, radius=%f", (void *)effect, radius);
 }
@@ -393,6 +408,7 @@ el_result_e el_effect_get_glow_radius(el_effect_handle_t effect, float *outRadiu
 el_result_e el_effect_set_bloom_strength(el_effect_handle_t effect, float strength)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_bloom_strength");
+    REQUIRE_FINITE("el_effect_set_bloom_strength", EL_ERROR_INVALID_PARAMETER, strength);
     SET_AND_LOG(effect->config.neon.bloomStrength, strength,
                 "effect=%p, strength=%f", (void *)effect, strength);
 }
@@ -409,6 +425,7 @@ el_result_e el_effect_get_bloom_strength(el_effect_handle_t effect, float *outSt
 el_result_e el_effect_set_glow_side(el_effect_handle_t effect, el_glow_side_e side)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side");
+    VALIDATE_ENUM(el_glow_side_e, side, "el_effect_set_glow_side");
     SET_AND_LOG(effect->config.neon.glowSide, static_cast<EdgeLighting::GlowSide>(side),
                 "effect=%p, side=%d", (void *)effect, (int)side);
 }
@@ -425,6 +442,7 @@ el_result_e el_effect_get_glow_side(el_effect_handle_t effect, el_glow_side_e *o
 el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side_softness");
+    REQUIRE_FINITE("el_effect_set_glow_side_softness", EL_ERROR_INVALID_PARAMETER, softness);
     SET_AND_LOG(effect->config.neon.glowSideSoftness, softness,
                 "effect=%p, softness=%f", (void *)effect, softness);
 }
@@ -441,6 +459,7 @@ el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *o
 el_result_e el_effect_set_blend_space(el_effect_handle_t effect, el_blend_space_e space)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, space, "el_effect_set_blend_space");
     SET_AND_LOG(effect->config.neon.blendSpace, static_cast<EdgeLighting::BlendSpace>(space),
                 "effect=%p, space=%d", (void *)effect, (int)space);
 }
@@ -457,6 +476,7 @@ el_result_e el_effect_get_blend_space(el_effect_handle_t effect, el_blend_space_
 el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t effect, float rate)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_hue_rotation_rate");
+    REQUIRE_FINITE("el_effect_set_hue_rotation_rate", EL_ERROR_INVALID_PARAMETER, rate);
     SET_AND_LOG(effect->config.neon.hueRotationRate, rate,
                 "effect=%p, rate=%f", (void *)effect, rate);
 }
@@ -473,6 +493,7 @@ el_result_e el_effect_get_hue_rotation_rate(el_effect_handle_t effect, float *ou
 el_result_e el_effect_set_color_transition_duration(el_effect_handle_t effect, float seconds)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_transition_duration");
+    REQUIRE_FINITE("el_effect_set_color_transition_duration", EL_ERROR_INVALID_PARAMETER, seconds);
     SET_AND_LOG(effect->config.neon.colorTransitionDuration, seconds,
                 "effect=%p, seconds=%f", (void *)effect, seconds);
 }
@@ -519,6 +540,7 @@ el_result_e el_effect_set_color_stop(el_effect_handle_t effect, int32_t index,
                                      float position, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_stop");
+    REQUIRE_FINITE("el_effect_set_color_stop", EL_ERROR_INVALID_PARAMETER, position, r, g, b, a);
     if (index < 0)
     {
         LOG_E("el_effect_set_color_stop: negative index");
@@ -610,6 +632,7 @@ el_result_e el_effect_set_segment_boost(el_effect_handle_t effect, int32_t index
                                         float position, float length, float boost)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_boost");
+    REQUIRE_FINITE("el_effect_set_segment_boost", EL_ERROR_INVALID_PARAMETER, position, length, boost);
     if (index < 0)
     {
         LOG_E("el_effect_set_segment_boost: negative index");
@@ -691,6 +714,7 @@ el_result_e el_effect_set_preserved_segment(el_effect_handle_t effect, uint32_t 
                                             float position, float length, float boost)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment");
+    REQUIRE_FINITE("el_effect_set_preserved_segment", EL_ERROR_INVALID_PARAMETER, position, length, boost);
     int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
     if (idx < 0)
     {
@@ -769,6 +793,7 @@ el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effec
                                                         uint32_t id, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_preserved_segment_blend_space");
     int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
     if (idx < 0)
     {
@@ -851,6 +876,7 @@ el_result_e el_effect_set_preserved_segment_color_stop(el_effect_handle_t effect
                                                        float position, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop");
+    REQUIRE_FINITE("el_effect_set_preserved_segment_color_stop", EL_ERROR_INVALID_PARAMETER, position, r, g, b, a);
     if (stopIndex < 0)
     {
         LOG_E("el_effect_set_preserved_segment_color_stop: negative stopIndex");
@@ -938,6 +964,7 @@ el_result_e el_effect_set_segment_blend_space(el_effect_handle_t effect,
                                               int32_t segmentIndex, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_blend_space");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_segment_blend_space");
     if (segmentIndex < 0)
     {
         LOG_E("el_effect_set_segment_blend_space: negative segmentIndex");
@@ -1028,6 +1055,7 @@ el_result_e el_effect_set_segment_color_stop(el_effect_handle_t effect,
                                              float position, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_color_stop");
+    REQUIRE_FINITE("el_effect_set_segment_color_stop", EL_ERROR_INVALID_PARAMETER, position, r, g, b, a);
     if (segmentIndex < 0 || stopIndex < 0)
     {
         LOG_E("el_effect_set_segment_color_stop: negative index");
@@ -1142,6 +1170,8 @@ el_result_e el_effect_set_arc(el_effect_handle_t effect, int32_t index,
                               float start, float length, float intensity, el_blend_space_e blendSpace)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc");
+    VALIDATE_ENUM(el_blend_space_e, blendSpace, "el_effect_set_arc");
+    REQUIRE_FINITE("el_effect_set_arc", EL_ERROR_INVALID_PARAMETER, start, length, intensity);
     if (index < 0)
     {
         LOG_E("el_effect_set_arc: negative index");
@@ -1266,6 +1296,7 @@ el_result_e el_effect_set_spotlight_placement(el_effect_handle_t effect, int32_t
                                               float x, float y, float angle)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_placement");
+    REQUIRE_FINITE("el_effect_set_spotlight_placement", EL_ERROR_INVALID_PARAMETER, x, y, angle);
     auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_placement");
     if (!l)
     {
@@ -1306,6 +1337,7 @@ el_result_e el_effect_set_spotlight_beam(el_effect_handle_t effect, int32_t inde
                                          float apertureWidth, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_beam");
+    REQUIRE_FINITE("el_effect_set_spotlight_beam", EL_ERROR_INVALID_PARAMETER, beamAngle, throwLength, apertureWidth, softness);
     auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_beam");
     if (!l)
     {
@@ -1351,6 +1383,7 @@ el_result_e el_effect_set_spotlight_look(el_effect_handle_t effect, int32_t inde
                                          float bloomRadius, float colorTemp)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_look");
+    REQUIRE_FINITE("el_effect_set_spotlight_look", EL_ERROR_INVALID_PARAMETER, intensity, bloom, bloomRadius, colorTemp);
     auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_look");
     if (!l)
     {
@@ -1395,6 +1428,7 @@ el_result_e el_effect_set_spotlight_spread_falloff(el_effect_handle_t effect, in
                                                    float spreadFalloff)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_spread_falloff");
+    REQUIRE_FINITE("el_effect_set_spotlight_spread_falloff", EL_ERROR_INVALID_PARAMETER, spreadFalloff);
     auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_spread_falloff");
     if (!l)
     {
@@ -1427,6 +1461,7 @@ el_result_e el_effect_set_spotlight_tint(el_effect_handle_t effect, int32_t inde
                                          float r, float g, float b)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_tint");
+    REQUIRE_FINITE("el_effect_set_spotlight_tint", EL_ERROR_INVALID_PARAMETER, r, g, b);
     auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_tint");
     if (!l)
     {
@@ -1495,6 +1530,7 @@ el_result_e el_effect_get_spotlight_enabled(el_effect_handle_t effect, int32_t i
 el_result_e el_effect_set_spotlight_resolution_scale(el_effect_handle_t effect, float scale)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_resolution_scale");
+    REQUIRE_FINITE("el_effect_set_spotlight_resolution_scale", EL_ERROR_INVALID_PARAMETER, scale);
     if (effect->config.spotlight.resolutionScale == scale)
     {
         return EL_SUCCESS;
@@ -1567,6 +1603,7 @@ el_result_e el_effect_set_spotlight_clip_rect(el_effect_handle_t effect,
                                               float cornerRadius)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_rect");
+    REQUIRE_FINITE("el_effect_set_spotlight_clip_rect", EL_ERROR_INVALID_PARAMETER, width, height, x, y, cornerRadius);
     EdgeLighting::ClipArea &c = effect->config.spotlight.clipArea;
     if (c.width == width && c.height == height &&
         c.position.x == x && c.position.y == y &&
@@ -1609,6 +1646,7 @@ el_result_e el_effect_get_spotlight_clip_rect(el_effect_handle_t effect,
 el_result_e el_effect_set_spotlight_clip_softness(el_effect_handle_t effect, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_softness");
+    REQUIRE_FINITE("el_effect_set_spotlight_clip_softness", EL_ERROR_INVALID_PARAMETER, softness);
     SET_AND_LOG(effect->config.spotlight.clipArea.edgeSoftness, softness,
                 "effect=%p, softness=%f", (void *)effect, softness);
 }
@@ -1625,6 +1663,7 @@ el_result_e el_effect_get_spotlight_clip_softness(el_effect_handle_t effect, flo
 el_result_e el_effect_set_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e mode)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_mode");
+    VALIDATE_ENUM(el_clip_mode_e, mode, "el_effect_set_spotlight_clip_mode");
     SET_AND_LOG(effect->config.spotlight.clipArea.mode,
                 static_cast<EdgeLighting::ClipMode>(mode),
                 "effect=%p, mode=%d", (void *)effect, (int)mode);
@@ -1693,6 +1732,7 @@ el_result_e el_effect_set_arc_color_stop(el_effect_handle_t effect,
                                          float position, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc_color_stop");
+    REQUIRE_FINITE("el_effect_set_arc_color_stop", EL_ERROR_INVALID_PARAMETER, position, r, g, b, a);
     if (arcIndex < 0 || stopIndex < 0)
     {
         LOG_E("el_effect_set_arc_color_stop: negative index");
@@ -1776,6 +1816,7 @@ el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t effect, int32_t a
 el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_resolution_scale");
+    REQUIRE_FINITE("el_effect_set_neon_resolution_scale", EL_ERROR_INVALID_PARAMETER, scale);
     SET_AND_LOG(effect->config.neon.resolutionScale, scale,
                 "effect=%p, scale=%f", (void *)effect, scale);
 }
@@ -1839,6 +1880,7 @@ el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, e
 el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount");
+    REQUIRE_FINITE("el_effect_set_droplets_amount", EL_ERROR_INVALID_PARAMETER, amount);
     SET_AND_LOG(effect->config.droplets.amount, amount, "effect=%p, amount=%f", (void *)effect, amount);
 }
 el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount)
@@ -1852,6 +1894,7 @@ el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outA
 el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed");
+    REQUIRE_FINITE("el_effect_set_droplets_speed", EL_ERROR_INVALID_PARAMETER, speed);
     SET_AND_LOG(effect->config.droplets.speed, speed, "effect=%p, speed=%f", (void *)effect, speed);
 }
 el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed)
@@ -1878,6 +1921,7 @@ el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLane
 el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
+    REQUIRE_FINITE("el_effect_set_droplets_band_width", EL_ERROR_INVALID_PARAMETER, bandWidth);
     SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
 }
 el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
@@ -1891,6 +1935,7 @@ el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *
 el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
+    REQUIRE_FINITE("el_effect_set_droplets_band_offset", EL_ERROR_INVALID_PARAMETER, bandOffset);
     SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
 }
 el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
@@ -1905,6 +1950,7 @@ el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float 
 el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");
+    REQUIRE_FINITE("el_effect_set_droplets_tint", EL_ERROR_INVALID_PARAMETER, r, g, b, a);
     SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
 }
 el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
@@ -1940,6 +1986,7 @@ el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect,
 el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
+    REQUIRE_FINITE("el_effect_set_lens_flare_perimeter_position", EL_ERROR_INVALID_PARAMETER, position);
     SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position, "effect=%p, position=%f", (void *)effect, position);
 }
 el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
@@ -1953,6 +2000,7 @@ el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effec
 el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
+    REQUIRE_FINITE("el_effect_set_lens_flare_perimeter_offset", EL_ERROR_INVALID_PARAMETER, offset);
     SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset, "effect=%p, offset=%f", (void *)effect, offset);
 }
 el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
@@ -1966,6 +2014,7 @@ el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect,
 el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
+    REQUIRE_FINITE("el_effect_set_lens_flare_size", EL_ERROR_INVALID_PARAMETER, size);
     SET_AND_LOG(effect->config.lensFlare.size, size, "effect=%p, size=%f", (void *)effect, size);
 }
 el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
@@ -1979,6 +2028,7 @@ el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outS
 el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
+    REQUIRE_FINITE("el_effect_set_lens_flare_color", EL_ERROR_INVALID_PARAMETER, r, g, b, a);
     SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
 }
 el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
@@ -1998,6 +2048,7 @@ el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *out
 el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
+    REQUIRE_FINITE("el_effect_set_lens_flare_intensity", EL_ERROR_INVALID_PARAMETER, intensity);
     SET_AND_LOG(effect->config.lensFlare.intensity, intensity, "effect=%p, intensity=%f", (void *)effect, intensity);
 }
 el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
@@ -2011,6 +2062,7 @@ el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float 
 el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
+    REQUIRE_FINITE("el_effect_set_lens_flare_spread", EL_ERROR_INVALID_PARAMETER, spread);
     SET_AND_LOG(effect->config.lensFlare.spread, spread, "effect=%p, spread=%f", (void *)effect, spread);
 }
 el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
@@ -2024,6 +2076,7 @@ el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *ou
 el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ghost_spacing", EL_ERROR_INVALID_PARAMETER, ghostSpacing);
     SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing, "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
 }
 el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
@@ -2037,6 +2090,7 @@ el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, fl
 el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ghost_size", EL_ERROR_INVALID_PARAMETER, ghostSize);
     SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize, "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
 }
 el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
@@ -2050,6 +2104,7 @@ el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float
 el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ghost_offset", EL_ERROR_INVALID_PARAMETER, ghostOffset);
     SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset, "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
 }
 el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
@@ -2063,6 +2118,7 @@ el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, flo
 el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect, float r, float g, float b)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ghost_color", EL_ERROR_INVALID_PARAMETER, r, g, b);
     SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b), "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
 }
 el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, float *outR, float *outG, float *outB)
@@ -2080,6 +2136,7 @@ el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, floa
 el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ghost_tint", EL_ERROR_INVALID_PARAMETER, ghostTint);
     SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint, "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
 }
 el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
@@ -2093,6 +2150,7 @@ el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float
 el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
+    REQUIRE_FINITE("el_effect_set_lens_flare_flare_center", EL_ERROR_INVALID_PARAMETER, x, y);
     SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y), "effect=%p, x=%f, y=%f", (void *)effect, x, y);
 }
 el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
@@ -2108,6 +2166,7 @@ el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, flo
 el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
+    REQUIRE_FINITE("el_effect_set_lens_flare_ray_density", EL_ERROR_INVALID_PARAMETER, rayDensity);
     SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity, "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
 }
 el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
@@ -2121,6 +2180,7 @@ el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, floa
 el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
+    REQUIRE_FINITE("el_effect_set_lens_flare_rotation_rate", EL_ERROR_INVALID_PARAMETER, rate);
     SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate);
 }
 el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
@@ -2136,6 +2196,7 @@ el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, fl
 el_result_e el_effect_set_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_resolution_scale");
+    REQUIRE_FINITE("el_effect_set_lens_flare_resolution_scale", EL_ERROR_INVALID_PARAMETER, scale);
     SET_AND_LOG(effect->config.lensFlare.resolutionScale, scale,
                 "effect=%p, scale=%f", (void *)effect, scale);
 }
@@ -2223,6 +2284,7 @@ el_result_e el_effect_get_debug_show_wireframe(el_effect_handle_t effect, el_boo
 el_result_e el_effect_set_debug_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_wireframe_color");
+    REQUIRE_FINITE("el_effect_set_debug_wireframe_color", EL_ERROR_INVALID_PARAMETER, r, g, b, a);
     SET_AND_LOG(effect->config.debug.wireframeColor, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
 }
 
@@ -2348,7 +2410,7 @@ el_result_e el_effect_set_renderer_order(el_effect_handle_t effect,
 {
     LOG_I("effect=%p, count=%d", (void *)effect, count);
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_renderer_order");
-    if (!IsInitialised(effect, "el_effect_set_renderer_order"))
+    if (!IsInitialized(effect, "el_effect_set_renderer_order"))
     {
         return EL_ERROR_INVALID_HANDLE;
     }
@@ -2396,6 +2458,10 @@ el_result_e el_effect_capture(el_effect_handle_t effect)
 {
     LOG_I("effect=%p", (void *)effect);
     VALIDATE_EFFECT_PTR(effect, "el_effect_capture");
+    if (!IsInitialized(effect, "el_effect_capture"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->config = effect->impl->GetConfig();
@@ -2411,6 +2477,11 @@ el_result_e el_effect_capture(el_effect_handle_t effect)
 el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_update");
+    REQUIRE_FINITE("el_effect_update", EL_ERROR_INVALID_PARAMETER, deltaTime);
+    if (!IsInitialized(effect, "el_effect_update"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->impl->SetConfig(effect->config);
@@ -2428,6 +2499,10 @@ el_result_e el_effect_render(el_effect_handle_t effect,
                              int32_t viewportWidth, int32_t viewportHeight)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_render");
+    if (!IsInitialized(effect, "el_effect_render"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     try
     {
         effect->impl->Render(viewportWidth, viewportHeight);
@@ -2443,6 +2518,10 @@ el_result_e el_effect_render(el_effect_handle_t effect,
 el_result_e el_effect_clock_play(el_effect_handle_t effect)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+    if (!IsInitialized(effect, "el_effect_clock_play"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (effect->impl->GetClock().IsPlaying())
     {
         return EL_SUCCESS;
@@ -2455,6 +2534,10 @@ el_result_e el_effect_clock_play(el_effect_handle_t effect)
 el_result_e el_effect_clock_pause(el_effect_handle_t effect)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+    if (!IsInitialized(effect, "el_effect_clock_pause"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (!effect->impl->GetClock().IsPlaying())
     {
         return EL_SUCCESS;
@@ -2468,6 +2551,10 @@ el_result_e el_effect_clock_is_playing(el_effect_handle_t effect, el_bool_t *out
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
     VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
+    if (!IsInitialized(effect, "el_effect_clock_is_playing"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
     LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
     return EL_SUCCESS;
@@ -2480,6 +2567,10 @@ el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_h
     LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
     VALIDATE_EFFECT_PTR(effect, "el_effect_attach_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_attach_animation");
+    if (!IsInitialized(effect, "el_effect_attach_animation"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (anim->ptr)
     {
         effect->impl->Attach(anim->ptr);
@@ -2492,6 +2583,10 @@ el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_h
     LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
     VALIDATE_EFFECT_PTR(effect, "el_effect_detach_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_detach_animation");
+    if (!IsInitialized(effect, "el_effect_detach_animation"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     if (anim->ptr)
     {
         effect->impl->Detach(anim->ptr);
@@ -2503,6 +2598,10 @@ el_result_e el_effect_detach_all_animations(el_effect_handle_t effect)
 {
     LOG_I("effect=%p", (void *)effect);
     VALIDATE_EFFECT_PTR(effect, "el_effect_detach_all_animations");
+    if (!IsInitialized(effect, "el_effect_detach_all_animations"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
     effect->impl->GetAnimationManager().DetachAll();
     return EL_SUCCESS;
 }
@@ -2511,7 +2610,7 @@ el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *ou
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
     VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
-    *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
+    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount()) : 0;
     LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
     return EL_SUCCESS;
 }
@@ -2522,7 +2621,7 @@ el_result_e el_effect_contains_animation(el_effect_handle_t effect,
     VALIDATE_EFFECT_PTR(effect, "el_effect_contains_animation");
     VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
     VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
-    *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
+    *outContains = (anim->ptr && effect->impl && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
     LOG_D("effect=%p, anim=%p, contains=%d", (void *)effect, (void *)anim, *outContains);
     return EL_SUCCESS;
 }

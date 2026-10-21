@@ -7,7 +7,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -94,6 +96,7 @@ namespace EdgeLighting
         ShaderProgram(ShaderProgram &&other) noexcept
             : mId(other.mId),
               mName(std::move(other.mName)),
+              mNames(std::move(other.mNames)),
               mLocations(std::move(other.mLocations)),
               mCacheInt(std::move(other.mCacheInt)),
               mCacheFloat(std::move(other.mCacheFloat)),
@@ -117,6 +120,7 @@ namespace EdgeLighting
 
                 mId = other.mId;
                 mName = std::move(other.mName);
+                mNames = std::move(other.mNames);
                 mLocations = std::move(other.mLocations);
                 mCacheInt = std::move(other.mCacheInt);
                 mCacheFloat = std::move(other.mCacheFloat);
@@ -463,13 +467,16 @@ namespace EdgeLighting
         /// authors notice typos without flooding the log per frame.
         GLint getLocation(const char *name)
         {
-            auto it = mLocations.find(name);
+            // Looked up as a view: no std::string is built per call, which
+            // under libstdc++ was a heap allocation for every name over 15
+            // characters, on every frame (I81).
+            auto it = mLocations.find(std::string_view(name));
             if (it != mLocations.end())
             {
                 return it->second;
             }
             GLint loc = glGetUniformLocation(mId, name);
-            mLocations.emplace(name, loc);
+            mLocations.emplace(std::string_view(mNames.emplace_back(name)), loc);
             if (loc < 0)
             {
                 LOG_E("ShaderProgram[%s]: uniform '%s' not found.",
@@ -498,8 +505,13 @@ namespace EdgeLighting
         GLuint mId = 0;
         std::string mName;
 
-        // Uniform-location cache: resolves each name exactly once.
-        std::unordered_map<std::string, GLint> mLocations;
+        // Uniform-location cache: resolves each name exactly once. The keys
+        // are views into mNames, which owns each name: a deque never moves its
+        // elements on push_back, and a move hands its storage over whole, so
+        // the views stay valid for the program's life. Not keyed on the
+        // pointer: the array fallback passes names built on the stack.
+        std::deque<std::string> mNames;
+        std::unordered_map<std::string_view, GLint> mLocations;
 
         // Last-uploaded value caches, keyed by uniform location.
         std::unordered_map<GLint, int> mCacheInt;

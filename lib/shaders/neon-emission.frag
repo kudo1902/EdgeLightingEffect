@@ -13,7 +13,7 @@ precision highp float;
 // arcInside, four smoothsteps each), the travelling-segment loop
 // (uSegmentCount x exp()), and one to two filtered LUT fetches. None of that
 // depends on the fragment - the sample's perimeter position si is i / N, and
-// every colour / mask term is a pure function of (si, uTime, config). So a
+// every colour / mask term is a pure function of (si, uHuePhase, config). So a
 // full-viewport draw was recomputing the identical N-entry table once per
 // fragment.
 //
@@ -63,8 +63,11 @@ precision highp float;
 
 out vec4 fragColor;
 
-uniform float uTime;
-uniform float uHueRotationRate;
+/// The hue's phase: hueRotationRate integrated over the clock's time, in
+/// double on the CPU (PhaseAccumulator), so it keeps a float's precision at any
+/// uptime and moves at the rate even while the rate changes. Time reaches this
+/// pass in no other form.
+uniform float uHuePhase;
 uniform int   uNumSamples; ///< Samples in use; 1..NEON_MAX_LOOP_SAMPLES. Texels past it are written but never read.
 
 // Same three LUT atlases the gather used to sample, bound to the same units.
@@ -109,7 +112,7 @@ void main() {
     // did, so it carries no drift across N iterations.
     float invNumSamples = 1.0 / float(max(uNumSamples, 1));
     float si = floor(gl_FragCoord.x) * invNumSamples;
-    float ti = si - uTime * uHueRotationRate;
+    float ti = si - uHuePhase;
 
     // --- Arc winner-take-all, moved verbatim from the gather ---------------
     float bestMask = 0.0;

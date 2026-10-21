@@ -1,7 +1,7 @@
 # neon-scale-check
 
 The harness behind
-[`docs/neon-resolution-scale-comparison.html`](../../docs/neon-resolution-scale-comparison.html),
+[`docs/pages/neon-resolution-scale-comparison.html`](../../docs/pages/neon-resolution-scale-comparison.html),
 and the regression check for `NeonConfig::resolutionScale`. It renders the
 neon layer offscreen for twelve fixed scenes at six scales, measures every
 reduced scale against the same scene's 1.0 render, and either reports pass /
@@ -14,7 +14,7 @@ ring's guarantees - scale 1.0 unchanged, every scale within a couple of levels
 of it, a moving line that stays on its edge - had no other check. Twice it
 lived only in a session scratch directory and was lost, and the second rebuild
 had to recover the scenes from the old page's pixels; see
-[`docs/neon-resolution-scale-plan.md`](../../docs/neon-resolution-scale-plan.md),
+[`docs/design/neon-resolution-scale-plan.md`](../../docs/design/neon-resolution-scale-plan.md),
 decision 4.
 
 ## Build
@@ -48,7 +48,7 @@ The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 Every image the tool measures is the STEADY frame - the second after the
 config is set, each over a fresh clear - because at scale 1.0 the neon draws
 the first frame after a config change directly and its hue-invariant field
-takes over from the next (I46 in `docs/review-findings.md`).
+takes over from the next (I46 in `docs/records/review-findings.md`).
 
 Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 
@@ -156,7 +156,20 @@ when:
   viewport carries under 0.9 of the frame's light ON THE LINE (luma above the clear,
   over the pixels within the filament's half-width of the edge);
 - the hue variant never reaches the field's composite, or the buffer is ready
-  while the neon is off, or not ready once it is on again.
+  while the neon is off, or not ready once it is on again;
+- after a rect that moves and shrinks at one scale, the buffer differs by a
+  single texel from the moved rect's drawn on a fresh effect. Both on effects
+  whose hue rate never moved: the hue's phase is the rate integrated over the
+  clock (`PhaseAccumulator`), so an effect that ran the hue variant holds its
+  hue where the rotation stopped, and differs from a fresh one everywhere.
+
+The last is the windowed clear (`SharedBuffer::BeginWrite`: this write's
+window and the last write's). The scenes never reach it - every cell changes
+the scale, which reallocates the buffer and clears it whole - and no frame
+shows a stale texel, since the blit reads only where the write drew, so
+neither `check` nor the `cover` set can catch one. A scratch build that cleared
+only this write's window left 2790-218880 stale texels (scales 0.125-1.0, up
+to 47/255) and passed everything else; this check fails it at every scale.
 
 The light is measured on the line because the halo and the bloom carry most of
 a frame's: a scratch build that never shaded the filament into the buffer
@@ -164,7 +177,7 @@ still came back at 0.93-0.995 of the whole frame, and at 0.58-0.89 on the
 line: every unmasked scene failed but `overdrive`, whose line the bloom drives
 to white either way. With the filament, 0.94-1.24 on the line (1.24 is the
 hairline at a low scale, which the sampling floor widens). Measured on the AMD
-Radeon Pro 5300M, 2026-10-19: `PASS`, about 15 s. `--images` writes each buffer
+Radeon Pro 5300M, 2026-10-19: `PASS`, about 18 s. `--images` writes each buffer
 over black, top row first, as `DIR/<scene>_<variant>_<scale>.png`.
 
 It does not compare frames. That the filament in the buffer moves no pixel of
@@ -172,8 +185,145 @@ the frame rests on the edge ring covering the filament's reach (the blit never
 reads a texel it lights), and is checked the way any change that may move
 pixels is: `generate --set cover` and `generate --images` from a build before
 and after, then `diff A B --max 0` and a byte compare of the page images. Run
-it, and that, after touching `filamentLit` in `neon.frag`, the shared buffer's
-publish in `NeonRenderer::Render`, or the edge ring's width (`GetRingWidth`).
+it, and that, after touching `filamentLit` in `neon.frag`, `SharedBuffer`, the
+shared buffer's `MarkReady` / `MarkNotReady` in `NeonRenderer::RenderOffscreen`,
+the glow window (`GetSubWindow`), or the edge ring's width (`GetRingWidth`).
+
+## `clock`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check clock [--frames K] [--dump DIR]
+```
+
+The effect's clock at a start time an edge device reaches by running for days:
+870400 s (~10.07 days), past 2^19 s, where the float clock the library used to
+keep stepped by 1/60 s did not move at all. It fails when:
+
+- `Clock`, set to that time, does not advance by the sum of 600 frame deltas
+  of 1/60 s to within a microsecond;
+- `GetCyclePhase` at that time does not step by `rate / 60` of a cycle every
+  frame, to within 1e-6;
+- K frames (default 30) of every layer whose shader reads a phase of time -
+  the neon with its hue rotating, the droplets, the lens flare with its rays
+  spinning and the debug layer's gradient strip - drawn by an effect whose
+  clock starts there differ by more than one level from the same frames drawn
+  by an effect starting at 0. The start time is a whole number of cycles of
+  every phase involved (hue 0.5 rev/s, rays 0.25 rev/s, the droplets'
+  `DROPLET_TIME_PERIOD` at speed 1), so the two runs are owed the same frames;
+- the last of those frames equals the first: the effect stood still.
+
+It also prints how far a float accumulator moves over the same 600 frames (0 s
+there). On an Apple M2 Pro the late run matches the early one byte for byte
+and its first and last frames differ by up to 154 levels; the library before the
+double clock fails all three (clock 0 s, frames up to 174 levels off, first
+and last frame within 1 level). It builds against an older checkout's headers
+too (the phase step is skipped where there is no `GetCyclePhase`), which is
+how that was measured. `--dump DIR` writes the run from 0 as
+`DIR/clock_NNN.png`, for `diff` against another build's - what a change does to
+frames at an ordinary uptime.
+
+## `sequence`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate] [--dump DIR]
+```
+
+A differential check of the neon's skips and reuses. `NeonRenderer` keeps
+about a dozen keyed caches - the emission table (`isEmissionTableStale`), the
+glow coverage table's per-piece dirty masks, the offscreen reuse
+(`mOffscreen.reusable`), the gather's held region (`GatherInputs`,
+`AnnulusCovers`), the two fields' `LazyBake` schedules, the windowed clear of
+the shared buffer, and the gates in `OnConfigChanged` that decide what to
+rebuild - and each is correct only while its key holds every input its pass
+reads. `check`, `partition` and `shared-buffer` draw steady frames of fixed
+scenes, where no key is ever tested; this mode drives the renderer through
+what a host's frame loop does to it.
+
+It runs N seeded random config sequences (16 by default) of F frames (90),
+each through effects that differ only in `NeonRenderer::SetBypass`
+(`NeonBypass` in `renderer/neon-renderer.h` - a verification hook, not a
+config field, with no C ABI mirror; 0, the default, is the renderer as
+shipped):
+
+| run | bypassed | bound against `forced` |
+| --- | -------- | ---------------------- |
+| `forced` | everything (`NeonBypass::ALL`): every pass every frame, every pass 0b piece, every `OnConfigChanged` gate open, the shared buffer cleared whole, no field | - (the reference) |
+| `exact` | the reuses documented approximate (`APPROXIMATE`: the gather's held region, both fields) | byte-identical: every frame and every shared-buffer texel |
+| `normal` | nothing | 2 levels on any channel of the frame or the shared buffer (I55's held region within 1, a field's composite within 1); 6 on a frame whose intensity moved (I56's gain, up to 6 at bloom 1.5, the generator's ceiling) |
+
+A sequence starts from a random page scene, viewport, scale, rect, arcs and
+segments, and each frame either holds (stretches of 1-6 unchanged frames,
+where the skips take over) or steps whatever animations are running - an
+arc's length or start, a segment's position and length, intensity, bloom,
+glow radius, the rect moving (whole and fractional px) or resizing - and
+applies a few random changes: hue on and off, scale, viewport (an odd size
+included), layer and `opaqueOnly` toggles, glow side, cutoffs, fill mode and
+its cutoffs, colour stops (some below full alpha), transition time, blend
+space, arcs and segments added, removed or edited, preserved segments, line
+width, filament falloff, corner radius, winding, sample count, LUT size, the
+rect jumping to a frame edge. One field per change wherever it can be: a gate
+that misses one field is hidden on any frame another field it does read moved
+with it. Each frame is drawn by every effect at the same clock (`Update(1/60)`)
+over transparent black, and compared with its alpha; each effect's shared
+buffer is read by a probe renderer after the neon and compared as floats.
+
+Each failing frame prints the run, the sequence and frame, the worst level and
+the pixel count, the frame's events and its config; the exit code is 1 if
+`exact` or `normal` failed. Sequence K is seeded `S + K`, so `--only K`
+replays it alone. `--isolate` adds `normal` and `exact` again, each with ONE
+more skip bypassed, and every failing frame lists which of those pass it: the
+skips whose bypass clears the failure. ("Only that skip active" does not work:
+the skips depend on each other - the gather's key holds the emission table's
+version, the offscreen reuse needs that table current - so a skip alone among
+bypassed ones is never reached.) `--dump DIR` writes each failing frame and
+`forced`'s, and both shared buffers, as PNG.
+
+Tested against a scratch build with two planted key omissions - `lineWidth`
+taken out of `geometryDirty` (the "outer glow dropped at glowRadius 0" bug)
+and the rect's centre out of `GatherInputs` - on the default 16 x 90: `exact`
+failed 26 frames, every one cleared by `rebuild`, and `normal` 14 levels off,
+cleared by `gather` (and by `emission`, whose bypass moves the gather's key
+every frame). On this tree it found V28 and I76 in
+[`docs/records/review-findings.md`](../../docs/records/review-findings.md) on the default run,
+and with V28's one-line fix applied, V29 in a 100 x 150 run (`exact` failed 1
+frame of 15,000; `normal` only on I76). Apple M2 Pro: the default run takes
+about 14 s; 100 x 150 with `--isolate` (16 effects per frame) took most of an
+hour.
+
+Run it after adding an input to any offscreen pass, after touching a skip key
+or a gate in `OnConfigChanged`, or a `LazyBake` schedule. A new skip belongs in
+`NeonBypass` - its bypass in the renderer, its name in `sequence.cpp`'s
+`BypassName` - or this mode cannot see it. Not covered: the LUTs' own
+self-guards (`GradientRingLUT::Bake` and the atlases decide for themselves),
+and the hysteresis choices (the coverage table's width, the segment table's
+direct mode), which depend on history by design and evolve identically in
+every run, since all of them see the same sequence.
+
+## `flare-reuse`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check flare-reuse [--no-time] [--dump DIR]
+```
+
+A differential check of the lens flare's one reuse: below scale 1.0,
+`LensFlareRenderer::RenderOffscreen` skips the draw into its scaled buffer when
+nothing the pass reads has moved (`FlareInputs`, `mScaledCache`) and `Render`
+blits what the buffer holds. Two effects - the neon and the flare - draw one
+scripted 75-frame sequence, one with the reuse and one with it bypassed
+(`LensFlareRenderer::SetBypass(true)`): still frames, the sun moving, the rays
+spinning, the clock paused while they spin, then the rate back to 0, intensity
+and ghost colour changes, the rect moving (the sun rides its perimeter), a
+viewport change and back, the layer off and on, the scale through 0.25, 1.0
+and back, and the sun jumping away and back. Every frame, read back with its
+alpha, must match byte for byte; it exits non-zero otherwise (`--dump DIR`
+writes both frames of a mismatch). Then, unless `--no-time`, it times still
+frames of the flare alone at scale 0.5 - `Update(1/60)` + `Render` + `glFinish`
+per frame, min of 5 runs of the mean of 40 - both ways at 1920x1080 and
+3840x2160. Run it after adding anything `drawFlare` uploads or binds: an input
+that is not a function of `Config::lensFlare` belongs in `FlareInputs`, and the
+script should move it. Dropping the sun's position from the key fails the four
+rect-move frames and the three still frames after them, which is the check
+that the script reaches the key.
 
 ## `generate`
 
@@ -222,12 +372,20 @@ does, with `SetConfig` and `Update` inside the timed region, so their figures
 include the library's CPU path. A change that saves work on unchanged frames
 should be measured with `still` AND the animated modes, to show both what it
 saves and that it costs the moving frames nothing. The JSON records the mode.
-See [`docs/neon-perf-plan.md`](../../docs/neon-perf-plan.md).
 
 `--set cover` times the `cover` scenes (below) instead of the page's, each at
 its own frame size, as its frame 0 configures it; `--scene a,b` and
 `--scales 1,0.5` narrow either set. Every figure is also printed, one line per
 scene and scale.
+
+**The CPU share of a moving frame is overstated.** `time` never swaps, so the
+driver submits mid-frame whenever a pass renders into a texture an earlier,
+unsubmitted frame read: once per hue frame, about five times per
+segment-travel frame. The frame totals are still right - those frames are
+GPU-bound either way (0.26 ms per intensity frame with and without a
+`glFlush` per frame, Apple M2 Pro) - but a host that swaps submits once per
+frame, and its `Render` measured 0.015-0.018 ms of CPU on a still frame and
+0.04-0.07 ms on a moving one.
 
 `--gpu` adds a `GL_TIME_ELAPSED` query round each `Render` (median of 120
 frames, each flushed as a swap would), and `--passes` each pass's share, from
@@ -246,7 +404,7 @@ rotated each round, and take the MEDIAN per figure over the rounds the builds
 ran in together. Not the minimum: it was measurably biased toward whichever
 build ran first on a cooler GPU (0.770 ms against 0.806 and 0.802 for one
 figure). That is how
-[`docs/neon-resolution-scale-perf-comparison.md`](../../docs/neon-resolution-scale-perf-comparison.md)
+`neon-resolution-scale-perf-comparison.md`
 was made. (The comparison page's own timings are still merged by minimum - see
 step 3 below - because they come from interleaved runs of only two builds; read
 them as the page's figures, not as a before / after measurement.)
@@ -260,7 +418,7 @@ them as the page's figures, not as a before / after measurement.)
 
 The `cover` set ([`src/cover.h`](src/cover.h)) is the measure for a change to
 the glow coverage table
-([`docs/neon-glow-cover-resolution-plan.md`](../../docs/neon-glow-cover-resolution-plan.md)).
+([`docs/design/neon-glow-cover-resolution-plan.md`](../../docs/design/neon-glow-cover-resolution-plan.md)).
 Its scenes MOVE: arcs and segments change length every frame, some segments
 travel, so every frame is the first after a config change - shaded directly,
 after a re-bake of whatever pieces of the table it reached - which is the path

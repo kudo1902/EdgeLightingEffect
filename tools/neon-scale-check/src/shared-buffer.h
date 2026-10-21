@@ -20,7 +20,10 @@ namespace NeonScaleCheck
     ///     of the frame's light on the line - what a buffer without the
     ///     filament does;
     ///   - the hue variant never reaches the field's composite, or the buffer
-    ///     is ready while the neon is off or not ready once it is on again.
+    ///     is ready while the neon is off or not ready once it is on again;
+    ///   - after a rect that moves and shrinks at one scale - the buffer kept,
+    ///     so only the windowed clear keeps the old glow out of it - the buffer
+    ///     differs by a single texel from the moved rect's on a fresh effect.
     /// It does not compare frames: that sharing the buffer moves no pixel is
     /// `generate` and `diff --max 0` against a build from before.
     /// With --images, writes each buffer over black, top row first, as

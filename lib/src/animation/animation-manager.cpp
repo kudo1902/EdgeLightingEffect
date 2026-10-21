@@ -31,11 +31,38 @@ namespace EdgeLighting
 
     void AnimationManager::Update(float dt)
     {
-        // Each animation owns its own state / elapsed / completion + hold
-        // behaviour, so advancing is just a per-animation tick.
-        for (const AnimationPtr &a : mAnimations)
+        // A callback calling Update again would overwrite the walk under the
+        // loop below.
+        if (mInUpdate)
         {
-            a->Update(dt);
+            return;
+        }
+        // Reset even if a callback throws, or every later Update would no-op.
+        typedef struct WalkScope
+        {
+            AnimationManager &manager;
+            explicit WalkScope(AnimationManager &m) : manager(m) { manager.mInUpdate = true; }
+            ~WalkScope()
+            {
+                manager.mWalk.clear();
+                manager.mInUpdate = false;
+            }
+        } WalkScope;
+        WalkScope scope(*this);
+
+        // Each animation owns its own state / elapsed / completion + hold
+        // behaviour, so advancing is just a per-animation tick - over a
+        // snapshot, because the ticks fire the animations' callbacks, and a
+        // callback may attach or detach (see the class note). An animation
+        // detached earlier in this walk is skipped; one attached during it
+        // waits for the next Update.
+        mWalk = mAnimations;
+        for (const AnimationPtr &a : mWalk)
+        {
+            if (Contains(a))
+            {
+                a->Update(dt);
+            }
         }
     }
 

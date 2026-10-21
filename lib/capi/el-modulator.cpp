@@ -6,6 +6,7 @@
 
 el_modulator_handle_t el_modulator_create_constant(float value)
 {
+    REQUIRE_FINITE("el_modulator_create_constant", nullptr, value);
     try
     {
         auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Constant>(value)};
@@ -22,6 +23,7 @@ el_modulator_handle_t el_modulator_create_constant(float value)
 el_modulator_handle_t el_modulator_create_oscillator(float frequency,
                                                      float minValue, float maxValue, float phase, el_waveform_e waveform)
 {
+    REQUIRE_FINITE("el_modulator_create_oscillator", nullptr, frequency, minValue, maxValue, phase);
     try
     {
         auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Oscillator>(
@@ -39,6 +41,8 @@ el_modulator_handle_t el_modulator_create_oscillator(float frequency,
 el_modulator_handle_t el_modulator_create_ease(float from, float to,
                                                float duration, el_easing_e easing, el_bool_t loop)
 {
+    REQUIRE_FINITE("el_modulator_create_ease", nullptr, from, to, duration);
+    REQUIRE_DURATION("el_modulator_create_ease", nullptr, duration, false);
     try
     {
         auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Ease>(
@@ -73,6 +77,8 @@ el_modulator_handle_t el_modulator_create_sequence(el_bool_t loop)
 el_result_e el_modulator_sequence_append(el_modulator_handle_t seq,
                                          el_modulator_handle_t stage, float duration)
 {
+    REQUIRE_FINITE("el_modulator_sequence_append", EL_ERROR_INVALID_PARAMETER, duration);
+    REQUIRE_DURATION("el_modulator_sequence_append", EL_ERROR_INVALID_PARAMETER, duration, false);
     LOG_I("seq=%p, stage=%p, duration=%f", (void *)seq, (void *)stage, duration);
     VALIDATE_MOD_PTR(seq, "el_modulator_sequence_append");
     VALIDATE_MOD_PTR(stage, "el_modulator_sequence_append");
@@ -131,6 +137,7 @@ el_modulator_handle_t el_modulator_create_adder(el_modulator_handle_t a,
 el_modulator_handle_t el_modulator_create_remap(el_modulator_handle_t inner,
                                                 float outMin, float outMax)
 {
+    REQUIRE_FINITE("el_modulator_create_remap", nullptr, outMin, outMax);
     if (!inner)
     {
         LOG_E("el_modulator_create_remap: inner is null");
@@ -164,7 +171,8 @@ el_result_e el_modulator_evaluate(el_modulator_handle_t mod, float time, float *
 {
     VALIDATE_MOD_PTR(mod, "el_modulator_evaluate");
     VALIDATE_OUT_PTR(outValue, "el_modulator_evaluate");
-    *outValue = mod->ptr ? mod->ptr->Evaluate(time) : 0.0f;
+    REQUIRE_FINITE("el_modulator_evaluate", EL_ERROR_INVALID_PARAMETER, time);
+    *outValue = mod->ptr ? mod->ptr->Evaluate(static_cast<double>(time)) : 0.0f;
     LOG_D("mod=%p, time=%f, value=%f", (void *)mod, time, *outValue);
     return EL_SUCCESS;
 }

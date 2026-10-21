@@ -147,7 +147,7 @@ extern "C"
      *           A cutoff on the side the glow side already culls does nothing
      *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
      *           INSIDE subsumes the outside one. See
-     *           docs/glow-side-comparison.md. */
+     *           docs/design/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
@@ -209,7 +209,7 @@ extern "C"
      *
      *           The cut is coverage applied to the graded output, so a non-zero
      *           value fades the layer rather than dimming its emission into the
-     *           tone map. See docs/glow-side-comparison.md. */
+     *           tone map. See docs/design/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 
@@ -459,7 +459,7 @@ extern "C"
      *           the same gather result, so the
      *           line and every edge near it look as they do at 1.0 (within
      *           2/255 down to 0.125 on the scenes in
-     *           docs/neon-resolution-scale-comparison.html, but for a very
+     *           docs/pages/neon-resolution-scale-comparison.html, but for a very
      *           small rect).
      *
      *           Not a guaranteed saving: the ring, the composite and the
@@ -1097,15 +1097,18 @@ extern "C"
      *  @details Snapshots the last-authored values (what @c SetConfig
      *           received) - does NOT include animation overlays. Use this
      *           to re-sync the staging config after external mutation
-     *           (e.g. presets applied inside the effect). */
+     *           (e.g. presets applied inside the effect).
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_capture(el_effect_handle_t effect);
 
     /** @brief Apply staging config then tick clock, animations, and renderers.
      *  @param deltaTime Seconds since the last @c update call. Values <= 0
-     *                   still process animations but advance no time. */
+     *                   still process animations but advance no time.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime);
 
-    /** @brief Draw every enabled renderer at the given viewport size. */
+    /** @brief Draw every enabled renderer at the given viewport size.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised. */
     EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
 
@@ -1119,7 +1122,10 @@ extern "C"
 
     /** @brief Start the effect's clock (default state after init).
      *  @details Attached animations advance in lockstep with
-     *           @ref el_effect_update while the clock is playing. */
+     *           @ref el_effect_update while the clock is playing.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised,
+     *           as do @ref el_effect_clock_pause and
+     *           @ref el_effect_clock_is_playing - the clock is the effect's. */
     EL_API el_result_e el_effect_clock_play(el_effect_handle_t effect);
 
     /** @brief Freeze the effect's clock.
@@ -1138,6 +1144,13 @@ extern "C"
      *  Attach animation handles to the effect. Attach does NOT transfer
      *  ownership - the caller still owns the handle and must destroy it.
      *  Order of attach is the order of Apply per frame (later writes win).
+     *
+     *  Attach and the detach calls return @ref EL_ERROR_INVALID_HANDLE before
+     *  the effect is initialised; the count reports 0 and contains reports
+     *  false then, as @ref el_effect_get_renderer_count does. All of them are
+     *  safe to call from an animation's own callback, which fires inside
+     *  @ref el_effect_update: an animation attached there is first advanced
+     *  on the next update, and one detached there is not advanced again.
      *  @{ */
 
     /** @brief Attach an animation. Duplicates and null handles are ignored. */

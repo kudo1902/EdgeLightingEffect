@@ -45,7 +45,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
@@ -81,7 +81,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
@@ -119,7 +119,7 @@ namespace EdgeLighting
               mTarget(targetIntensity), mCurve(curve),
               mEase(0.0f, targetIntensity, duration, curve, /*loop=*/false) {}
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
@@ -155,7 +155,7 @@ namespace EdgeLighting
               mStart(startIntensity), mCurve(curve),
               mEase(startIntensity, 0.0f, duration, curve, /*loop=*/false) {}
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
@@ -196,7 +196,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.glowRadius = mOsc.Evaluate(elapsed);
         }
@@ -236,7 +236,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.bloomStrength = mOsc.Evaluate(elapsed);
         }
@@ -274,7 +274,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             int n = static_cast<int>(std::floor(elapsed / mHalfPeriod));
             cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
@@ -309,7 +309,7 @@ namespace EdgeLighting
         {
             SetDuration(duration);
         }
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             cfg.neon.hueRotationRate = mOsc.Evaluate(elapsed);
         }
@@ -373,7 +373,7 @@ namespace EdgeLighting
             SetDuration(duration);
         }
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
             s.position = mPosOsc.Evaluate(elapsed);
@@ -422,7 +422,7 @@ namespace EdgeLighting
             SetDuration(duration);
         }
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
             s.position = mPosOsc.Evaluate(elapsed);
@@ -488,7 +488,7 @@ namespace EdgeLighting
               mMaxLength(maxLength),
               mEase(0.0f, maxLength, duration, curve, /*loop=*/false) {}
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (cfg.neon.arcs.empty())
             {
@@ -540,7 +540,7 @@ namespace EdgeLighting
               mCurve(curve),
               mEase(1.0f, 0.0f, duration, curve, /*loop=*/false) {}
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (cfg.neon.arcs.empty())
             {
@@ -632,7 +632,7 @@ namespace EdgeLighting
             computePhases(duration);
         }
 
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             float arcStart = mStartPos;
             float arcLength = 0.0f;
@@ -640,11 +640,13 @@ namespace EdgeLighting
             // Apply the easing curve to the timeline. Curve maps [0, 1] to
             // [0, 1]; multiply back by duration so t remains in seconds and
             // the phase-boundary comparisons below still make sense.
-            float t = elapsed;
+            // A one-shot (or a LOOP wrapped at the duration), so the elapsed
+            // time is bounded by it and a float holds it exactly enough.
+            float t = static_cast<float>(elapsed);
             float dur = GetDuration();
             if (mCurve && dur > 0.0f)
             {
-                t = mCurve(elapsed / dur) * dur;
+                t = mCurve(t / dur) * dur;
             }
 
             if (t <= mT1)
@@ -766,7 +768,7 @@ namespace EdgeLighting
         /// @param mod      Modulator producing the intensity value.
         /// @param duration One-shot duration in seconds.
         IntensityCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (mMod)
             {
@@ -790,7 +792,7 @@ namespace EdgeLighting
     public:
         explicit GlowRadiusCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         GlowRadiusCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (mMod)
             {
@@ -814,7 +816,7 @@ namespace EdgeLighting
     public:
         explicit BloomStrengthCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         BloomStrengthCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (mMod)
             {
@@ -838,7 +840,7 @@ namespace EdgeLighting
     public:
         explicit HueRotationRateCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         HueRotationRateCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void ApplyAt(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, double elapsed) const override
         {
             if (mMod)
             {

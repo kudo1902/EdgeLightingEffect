@@ -53,7 +53,7 @@
 //   straight edge where the geometry ends, with nothing in the log to say so.
 //
 //   The guard for that is not this file - it is the offscreen diff described
-//   in docs/spotlight-renderer-plan.md, which renders the same rig through the
+//   in docs/design/spotlight-renderer-plan.md, which renders the same rig through the
 //   solved strip and through an oversized quad and requires the two to be
 //   byte-identical.
 //
@@ -252,7 +252,7 @@
 /// it bounds each lamp, not their sum: two crossing beams each held near 0.6
 /// would still add past full scale. What stops that is the renderer's blend,
 /// which SCREENS the lamps rather than adding them - see
-/// SpotlightRenderer::Render, and V12a in docs/review-findings.md for why the
+/// SpotlightRenderer::Render, and V12a in docs/records/review-findings.md for why the
 /// shoulder was not moved onto the sum instead.
 ///
 /// 1.0 disables the shoulder and restores per-channel clipping of a lone lamp.

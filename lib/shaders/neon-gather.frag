@@ -8,9 +8,9 @@
 // (GetGatherScale in neon-renderer.cpp). neon.frag then shades everything else
 // from what this writes: pass 1b at resolutionScale and the edge ring at full
 // resolution. The inline path that ran the loop in neon.frag at 1.0 is gone
-// (docs/neon-shader-cleanup-plan.md step 3), and so is the direct path that
+// (docs/design/neon-shader-cleanup-plan.md step 3), and so is the direct path that
 // shaded the whole glow quad with the ring's program at 1.0 (I57). See
-// docs/neon-resolution-scale-plan.md section 13 and docs/neon-perf-review.md
+// docs/design/neon-resolution-scale-plan.md section 13 and neon-perf-review.md
 // section 10.
 //
 // precision, vPos, the shape uniforms and the segment block are in
@@ -58,7 +58,7 @@ uniform int uNumSamples;
 //   row 1: .rgb = SUM(segColour * bell), .a = SUM(bell)
 // Read with texelFetch at integer sample index - never filtered, since
 // neighbouring texels are unrelated perimeter samples. See the gather loop
-// and docs/emission-prepass.md.
+// and docs/design/emission-prepass.md.
 uniform sampler2D uEmission;
 
 // The gather's four results - its ONLY outputs, and all four smooth across
@@ -82,12 +82,12 @@ struct PerimeterGather
 // branch below takes the shorter body. What used to live here - the arc
 // winner-take-all scan over uArcCount, the segment loop over uSegmentCount,
 // and one to two FILTERED LUT fetches - was a pure function of
-// (si, uTime, config), so it did not belong in a loop that runs once per
+// (si, uHuePhase, config), so it did not belong in a loop that runs once per
 // fragment. Hoisting it also removed two dynamic inner loops (which blocked
 // unrolling), a serial reduction (`if (mask > bestMask)`), and the
 // loop-carried `si += dti` chain.
 //
-// See docs/emission-prepass.md for the packing and the invariant that keeps
+// See docs/design/emission-prepass.md for the packing and the invariant that keeps
 // the split honest.
 PerimeterGather gatherPerimeter(vec2 p) {
     // kc is the COLOUR gather weight, and it is the one length in the neon
@@ -145,7 +145,7 @@ PerimeterGather gatherPerimeter(vec2 p) {
     // 1920 x 1080): one body for both cases was still 0.88x on hue frames at
     // scale 1.0 (down to 0.72x on one scene) and 1.26x slower on a 40 x 24
     // rect, whose gather buffer is the largest - so keep both
-    // (docs/neon-shader-cleanup-plan.md step 4).
+    // (docs/design/neon-shader-cleanup-plan.md step 4).
     //
     // The uSegmentCount > 0 body below is the original loop VERBATIM, which is
     // what makes a segmented config byte-identical by construction rather than
@@ -256,7 +256,7 @@ void main() {
     // from it to read back instead of running it. A coarse grid can carry them
     // where it cannot carry the filament because every one is a smooth
     // Lorentzian-weighted mean over the whole perimeter. See
-    // docs/neon-resolution-scale-plan.md, section 0.
+    // docs/design/neon-resolution-scale-plan.md, section 0.
     //
     // The buffer is RGBA16F where the driver renders to it and RGBA8 where
     // not, so each value has to fit [0, 1] for the fallback. The hues already

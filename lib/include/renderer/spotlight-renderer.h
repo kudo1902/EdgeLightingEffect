@@ -29,14 +29,17 @@ namespace EdgeLighting
     /// alpha 0, which costs nothing on an opaque desktop window and erases the
     /// entire layer on an embedded surface a compositor or hardware video
     /// plane blends by alpha. A screen rather than an add so that overlapping
-    /// lamps approach full scale instead of clipping. See @ref Render for the
-    /// blend and the measurements.
+    /// lamps approach full scale instead of clipping. See UseScreenBlend in the
+    /// .cpp for the blend and the measurements.
     ///
     /// **One renderer, two resolution paths**, selected by
     /// @c SpotlightConfig::resolutionScale: at 1.0 the strips draw straight
     /// onto the framebuffer this renderer was handed (no offscreen buffer, no
     /// blit); below 1.0 they draw into a buffer of that fraction of the
-    /// viewport and are bilinear-blitted back.
+    /// viewport and are bilinear-blitted back. That draw is
+    /// @ref RenderOffscreen's - the effect runs it for every layer before any
+    /// layer composites, so the caller's target is drawn in one run - and the
+    /// blit is @ref Render's.
     ///
     /// **An enabled clipped lamp pins the scale to 1.0**, because the clip
     /// mask is resolved per fragment and a reduced buffer would resolve its
@@ -88,7 +91,7 @@ namespace EdgeLighting
     /// frame, so the fragment program never touches a sin or a cos.
     ///
     /// **The VBO holds app coordinates verbatim** and the y-flip lives in the
-    /// projection (see @ref Render), so it depends only on
+    /// projection (see @ref drawLamps), so it depends only on
     /// @c Config::spotlight and never on the viewport: a resize costs one
     /// uniform, not a rebuild.
     ///
@@ -118,12 +121,33 @@ namespace EdgeLighting
         virtual ~SpotlightRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
+
+        /// Phase 1: below scale 1.0, the lamps into @c mScaledBuffer - sized,
+        /// bound and cleared here, under no host scissor - and nothing on the
+        /// caller's framebuffer. At 1.0 (a clipped lamp pins it there), or
+        /// with the layer off, nothing. Restores the framebuffer and viewport
+        /// it was handed, and leaves the blend as @ref Render does.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time,
+                                     const Config &config) override;
+
+        /// Phase 2, onto the caller's framebuffer, screened: the scaled buffer
+        /// blitted back below 1.0, the lamps themselves at 1.0. A host that
+        /// calls it without RenderOffscreen for the same frame
+        /// (EdgeLightingEffect never does) gets that phase run first, here.
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::SPOTLIGHT; }
 
     private:
+        /// What @ref RenderOffscreen leaves for @ref Render in the same frame.
+        typedef struct FrameState
+        {
+            bool prepared = false;    ///< RenderOffscreen ran for this frame and Render has not consumed it.
+            glm::ivec2 viewport{0};   ///< The viewport it ran for.
+            bool scaledReady = false; ///< @c mScaledBuffer holds this frame's lamps: the blit draws.
+        } FrameState;
+
         /// One vertex of a lamp's strip. Declared here rather than in the .cpp
         /// only so @c mStripVerts below can be a member; nothing outside this
         /// class names it. Everything but @c pos and @c local is constant
@@ -181,7 +205,7 @@ namespace EdgeLighting
         /// Solve every enabled lamp's support and upload the strips.
         ///
         /// Runs from @ref OnConfigChanged (and @ref Initialize), not from
-        /// @ref Render, because its inputs are exactly @c Config::spotlight -
+        /// either phase of a frame, because its inputs are exactly @c Config::spotlight -
         /// the same invariant the lens flare's ghost table rests on. Under an
         /// animation driving any lamp scalar it therefore runs EVERY FRAME,
         /// so it is worth knowing what one costs.
@@ -207,6 +231,14 @@ namespace EdgeLighting
         /// a pixel in any verification scene.
         void buildStrips(const SpotlightConfig &spotlight);
 
+        /// The lamps' own draw, into whatever is bound: the strips through the
+        /// y-flipped ortho over the @p viewportWidth x @p viewportHeight app
+        /// viewport, whatever the target's size - the viewport transform alone
+        /// carries the scale. @p scaled says the target is the scaled buffer,
+        /// which picks @c uDither (see @c mScaledFormat). The caller sets the
+        /// target and the blend (UseScreenBlend in the .cpp).
+        void drawLamps(int viewportWidth, int viewportHeight, bool scaled, const Config &config);
+
     private:
         ShaderProgram mShaderProgram;
         /// Scaled path only: composites the scaled buffer back at full res,
@@ -218,7 +250,8 @@ namespace EdgeLighting
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing, and it is released again as soon as
         /// a config stops asking for it. Half float where the driver renders
-        /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer.
+        /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer. Drawn by
+        /// @ref RenderOffscreen, read by @ref Render.
         Framebuffer mScaledBuffer{"Spotlight.Scaled"};
         /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
         /// has not refused for @c mScaledBuffer, where the walk resumes. Kept
@@ -252,6 +285,9 @@ namespace EdgeLighting
         /// false so the first build is unconditional however the renderer is
         /// brought up - @ref Initialize and @ref OnConfigChanged both honour it.
         bool mBuilt = false;
+        /// What this frame's @ref RenderOffscreen left for @ref Render - see
+        /// @ref FrameState.
+        FrameState mFrame;
     };
 }
 

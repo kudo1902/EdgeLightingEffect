@@ -68,6 +68,7 @@ el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, 
 
 el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale)
 {
+    REQUIRE_FINITE("el_effect_set_optimized_resolution_scale", EL_ERROR_INVALID_PARAMETER, scale);
     return el_effect_set_neon_resolution_scale(effect, scale);
 }
 
@@ -135,6 +136,7 @@ el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle
 
 el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
 {
+    REQUIRE_FINITE("el_effect_set_optimized_lens_flare_resolution_scale", EL_ERROR_INVALID_PARAMETER, scale);
     return el_effect_set_lens_flare_resolution_scale(effect, scale);
 }
 
@@ -180,6 +182,7 @@ el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t 
 el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect,
                                           float r, float g, float b, float a)
 {
+    REQUIRE_FINITE("el_effect_set_wireframe_color", EL_ERROR_INVALID_PARAMETER, r, g, b, a);
     return el_effect_set_debug_wireframe_color(effect, r, g, b, a);
 }
 
@@ -197,6 +200,7 @@ el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
 el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
+    REQUIRE_FINITE("el_effect_set_opaque_softness", EL_ERROR_INVALID_PARAMETER, softness);
     for (el_cutoff_side_e side : {EL_CUTOFF_SIDE_INSIDE, EL_CUTOFF_SIDE_OUTSIDE})
     {
         el_bool_t enable = 0;

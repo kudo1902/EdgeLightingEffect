@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_DEBUG_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
 #include "renderer/gradient-ring-lut.h"
@@ -56,8 +57,8 @@ namespace EdgeLighting
         virtual ~DebugRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::DEBUG; }
 
@@ -80,7 +81,7 @@ namespace EdgeLighting
         /// The baked gradient LUT as a strip at the geometry centre.
         /// Caller guards on @c showGradientLUT.
         /// @pre Blending disabled - the strip overwrites the glow beneath it.
-        void renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config);
+        void renderGradientLUTStrip(const glm::mat4 &mvp, double time, const Config &config);
 
         /// One filled disc per colour stop at its perimeter position.
         /// Caller guards on @c showColorStops + a non-empty list.
@@ -107,15 +108,15 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mLUTDebugShader;                                  ///< LUT strip (neon-lut-debug.frag).
-        ShaderProgram mStopMarkerShader;                                ///< Per-stop marker (neon-stop-marker.frag).
-        ShaderProgram mWireframeShader;                                 ///< Bounding box (wireframe.frag).
-        ShaderProgram mSharedBufferShader;                              ///< Shared-buffer inset (shared-buffer-debug.frag).
-        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};     ///< Small centred quad, sized to the rect.
-        VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"}; ///< Unit quad ([-1,+1]), scaled per marker.
-        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
+        ShaderProgram mLUTDebugShader;                                                ///< LUT strip (neon-lut-debug.frag).
+        ShaderProgram mStopMarkerShader;                                              ///< Per-stop marker (neon-stop-marker.frag).
+        ShaderProgram mWireframeShader;                                               ///< Bounding box (wireframe.frag).
+        ShaderProgram mSharedBufferShader;                                            ///< Shared-buffer inset (shared-buffer-debug.frag).
+        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};                   ///< Small centred quad, sized to the rect.
+        VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"};               ///< Unit quad ([-1,+1]), scaled per marker.
+        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};                 ///< 4 corners, drawn as GL_LINE_LOOP.
         VertexArray mSharedBufferInsetVertexArray{"DebugRenderer.SharedBufferInset"}; ///< The inset quad, inset-local px; uploaded each frame it is drawn.
-        glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
+        glm::vec2 mLUTStripHalfSize{0.0f};                                            ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
 
         /// This renderer's OWN copy of the baked colour ring, from the same
         /// @c Config::neon inputs @ref NeonRenderer bakes from - so the strip
@@ -147,6 +148,12 @@ namespace EdgeLighting
         /// consulted, so a hide/show across an unchanged gradient still
         /// RESUMES a paused cross-fade rather than snapping it.
         bool mStripVisible = false;
+
+        /// The strip's hue phase: NeonConfig::hueRotationRate integrated over
+        /// the clock's time, exactly as NeonRenderer's own (PhaseAccumulator).
+        /// Fed the same times and rates - advanced in @ref Update every frame,
+        /// shown or not - so the strip scrolls with the ring it previews.
+        PhaseAccumulator mHuePhase;
     };
 
 } // namespace EdgeLighting

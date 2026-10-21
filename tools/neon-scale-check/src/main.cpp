@@ -1,4 +1,4 @@
-// neon-scale-check: the harness behind docs/neon-resolution-scale-comparison.html.
+// neon-scale-check: the harness behind docs/pages/neon-resolution-scale-comparison.html.
 //
 //   neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE]
 //       Renders the twelve scenes at six scales and writes <outdir>/<label>.json
@@ -16,7 +16,7 @@
 //       and the share of lit pixels off by 1, 2, 3-4, 5-8 and more levels.
 //       Exits non-zero when any file's max exceeds N (default 2) or fewer than
 //       PCT percent (default 99.9) of its lit pixels are within 1 level -
-//       docs/neon-glow-cover-resolution-plan.md section 5's criterion.
+//       docs/design/neon-glow-cover-resolution-plan.md section 5's criterion.
 //
 //   neon-scale-check check [--images-dir DIR]
 //       A regression gate. Exits non-zero when scale 1.0 has drifted from the
@@ -40,12 +40,36 @@
 //       configs, the blit and the edge ring must cover every pixel they reach
 //       exactly once. Exits non-zero on any overlap or seam gap. See README.md.
 //
+//   neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K]
+//                             [--isolate] [--dump DIR]
+//       A differential gate for the neon's skips and reuses: seeded random
+//       config sequences drawn by a renderer with every skip bypassed
+//       (NeonRenderer::SetBypass) and by renderers with some or all of them
+//       active, compared frame by frame. See sequence.h and README.md.
+//
+//   neon-scale-check clock [--frames K] [--dump DIR]
+//       The effect's clock and the shader phases it feeds at a ~10-day start
+//       time: the clock advances by its frame deltas, and K frames of every
+//       layer that reads time match the same frames started at 0, and move.
+//       See clock-check.h.
+//
+//   neon-scale-check flare-reuse [--no-time] [--dump DIR]
+//       A differential gate for the lens flare's scaled-buffer reuse: a
+//       scripted sequence drawn with the reuse and with it bypassed
+//       (LensFlareRenderer::SetBypass) must match byte for byte; then times
+//       still frames both ways. See flare-reuse.h.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
+#include "clock-check.h"
+#include "flare-reuse.h"
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
+#ifdef NEON_SCALE_CHECK_SEQUENCE
+#include "sequence.h"
+#endif
 #include "shared-buffer.h"
 #include "scenes.h"
 #include "pass-recorder.h"
@@ -710,7 +734,7 @@ namespace
         return std::getline(in, line) ? line : std::string("unknown");
     }
 
-    /// `diff <dirA> <dirB>`: the measure docs/neon-glow-cover-resolution-plan.md
+    /// `diff <dirA> <dirB>`: the measure docs/design/neon-glow-cover-resolution-plan.md
     /// section 5 judges a step that may move pixels by. RGB and alpha are
     /// reported apart (a layer's coverage alpha can move where its colour on
     /// black cannot); the distribution is over LIT pixels, any RGB channel
@@ -987,6 +1011,22 @@ int main(int argc, char **argv)
     {
         return SharedBufferCheck(argc, argv);
     }
+#ifdef NEON_SCALE_CHECK_SEQUENCE
+    if (argc >= 2 && std::strcmp(argv[1], "sequence") == 0)
+    {
+        return SequenceCheck(argc, argv);
+    }
+#endif
+    if (argc >= 2 && std::strcmp(argv[1], "clock") == 0)
+    {
+        return ClockCheck(argc, argv);
+    }
+#ifdef NEON_SCALE_CHECK_FLARE_REUSE
+    if (argc >= 2 && std::strcmp(argv[1], "flare-reuse") == 0)
+    {
+        return FlareReuseCheck(argc, argv);
+    }
+#endif
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -996,6 +1036,10 @@ int main(int argc, char **argv)
                  "                        [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] [--passes] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
                  "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n"
-                 "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n");
+                 "  neon-scale-check shared-buffer [--images DIR] [--verbose]\n"
+                 "  neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate]\n"
+                 "                            [--dump DIR] [--verbose]\n"
+                 "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n"
+                 "  neon-scale-check flare-reuse [--no-time] [--dump DIR] [--verbose]\n");
     return 2;
 }

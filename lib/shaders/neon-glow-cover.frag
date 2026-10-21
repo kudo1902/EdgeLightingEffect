@@ -315,7 +315,7 @@ vec2 arcsOnPiece(vec2 place, float len, float x, float cH, float cB, vec2 total)
 
 // --- The segments ------------------------------------------------------
 // 16-point Gauss-Legendre on [-1, 1], positive half; the rule is symmetric.
-// Not 8: measured against it (I61 in docs/review-findings.md), an 8-node rule
+// Not 8: measured against it (I61 in docs/records/review-findings.md), an 8-node rule
 // read 3 levels off a long, bright segment - a bell spanning many kernel
 // widths needs the nodes.
 const vec4 GL16_X0 = vec4(0.0950125098376374, 0.2816035507792589, 0.4580167776572274, 0.6178762444026438);

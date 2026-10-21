@@ -3,6 +3,9 @@
 
 #include "edge-lighting-capi.h"
 
+#include <cmath>
+#include <initializer_list>
+
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
 #include "renderer/neon-renderer.h"
@@ -37,6 +40,12 @@ static_assert(static_cast<int>(EdgeLighting::Winding::COUNTER_CLOCKWISE) == EL_W
 static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOTH);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
+
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::NONE) == EL_OPAQUE_MODE_NONE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::OUTSIDE) == EL_OPAQUE_MODE_OUTSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::INSIDE) == EL_OPAQUE_MODE_INSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::BOTH) == EL_OPAQUE_MODE_BOTH);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::ALL) == EL_OPAQUE_MODE_ALL);
 
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
@@ -110,7 +119,8 @@ static_assert(static_cast<uint32_t>(EdgeLighting::RendererLayer::DEBUG) == EL_RE
 
 // PlaybackMode / EndAction / AnimationState use dedicated to*/from* helpers,
 // so their ABI decoupling is enforced at the switch site rather than by
-// parity - no static_asserts needed.
+// parity - no static_asserts needed. The helpers' switches name every
+// enumerator of both sides (the default arm only catches foreign integers).
 
 // ==========================================================================
 // Opaque handle definitions
@@ -174,6 +184,69 @@ struct el_modulator_handle_impl
         }                                         \
     } while (0)
 
+/// Rejects a foreign integer that names no enumerator of @c type (one of the
+/// isValid* predicates below). A C caller can pass any int through an enum
+/// parameter, and a static_cast to the C++ enum would store it unchecked.
+#define VALIDATE_ENUM(type, value, fn)                                 \
+    do                                                                 \
+    {                                                                  \
+        if (!isValid(static_cast<type>(value)))                        \
+        {                                                              \
+            LOG_E("%s: invalid %s value %d", fn, #type, (int)(value)); \
+            return EL_ERROR_INVALID_PARAMETER;                         \
+        }                                                              \
+    } while (0)
+
+/// Rejects a negative index before it is cast to size_t.
+#define VALIDATE_INDEX(index, fn)                 \
+    do                                            \
+    {                                             \
+        if ((index) < 0)                          \
+        {                                         \
+            LOG_E("%s: negative %s", fn, #index); \
+            return EL_ERROR_INVALID_PARAMETER;    \
+        }                                         \
+    } while (0)
+
+/// Whether every value in @p values is finite. One NaN in the config makes
+/// Config::operator== false for good, so the effect notifies every renderer on
+/// every frame and every skip they keep is defeated (I80).
+inline bool AllFinite(std::initializer_list<double> values)
+{
+    for (const double v : values)
+    {
+        if (!std::isfinite(v))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Rejects a call any of whose float arguments is NaN or infinite, returning
+/// @p failure (EL_ERROR_INVALID_PARAMETER, or nullptr from a factory).
+#define REQUIRE_FINITE(fn, failure, ...)                             \
+    do                                                               \
+    {                                                                \
+        if (!AllFinite({__VA_ARGS__}))                               \
+        {                                                            \
+            LOG_E("%s: non-finite argument (%s)", fn, #__VA_ARGS__); \
+            return failure;                                          \
+        }                                                            \
+    } while (0)
+
+/// Rejects a duration below @p minimum, or equal to it when @p strict.
+#define REQUIRE_DURATION(fn, failure, duration, strict)                   \
+    do                                                                    \
+    {                                                                     \
+        if ((strict) ? !((duration) > 0.0f) : !((duration) >= 0.0f))      \
+        {                                                                 \
+            LOG_E("%s: duration %f must be %s 0", fn, (double)(duration), \
+                  (strict) ? "above" : "at least");                       \
+            return failure;                                               \
+        }                                                                 \
+    } while (0)
+
 /// Short-circuit setter that only logs + assigns when the incoming value
 /// actually differs from what @c field already holds, then returns @c EL_SUCCESS.
 #define SET_AND_LOG(field, newVal, ...) \
@@ -187,6 +260,182 @@ struct el_modulator_handle_impl
         (field) = (newVal);             \
         return EL_SUCCESS;              \
     } while (0)
+
+// ==========================================================================
+// Enum range predicates
+//
+// One per mirrored enum a setter or binder stores through static_cast. Each
+// switch names every enumerator and has no default, so -Wswitch flags a new
+// value that was not added here; the parity asserts above pin the numbers.
+// ==========================================================================
+inline bool isValid(el_winding_e v)
+{
+    switch (v)
+    {
+    case EL_WINDING_CLOCKWISE:
+    case EL_WINDING_COUNTER_CLOCKWISE:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_glow_side_e v)
+{
+    switch (v)
+    {
+    case EL_GLOW_SIDE_BOTH:
+    case EL_GLOW_SIDE_INSIDE:
+    case EL_GLOW_SIDE_OUTSIDE:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_opaque_mode_e v)
+{
+    switch (v)
+    {
+    case EL_OPAQUE_MODE_NONE:
+    case EL_OPAQUE_MODE_OUTSIDE:
+    case EL_OPAQUE_MODE_INSIDE:
+    case EL_OPAQUE_MODE_BOTH:
+    case EL_OPAQUE_MODE_ALL:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_blend_space_e v)
+{
+    switch (v)
+    {
+    case EL_BLEND_SPACE_RGB:
+    case EL_BLEND_SPACE_HSV:
+    case EL_BLEND_SPACE_HSL:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_clip_mode_e v)
+{
+    switch (v)
+    {
+    case EL_CLIP_KEEP_INSIDE:
+    case EL_CLIP_KEEP_OUTSIDE:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_config_field_e v)
+{
+    switch (v)
+    {
+    case EL_FIELD_NEON_INTENSITY:
+    case EL_FIELD_NEON_LINE_WIDTH:
+    case EL_FIELD_NEON_GLOW_RADIUS:
+    case EL_FIELD_NEON_BLOOM_STRENGTH:
+    case EL_FIELD_NEON_FILAMENT_FALLOFF:
+    case EL_FIELD_NEON_GLOW_SIDE_SOFTNESS:
+    case EL_FIELD_NEON_HUE_ROTATION_RATE:
+    case EL_FIELD_LENS_FLARE_PERIMETER_POSITION:
+    case EL_FIELD_LENS_FLARE_PERIMETER_OFFSET:
+    case EL_FIELD_LENS_FLARE_SIZE:
+    case EL_FIELD_LENS_FLARE_INTENSITY:
+    case EL_FIELD_LENS_FLARE_SPREAD:
+    case EL_FIELD_LENS_FLARE_GHOST_SPACING:
+    case EL_FIELD_LENS_FLARE_GHOST_SIZE:
+    case EL_FIELD_LENS_FLARE_GHOST_OFFSET:
+    case EL_FIELD_LENS_FLARE_GHOST_TINT:
+    case EL_FIELD_LENS_FLARE_RAY_DENSITY:
+    case EL_FIELD_LENS_FLARE_ROTATION_RATE:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_segment_field_e v)
+{
+    switch (v)
+    {
+    case EL_SEGMENT_FIELD_POSITION:
+    case EL_SEGMENT_FIELD_LENGTH:
+    case EL_SEGMENT_FIELD_BOOST:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_arc_field_e v)
+{
+    switch (v)
+    {
+    case EL_ARC_FIELD_START:
+    case EL_ARC_FIELD_LENGTH:
+    case EL_ARC_FIELD_INTENSITY:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_spotlight_field_e v)
+{
+    switch (v)
+    {
+    case EL_SPOTLIGHT_FIELD_POSITION_X:
+    case EL_SPOTLIGHT_FIELD_POSITION_Y:
+    case EL_SPOTLIGHT_FIELD_ANGLE:
+    case EL_SPOTLIGHT_FIELD_BEAM_ANGLE:
+    case EL_SPOTLIGHT_FIELD_THROW_LENGTH:
+    case EL_SPOTLIGHT_FIELD_APERTURE_WIDTH:
+    case EL_SPOTLIGHT_FIELD_SOFTNESS:
+    case EL_SPOTLIGHT_FIELD_INTENSITY:
+    case EL_SPOTLIGHT_FIELD_BLOOM:
+    case EL_SPOTLIGHT_FIELD_BLOOM_RADIUS:
+    case EL_SPOTLIGHT_FIELD_COLOR_TEMP:
+    case EL_SPOTLIGHT_FIELD_TINT_R:
+    case EL_SPOTLIGHT_FIELD_TINT_G:
+    case EL_SPOTLIGHT_FIELD_TINT_B:
+    case EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF:
+    {
+        return true;
+    }
+    }
+    return false;
+}
+
+inline bool isValid(el_color_stop_field_e v)
+{
+    switch (v)
+    {
+    case EL_STOP_FIELD_POSITION:
+    case EL_STOP_FIELD_R:
+    case EL_STOP_FIELD_G:
+    case EL_STOP_FIELD_B:
+    case EL_STOP_FIELD_A:
+    {
+        return true;
+    }
+    }
+    return false;
+}
 
 // ==========================================================================
 // Enum conversion helpers

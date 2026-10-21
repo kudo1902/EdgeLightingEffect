@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_NEON_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "animation/clock.h"
 #include "core/shared-buffer.h"
 #include "gl/shader-program.h"
 #include "gl/uniform-buffer.h"
@@ -103,9 +104,10 @@ namespace EdgeLighting
         ///   - GetViewportRegion, the reduced buffer: the whole viewport,
         ///     @c size the viewport and @c texels <tt>floor(viewport *
         ///     scale)</tt>.
-        ///   - GetSubRegion, the glow's field: a window of whole texels of
-        ///     that grid holding a box (the glow quad's), so pass 1c writes
-        ///     each texel of the reduced buffer from the field texel under it.
+        ///   - GetSubWindow and GetWindowRegion, the glow's field: a window of
+        ///     whole texels of that grid holding a box (the glow quad's), so
+        ///     pass 1c writes each texel of the reduced buffer from the field
+        ///     texel under it.
         ///   - GetBufferRegion, the gather buffer: a box's half-extents (an
         ///     @ref Annulus's @c outer) at a scale, clipped to the viewport and
         ///     grown past its edge by the bilinear footprint, the corner
@@ -205,6 +207,36 @@ namespace EdgeLighting
         } GlowCoverLayout;
     }
 
+    /// Which of @ref NeonRenderer's skips and reuses to bypass, as bits of
+    /// @ref NeonRenderer::SetBypass. A VERIFICATION hook, not a host setting:
+    /// every bit only makes the renderer redo work it would otherwise have
+    /// kept, so a renderer with all of them set draws each frame the way a
+    /// fresh one would from the same history - and tools/neon-scale-check
+    /// `sequence` drives one beside a plain renderer through random config
+    /// sequences, so that a skip key missing an input shows up as a stale
+    /// frame. Not in the config, so nothing compares it and no C ABI mirrors
+    /// it; 0 (the default) is the renderer as shipped, unchanged.
+    ///
+    /// The first group are the skips documented EXACT - with only those
+    /// active the frame is byte-identical to @c ALL. The second are reuses
+    /// documented within a level or two (the held gather region, I55; the
+    /// fields' composites, I46 / I52, and their intensity gain, I56).
+    typedef enum class NeonBypass : uint32_t
+    {
+        NONE = 0,
+        EMISSION = 1u << 0,   ///< P0 every frame (isEmissionTableStale).
+        GLOW_COVER = 1u << 1, ///< P0b re-bakes every piece on every frame that reads it (the dirty masks).
+        OFFSCREEN = 1u << 2,  ///< P1a and P1b never reused (@c mOffscreen.reusable).
+        CLEAR = 1u << 3,      ///< The shared buffer cleared whole on every write, not windowed (SharedBuffer::BeginWrite).
+        REBUILD = 1u << 4,    ///< OnConfigChanged rebuilds everything it gates (samples, quads, fill, segment list, light blocks).
+        GATHER = 1u << 5,     ///< P1a never reused from a held region (GatherInputs, AnnulusCovers).
+        GLOW_FIELD = 1u << 6, ///< P1f / P1c never used: P1b shades.
+        RING_FIELD = 1u << 7, ///< P1r / P2r never used: P2c shades.
+        EXACT = 0x1fu,        ///< EMISSION | GLOW_COVER | OFFSCREEN | CLEAR | REBUILD.
+        APPROXIMATE = 0xe0u,  ///< GATHER | GLOW_FIELD | RING_FIELD.
+        ALL = 0xffu,
+    } NeonBypass;
+
     /// The neon renderer.
     ///
     /// Draws a tight quad over the rect + glow-reach margin and runs one
@@ -224,7 +256,7 @@ namespace EdgeLighting
     /// loop and filtered LUT reads that used to run in it are all
     /// fragment-invariant and moved to @c neon-emission.frag, which is why its
     /// cost no longer scales with the arc or segment count. See
-    /// docs/emission-prepass.md.
+    /// docs/design/emission-prepass.md.
     ///
     /// The three baked LUTs stay bound, but for the POINTWISE reads only - the
     /// colour-stop alpha, taken at the fragment's own perimeter position:
@@ -259,7 +291,7 @@ namespace EdgeLighting
     /// full resolution. The gather buffer covers only the part of the frame
     /// its readers reach (@ref GetBufferRegion); the reduced buffer covers
     /// the whole viewport, as the shared buffer below. See
-    /// docs/neon-resolution-scale-plan.md sections 12 and 13.
+    /// docs/design/neon-resolution-scale-plan.md sections 12 and 13.
     ///
     /// With a colour-stop alpha time cannot move, the shading is factored:
     /// neon.frag's output is tonemap(col * Fa + segColHue * Fs) with only the
@@ -271,8 +303,8 @@ namespace EdgeLighting
     /// with only the time moved, 1.1-2.0x on them, and under an intensity
     /// animation, scaled (I56). The ring has a field of its own (pass 1r / 2r),
     /// still frames included. A frame whose config just changed shades
-    /// directly. See docs/neon-perf-plan.md section 11, and I46, I50, I52 and
-    /// I56 in docs/review-findings.md.
+    /// directly. See neon-perf-plan.md section 11, and I46, I50, I52 and
+    /// I56 in docs/records/review-findings.md.
     ///
     /// Every pixel-valued uniform is multiplied by the scale (a no-op at 1.0)
     /// and the shader converts its own full-res px constants with
@@ -355,15 +387,17 @@ namespace EdgeLighting
         virtual bool Initialize() override;
 
         /// Per-frame bookkeeping, before @ref Render; draws nothing. Advances
+        /// the hue's phase to @p time (@c mHuePhase, every frame, so a rate
+        /// that moves while the layer is off is integrated as it moved),
         /// the colour ring's cross-fade (a fade frame re-uploads the ring,
         /// which moves its upload count and so re-bakes the emission table),
         /// and gives the glow coverage table back once nothing has read it for
         /// GLOW_COVER_RELEASE_SECONDS of frame time - here and not in
         /// @ref Render, which must not delete a framebuffer.
         /// @param deltaTime  Seconds since the last frame; the release timer's step.
-        /// @param time       Unused: the neon reads time in @ref Render.
+        /// @param time       Seconds of clock time, for the hue's phase.
         /// @param config     The active configuration.
-        virtual void Update(float deltaTime, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
 
         /// Phase 1 of the neon's frame: every pass that draws offscreen, each
         /// only when stale - the emission table (P0), the glow coverage table
@@ -382,7 +416,7 @@ namespace EdgeLighting
         /// only for its offscreen passes, and returns with @c GL_BLEND on and
         /// @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA, as @ref Render does.
         /// @pre As @ref Render's.
-        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time,
                                      const Config &config) override;
 
         /// Phase 2 of the neon's frame, onto the caller's framebuffer,
@@ -392,7 +426,7 @@ namespace EdgeLighting
         /// @c NeonConfig::enable is off. A host that calls it without
         /// RenderOffscreen for the same frame (EdgeLightingEffect never does)
         /// gets that phase run first, here. The passes in their declaration
-        /// order below, and docs/neon-shader-outputs.html, show each one.
+        /// order below, and docs/pages/neon-shader-outputs.html, show each one.
         ///
         /// With @c DebugConfig::opaqueOnly, the fill alone. A program that
         /// fails to build leaves the frame the fill alone too.
@@ -410,9 +444,12 @@ namespace EdgeLighting
         ///      it forwards @ref Update.
         /// @param viewportWidth  The caller's framebuffer width, px.
         /// @param viewportHeight Its height, px.
-        /// @param time           Seconds of animation time: what the hue rotates by.
+        /// @param time           Seconds of clock time: what the hue rotates by. Reduced
+        ///                       in double to the hue's phase (@c mHuePhase) in
+        ///                       @ref RenderOffscreen, the only form any neon
+        ///                       program is handed (@c uHuePhase).
         /// @param config         The active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
 
         /// The composited configuration changed. Records what moved and
         /// rebuilds only what that feeds: the loop samples (the geometry, the
@@ -441,7 +478,18 @@ namespace EdgeLighting
         /// @return @ref RendererLayer::NEON.
         virtual RendererLayer GetLayer() const override { return RendererLayer::NEON; }
 
+        /// Bypass the skips and reuses @p mask names (bits of @ref NeonBypass)
+        /// from the next frame on - a verification hook; see @ref NeonBypass.
+        /// @ref NeonBypass::REBUILD acts in @ref OnConfigChanged, so on the
+        /// next config change.
+        void SetBypass(uint32_t mask) { mBypass = mask; }
+        /// @return The mask @ref SetBypass last set; 0 by default.
+        uint32_t GetBypass() const { return mBypass; }
+
     private:
+        /// Whether @ref SetBypass named @p bit.
+        bool bypasses(NeonBypass bit) const { return (mBypass & static_cast<uint32_t>(bit)) != 0; }
+
         // --- Types -----------------------------------------------------------
         typedef NeonDetail::Annulus Annulus;
         typedef NeonDetail::BufferRegion BufferRegion;
@@ -498,13 +546,12 @@ namespace EdgeLighting
             int count = 0;           ///< Vertices in it; 0 when there is nothing to draw.
         } Mesh;
 
-        /// Everything pass 0 reads besides the time, AS THE PASS SEES IT: its
-        /// two value uniforms, and a version number for each texture and
+        /// Everything pass 0 reads besides the hue phase, AS THE PASS SEES IT:
+        /// its value uniform, and a version number for each texture and
         /// uniform block it binds. See @ref isEmissionTableStale.
         ///
         /// @par Two kinds of field
-        ///   - The VALUE uniforms, @c hueRotationRate and @c numSamples,
-        ///     compared by value.
+        ///   - The VALUE uniform, @c numSamples, compared by value.
         ///   - The GL objects the pass binds - the three LUTs and the two light
         ///     blocks - compared by their upload counts, a version number on
         ///     each object, not by their contents or by the config fields that
@@ -518,9 +565,9 @@ namespace EdgeLighting
         /// one of them.
         ///
         /// @par Left out
-        /// @c uTime, which @ref EmissionBake::time covers - and only while the
-        /// hue rotates, since at a rate of 0 it drops out of the table - and
-        /// @c uMVP, the identity on every frame.
+        /// @c uHuePhase, which @ref EmissionBake::huePhase covers - the hue
+        /// rate reaches the pass only through it, and at a rate of 0 it is 0
+        /// at every time - and @c uMVP, the identity on every frame.
         ///
         /// @par Lifetime
         /// Built by @ref getEmissionInputs, from exactly what
@@ -534,7 +581,6 @@ namespace EdgeLighting
         /// input alone moves.
         typedef struct EmissionInputs
         {
-            float hueRotationRate = 0.0f;     ///< uHueRotationRate.
             int numSamples = 0;               ///< uNumSamples, clamped as the pass uploads it.
             uint32_t gradientUploads = 0;     ///< mGradientLUT.GetUploadCount() - uGradientLUT.
             uint32_t segmentAtlasUploads = 0; ///< mSegmentLUT.GetUploadCount() - uSegmentLUT.
@@ -544,8 +590,7 @@ namespace EdgeLighting
 
             bool operator==(const EmissionInputs &o) const
             {
-                return hueRotationRate == o.hueRotationRate && numSamples == o.numSamples &&
-                       gradientUploads == o.gradientUploads && segmentAtlasUploads == o.segmentAtlasUploads &&
+                return numSamples == o.numSamples && gradientUploads == o.gradientUploads && segmentAtlasUploads == o.segmentAtlasUploads &&
                        arcAtlasUploads == o.arcAtlasUploads && segmentBlockUploads == o.segmentBlockUploads &&
                        arcBlockUploads == o.arcBlockUploads;
             }
@@ -569,9 +614,8 @@ namespace EdgeLighting
         ///   - @ref NeonRenderer::getEmissionInputs differs from @c inputs
         ///     - a value uniform, or the upload count of a LUT or a light
         ///     block the pass binds, moved;
-        ///   - the hue rotates (@c hueRotationRate non-zero) and the frame's
-        ///     time differs from @c time. At a rate of 0 the table does not
-        ///     depend on time, and @c time is not consulted.
+        ///   - the frame's hue phase differs from @c huePhase. At a rate of 0
+        ///     the phase is 0 at every time, so time alone never re-bakes it.
         ///
         /// And by @ref NeonRenderer::getGatherInputs, for @c version: the
         /// gather reads the table, so a fresh bake has to change the gather's
@@ -579,8 +623,8 @@ namespace EdgeLighting
         typedef struct EmissionBake
         {
             bool baked = false;    ///< Written at all: until then the buffer holds undefined texels, whatever @c inputs holds.
-            EmissionInputs inputs; ///< The inputs other than time it was baked from.
-            float time = 0.0f;     ///< The time it was baked at; consulted only while the hue rotates.
+            EmissionInputs inputs; ///< The inputs other than the hue phase it was baked from.
+            float huePhase = 0.0f; ///< The hue phase it was baked at (uHuePhase, mHuePhase).
             uint32_t version = 0;  ///< How many times it has been written - the table's version, for @ref GatherInputs. Only ever compared for equality.
         } EmissionBake;
 
@@ -807,7 +851,7 @@ namespace EdgeLighting
         /// TRANSPOSED above those, so each runs along the atlas's width. Every
         /// texel sits on one of the viewport's pixels, so the composite reads
         /// the texel of its own pixel.
-        /// neon-field.frag (NEON_FIELD_RING) reads this layout and
+        /// neon-ring-field.frag reads this layout and
         /// @ref renderRingFieldPass bakes it: change the three together.
         ///
         /// @par The box and its strips
@@ -884,8 +928,7 @@ namespace EdgeLighting
             float cornerSkip = 0.0f; ///< uCornerSkip: a corner arc is skipped whole this far from its circle - see GetCornerSkip.
         } ShadeLimits;
 
-        /// The two light blocks - the segments and the arcs - and whether
-        /// they still hold the current config. Read by the emission pre-pass,
+        /// The two light blocks - the segments and the arcs - Read by the emission pre-pass,
         /// the coverage bake and every neon.frag program; packed by
         /// @ref packLightBlocks.
         typedef struct LightBlocks
@@ -897,19 +940,6 @@ namespace EdgeLighting
             /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
             UniformBuffer arc{"NeonRenderer.ArcBlock"};
 
-            /// Whether @c mLightBlocks.segment / @c mLightBlocks.arc still hold the current
-            /// config. Cleared by @ref packLightBlocks once it has repacked.
-            ///
-            /// NOT set on every config change, as the emission table's flag used
-            /// to be: the blocks are packed from @c mEffectiveSegments and
-            /// @c NeonConfig::arcs and nothing else, so @ref OnConfigChanged gates
-            /// it on exactly those two. It accumulates rather than being assigned,
-            /// because that call can run more than once before the next
-            /// @ref Render - see the note there.
-            ///
-            /// Starts true because @ref Initialize does not pack - the first
-            /// @ref Render is what fills them.
-            bool dirty = true;
         } LightBlocks;
 
         /// Pass 0's target and what it holds: the per-sample emission table and
@@ -1021,7 +1051,7 @@ namespace EdgeLighting
             /// the rect's width, height, corner radius and winding, and the glow
             /// radius - every one of them in @ref renderGlowCoverPass or the
             /// blocks it binds - so @ref OnConfigChanged gates it on exactly
-            /// those, as it gates @c mLightBlocks.dirty. The bake is the costly
+            /// those, as the light blocks once were gated. The bake is the costly
             /// pass (0.14-0.27 ms on an AMD Radeon Pro 5300M), and "any change"
             /// re-ran it every frame under an intensity or colour animation, or an
             /// animation of another LAYER's fields, none of which it reads.
@@ -1032,11 +1062,11 @@ namespace EdgeLighting
             /// GetGlowCoverDirtySegmentPieces), so a segment
             /// travelling along one straight re-bakes that band rather than the
             /// table - 1.18-1.91x on such frames on an Apple M2 Pro
-            /// (docs/neon-perf-plan.md, item 5). The shape, the winding and the
+            /// (neon-perf-plan.md, item 5). The shape, the winding and the
             /// glow radius dirty all eight, as do the brightest arc's intensity
             /// and any light covering the whole ring.
             ///
-            /// Accumulated, never assigned, for @c mLightBlocks.dirty's reasons, and
+            /// Accumulated, never assigned, because OnConfigChanged can run more than once between frames, and
             /// cleared only by the bake - so a change made while the bake is
             /// skipped (a ring lit uniformly) is still pending when it next runs.
             /// Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
@@ -1055,7 +1085,7 @@ namespace EdgeLighting
 
             /// Seconds of frame time @c mGlowCover.buffer has gone unread - the ring
             /// lit uniformly, or the layer off. @ref Update releases the table at
-            /// GLOW_COVER_RELEASE_SECONDS (docs/neon-perf-plan.md item 10).
+            /// GLOW_COVER_RELEASE_SECONDS (neon-perf-plan.md item 10).
             float unreadSeconds = 0.0f;
         } GlowCoverTable;
 
@@ -1138,12 +1168,13 @@ namespace EdgeLighting
         /// buffers through.
         typedef struct FrameState
         {
-            bool prepared = false;          ///< RenderOffscreen ran for this frame and Render has not consumed it.
-            glm::ivec2 viewport{0};         ///< The viewport it ran for.
-            bool glowReady = false;         ///< Every offscreen pass the composites read succeeded: the blit and the ring draw.
-            UVMap scaledUV;                 ///< Full-res rect-local px -> the reduced buffer's uv, for the blit.
-            UVMap gatherUVFull;             ///< Full-res rect-local px -> the gather buffer's uv, for the ring.
-            LazyBake::Decision ringField;   ///< Whether the ring composites its field (P2r) and at what gain.
+            bool prepared = false;        ///< RenderOffscreen ran for this frame and Render has not consumed it.
+            glm::ivec2 viewport{0};       ///< The viewport it ran for.
+            bool glowReady = false;       ///< Every offscreen pass the composites read succeeded: the blit and the ring draw.
+            UVMap scaledUV;               ///< Full-res rect-local px -> the reduced buffer's uv, for the blit.
+            UVMap gatherUVFull;           ///< Full-res rect-local px -> the gather buffer's uv, for the ring.
+            LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) and at what gain.
+            float huePhase = 0.0f;        ///< The hue's phase this frame (mHuePhase), for the ring's uHuePhase.
         } FrameState;
 
         /// Whether the offscreen phase can be skipped on this frame, and the
@@ -1174,14 +1205,14 @@ namespace EdgeLighting
             /// buffer holds the field's composite rather than the shading (I56: the
             /// frame the intensity stops on redraws pass 1b exactly); and honoured
             /// only on a frame whose emission table is current
-            /// (@ref isEmissionTableStale, which carries the time and the ring's
+            /// (@ref isEmissionTableStale, which carries the hue phase and the ring's
             /// cross-fade), whose glow coverage table needs no bake, and whose
             /// viewport is @c viewport. Byte-identical. With the gather's own
             /// skip in place, a still frame without this flag is 4.2x slower
             /// at scale 0.5 (3.1-5.5x across neon-scale-check's twelve scenes),
             /// 10.3x at 1.0 and 2.1x at 0.125; frames whose config changes are
             /// unaffected, since every change clears it (AMD Radeon Pro 5300M,
-            /// 1920 x 1080, 2026-10-08). First built as docs/neon-perf-plan.md
+            /// 1920 x 1080, 2026-10-08). First built as neon-perf-plan.md
             /// item 4.
             bool reusable = false;
 
@@ -1192,17 +1223,16 @@ namespace EdgeLighting
         } OffscreenState;
 
         // --- Programs: built once, on first use ------------------------------
-        /// Build @p program from @p fragSrc over neon.vert, with @p define
-        /// spliced in (none for @c nullptr), once - every program goes through
-        /// here, the emission pre-pass's from @ref Initialize and the rest on
+        /// Build @p program from @p fragSrc over neon.vert, once - every
+        /// program goes through here, the emission pre-pass's from @ref Initialize and the rest on
         /// first use. Returns true if it is ready. A failed build is
         /// recorded in @c mFailedPrograms under @p programBit, logged once with
         /// @p consequence, and never retried, so a broken driver costs one
         /// compile and one log line, not one per frame. @p blocks (@c BLOCK_*)
         /// names the uniform blocks the source declares, each bound to its
         /// binding point.
-        bool ensureProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
-                           unsigned int programBit, unsigned int blocks, const char *consequence);
+        bool ensureProgram(ShaderProgram &program, const char *fragSrc, const char *name, unsigned int programBit,
+                           unsigned int blocks, const char *consequence);
 
         /// Make sure every program the glow draws with is built, building any
         /// that are not: neon-gather.frag, neon.frag twice (pass 1b and the
@@ -1225,8 +1255,8 @@ namespace EdgeLighting
         /// main table's own bake for good (@c GlowCoverTable::fillUnavailable).
         bool ensureGlowCoverFillProgram();
 
-        /// Make sure the field's two programs - neon.frag with NEON_FIELD_BAKE,
-        /// and neon-field.frag - are built, building them if not. Called on
+        /// Make sure the field's two programs - neon-field-bake.frag and
+        /// neon-field.frag - are built, building them if not. Called on
         /// every frame whose config the field can serve, so they are built on
         /// the first such frame - which shades directly, and is compiling its
         /// path's programs too - rather than stalling the bake frame after it.
@@ -1234,8 +1264,8 @@ namespace EdgeLighting
         /// used and the shading draws as before.
         bool ensureFieldPrograms();
 
-        /// Make sure the ring field's composite (neon-field.frag with
-        /// NEON_FIELD_RING) and the bake (@ref ensureFieldPrograms) are built.
+        /// Make sure the ring field's composite (neon-ring-field.frag) and the
+        /// bake (@ref ensureFieldPrograms) are built.
         /// A failure is recorded in @c mFailedPrograms; the ring is then shaded
         /// directly.
         bool ensureRingFieldPrograms();
@@ -1310,9 +1340,8 @@ namespace EdgeLighting
         /// bake the per-sample emission, the main pass for the continuous
         /// filament gate.
         ///
-        /// Repacks only when @c mLightBlocks.dirty says the config moved; the
-        /// bind is unconditional. See the definition for why the two are
-        /// treated differently.
+        /// Packs every frame - an unchanged pack uploads nothing - and binds
+        /// unconditionally; see the definition.
         /// @pre @c mEffectiveSegments is current for @p config - i.e.
         ///      @ref OnConfigChanged has run for any change since the last
         ///      frame, which the effect guarantees by calling Update before
@@ -1389,7 +1418,7 @@ namespace EdgeLighting
                                                       int viewportWidth, int viewportHeight);
 
         // --- Skip keys: whether a pass has to run ----------------------------
-        /// The pass-0 inputs other than time, as @ref renderEmissionPass would
+        /// The pass-0 inputs other than the hue phase, as @ref renderEmissionPass would
         /// upload and bind them now: compared against the last bake's by
         /// @ref isEmissionTableStale, and recorded by the bake.
         /// @pre @ref packLightBlocks has run this frame: the blocks' upload
@@ -1409,8 +1438,8 @@ namespace EdgeLighting
         ///
         /// Stale when any of three things holds:
         ///   - the table was never baked (@c mEmission.bake);
-        ///   - an input other than time moved (@ref EmissionInputs): the two
-        ///     value uniforms compared by value, and the three LUTs and two
+        ///   - an input other than the hue phase moved (@ref EmissionInputs):
+        ///     the value uniform compared by value, and the three LUTs and two
         ///     light blocks by their upload counts. Version numbers on the GL
         ///     objects the pass binds, NOT a list of the config fields that
         ///     feed them - so a config change that moves none of them (an
@@ -1418,16 +1447,18 @@ namespace EdgeLighting
         ///     re-bakes nothing, and nothing that does move one can be missed
         ///     by a gate falling out of step with the shader. A cross-fade
         ///     frame moves the ring's count like a re-bake does.
-        ///   - @c uTime moved at a non-zero hue rate. It reaches the shader
-        ///     exactly once, as `si - uTime * uHueRotationRate`, so at a rate
-        ///     of 0 it drops out of the table altogether.
+        ///   - @p huePhase moved. It reaches the shader exactly once, as
+        ///     `si - uHuePhase`, and is the only form time takes there: the
+        ///     hue rate integrated over the clock's time, in double on the CPU
+        ///     (@c mHuePhase) so it keeps its precision at any uptime. While
+        ///     the rate is 0 it does not move, whatever the time.
         ///
         /// It used to be "any config change" (@c mEmissionDirty), deliberately
         /// wide because a field list would drift from the shader; the version
-        /// numbers have no field list. See docs/emission-prepass.md section 3.
+        /// numbers have no field list. See docs/design/emission-prepass.md section 3.
         /// @pre @ref packLightBlocks has run this frame: the blocks' counts
         ///      are part of the key, and only the pack moves them.
-        bool isEmissionTableStale(float time, const Config &config) const;
+        bool isEmissionTableStale(float huePhase, const Config &config) const;
 
         /// Pass 1a's inputs besides its region and quad, as
         /// @ref renderGatherPass would hand them over now, for a viewport of
@@ -1448,10 +1479,11 @@ namespace EdgeLighting
         /// @p scale, fading against @p limits.quadMargin and skipping corner
         /// arcs past @p limits.cornerSkip (px in the same space, both). One
         /// copy for every program built from neon.frag, so the variants cannot
-        /// drift apart in what they are told - but for uGlowSideSoftness, which
-        /// the field bake (@c mFieldBakeShader) is not sent: its only reader is
-        /// the cut after the bake's return, so a compiler that removes dead
-        /// code removes the uniform (I63, UploadEdgeMaskUniforms). Not for neon-gather.frag, which
+        /// drift apart in what they are told - but for uGlowSide and
+        /// uGlowSideSoftness, which the field bake (@c mFieldBakeShader) is not
+        /// sent: their only readers are the cut after the bake's return and
+        /// the culls the bake does not make (V35), so a compiler that removes
+        /// dead code removes both (I63, UploadEdgeMaskUniforms). Not for neon-gather.frag, which
         /// shades nothing - it takes @ref uploadShapeUniforms alone. The
         /// gather's own inputs - the sample block, the count and the emission
         /// table - are not here: only the gathering programs have them, and
@@ -1460,7 +1492,7 @@ namespace EdgeLighting
         /// one-sided cut and the cutoffs to it, false for the edge ring and its
         /// field bake, which apply both after the grade (uBlitOwnsCut).
         /// @pre @p shader is in use.
-        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float time,
+        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float huePhase,
                                 const ShadeLimits &limits, bool blitOwnsCut, const Config &config);
 
         /// Bind the gather loop's own inputs - the sample block, the count and
@@ -1480,7 +1512,7 @@ namespace EdgeLighting
         void bindGatherBuffer(ShaderProgram &shader, const UVMap &gatherUV);
 
         // --- The passes, in the order Render runs them -----------------------
-        // The order is the frame's (docs/neon-shader-outputs.html), and the
+        // The order is the frame's (docs/pages/neon-shader-outputs.html), and the
         // .cpp defines them in the same order - keep the three in step. The
         // data dependency is the real contract: pass 0 bakes the
         // table the gather reads, pass 1a's gather buffer is what pass 1b and
@@ -1498,7 +1530,7 @@ namespace EdgeLighting
         // relies on are stated in its @pre below.
         //
         // The passes take the pieces of the frame transform they actually use.
-        // @ref Render derives them once, in SCALED space, so the gather quad
+        // @ref RenderOffscreen derives them once, in SCALED space, so the gather quad
         // and the sample positions agree; the opaque fill is the exception and
         // takes the viewport height, since it always draws at full resolution
         // on the caller's framebuffer.
@@ -1506,7 +1538,7 @@ namespace EdgeLighting
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmission.buffer, at the clamped sample count so texel i here is
         /// sample i in the gather. Retargets the framebuffer and viewport, so
-        /// it restores both before returning - see docs/emission-prepass.md.
+        /// it restores both before returning - see docs/design/emission-prepass.md.
         ///
         /// Records what it baked (@c mEmission.bake) on the way out, so
         /// @ref isEmissionTableStale reads a snapshot written by the only
@@ -1515,13 +1547,13 @@ namespace EdgeLighting
         /// @pre @c mEmission.buffer is allocated, which @ref Initialize
         ///      guarantees for the renderer's lifetime - hence no failure to
         ///      report and nothing to allocate here.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        void renderEmissionPass(int viewportWidth, int viewportHeight, float huePhase, const Config &config);
 
         /// Pass 0b: bake the glow coverage table into @c mGlowCover.buffer -
         /// for each piece of the emitter, the arcs' and the segments' coverage
         /// over that piece's own extent, weighted by the halo's and the bloom's
         /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
-        /// V21 in docs/review-findings.md).
+        /// V21 in docs/records/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
         /// returning, and clears both of @c mGlowCover's dirty masks on the
         /// way out. Bakes only the pieces they name, by drawing its quad onto
@@ -1537,7 +1569,7 @@ namespace EdgeLighting
         /// gather region's projection from pass 1's scaled rect-local space.
         /// Takes no time:
         /// the loop reads time only through the emission table. Leaves the
-        /// buffer bound; @ref Render restores the target.
+        /// buffer bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled - the buffer is data.
         /// @return false if the buffer could not be allocated, in which case
         ///         every later glow pass must be skipped.
@@ -1561,20 +1593,20 @@ namespace EdgeLighting
         /// reading the gather through
         /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
         /// with segments (GetFieldFormat). Leaves the buffer bound;
-        /// @ref Render restores the target.
+        /// @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
         ///         then never used.
         bool renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV, float scale,
-                             float time, const Config &config);
+                             float huePhase, const Config &config);
 
         /// Pass 1b: the neon on the tight glow quad, shaded from the gather
         /// pass's result, so it must run after it - into @c mScaled,
         /// @p texels drawn through @p mvp (its region's projection), the quad
         /// landing in @p window (see SharedBuffer::BeginWrite), with
         /// @c mShadeShader, reading @c mGather.buffer through @p gatherUV. Clears that
-        /// buffer and leaves it bound; @ref Render restores the target before
-        /// pass 2a.
+        /// buffer and leaves it bound; @ref RenderOffscreen restores the target
+        /// before phase 2.
         /// @pre Blending DISABLED: the buffer was just cleared and the quad
         ///      covers each texel once, so over would only have added zero, for
         ///      a destination read per texel.
@@ -1583,7 +1615,7 @@ namespace EdgeLighting
         ///         skipped too - they would otherwise composite a stale or
         ///         undefined buffer.
         bool renderShadePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const glm::ivec4 &window,
-                             const UVMap &gatherUV, float time, const Config &config);
+                             const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 1c: in pass 1b's place, the glow quad drawn with
         /// neon-field.frag - the field times the gathered hue, tone-mapped -
@@ -1594,7 +1626,7 @@ namespace EdgeLighting
         /// @pre Blending disabled.
         /// @return false if the reduced buffer could not be allocated.
         bool renderFieldCompositePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const glm::ivec4 &window,
-                                      const UVMap &gatherUV, float gain);
+                                      const UVMap &gatherUV, float gain, float scale, const Config &config);
 
         // P1r and P2r - the edge ring, factored into a field of its own.
         // The ring is re-shaded on EVERY frame, still frames included: it
@@ -1617,10 +1649,10 @@ namespace EdgeLighting
         /// box quad @c mRingField.box, not the ring, so every texel of every
         /// strip is baked. Reads
         /// the gather through the full-res map @p gatherUV. Leaves the buffer
-        /// bound; @ref Render restores the target.
+        /// bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated.
-        bool renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config);
+        bool renderRingFieldPass(const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
@@ -1671,7 +1703,7 @@ namespace EdgeLighting
         /// shares its edges with what pass 2b drew, through the same @p mvp.
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored; pass 1 succeeded.
-        void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config);
+        void renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float huePhase, const Config &config);
 
         /// Pass 2r: in pass 2c's place, @c mRingMesh drawn through
         /// @p mvp - the matrix the blit drew with, so the partition holds -
@@ -1722,6 +1754,13 @@ namespace EdgeLighting
         /// @ref ensureProgram.
         unsigned int mFailedPrograms = 0;
 
+        /// The hue's phase: NeonConfig::hueRotationRate integrated over the
+        /// clock's time (see PhaseAccumulator - `time * rate`, which it equals
+        /// while the rate holds, raced whenever the rate moved). Advanced in
+        /// @ref Update and read in @ref RenderOffscreen; the debug strip keeps
+        /// its own, fed the same times and rates, so the two agree.
+        PhaseAccumulator mHuePhase;
+
         /// A config change since the last frame moved NeonConfig::intensity.
         /// Set by @ref OnConfigChanged, consumed by the next @ref Render: the
         /// fields serve a scaled intensity only while it moves (LazyBake).
@@ -1733,12 +1772,12 @@ namespace EdgeLighting
         ShaderProgram mGlowCoverFillShader;      ///< P0f, neon-glow-cover-fill.frag. Built on the first frame with a segment table.
         ShaderProgram mGatherShader;             ///< P1a, neon-gather.frag. Built on the first frame.
         ShaderProgram mShadeShader;              ///< P1b, neon.frag, into the reduced buffer. Built on the first frame.
-        ShaderProgram mFieldBakeShader;          ///< P1f and P1r, neon.frag + NEON_FIELD_BAKE. Built on the first field-eligible frame.
+        ShaderProgram mFieldBakeShader;          ///< P1f and P1r, neon-field-bake.frag. Built on the first field-eligible frame.
         ShaderProgram mFieldCompositeShader;     ///< P1c, neon-field.frag. Built with it.
         ShaderProgram mFillShader;               ///< P2a, black-rect.frag. Built the first time a fill draws through it.
         ShaderProgram mBlitShader;               ///< P2b, neon-blit.frag. Built on the first frame.
         ShaderProgram mRingShader;               ///< P2c, neon.frag again, its own object - see ensureGlowPrograms. Built on the first frame.
-        ShaderProgram mRingFieldCompositeShader; ///< P2r, neon-field.frag + NEON_FIELD_RING. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
+        ShaderProgram mRingFieldCompositeShader; ///< P2r, neon-ring-field.frag. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
 
         // --- CPU-side inputs: uniform blocks and colour LUTs -----------------
         LightBlocks mLightBlocks; ///< The segment and arc uniform blocks; see @ref LightBlocks.
@@ -1809,6 +1848,10 @@ namespace EdgeLighting
         GlowField mGlowField;      ///< P1f, read by P1c - see @ref GlowField.
         RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
         OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
+
+        /// The skips and reuses to bypass - see @ref NeonBypass. 0 outside
+        /// tools/neon-scale-check.
+        uint32_t mBypass = 0;
 
         /// Pass 1b's target and the neon's shared buffer (@ref SharedBuffer,
         /// claimed as SharedBufferId::NEON): the composited colour, one

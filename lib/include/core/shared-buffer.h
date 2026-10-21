@@ -100,6 +100,11 @@ namespace EdgeLighting
         ///         caller must draw nothing.
         bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window);
 
+        /// Treat the texels as undefined: the next @ref BeginWrite clears the
+        /// whole buffer rather than two windows. Moves nothing else. For
+        /// verification (NeonBypass::CLEAR) - a producer never needs it.
+        void ForgetContents() { mDirtyKnown = false; }
+
         /// This frame's image is in the buffer, drawn or kept from an earlier
         /// frame, for a viewport of @p viewport px.
         void MarkReady(const glm::ivec2 &viewport);

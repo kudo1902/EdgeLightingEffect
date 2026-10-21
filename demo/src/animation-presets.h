@@ -36,10 +36,11 @@ namespace EdgeLightingDemo
                    EdgeLighting::EasingFunction::Curve curve = EdgeLighting::EasingFunction::OutCubic)
             : Animation(duration), mCurve(curve) {}
 
-        void ApplyAt(EdgeLighting::Config &cfg, float elapsed) const override
+        void ApplyAt(EdgeLighting::Config &cfg, double elapsed) const override
         {
             float dur = GetDuration();
-            float p = dur > 0.0f ? std::min(std::max(elapsed / dur, 0.0f), 1.0f) : 1.0f;
+            // A one-shot: its elapsed time is bounded by the duration.
+            float p = dur > 0.0f ? std::min(std::max(static_cast<float>(elapsed) / dur, 0.0f), 1.0f) : 1.0f;
             if (mCurve)
             {
                 p = mCurve(p);

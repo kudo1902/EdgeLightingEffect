@@ -1,7 +1,7 @@
 #ifndef _NEON_SCALE_CHECK_SCENES_H_
 #define _NEON_SCALE_CHECK_SCENES_H_
 
-// The twelve scenes of docs/neon-resolution-scale-comparison.html.
+// The twelve scenes of docs/pages/neon-resolution-scale-comparison.html.
 //
 // These are the page's scenes exactly. The first version of the page was made
 // by a harness nobody kept, and its blurbs left out every colour, so each

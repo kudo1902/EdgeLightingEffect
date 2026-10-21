@@ -9,15 +9,14 @@ out vec4 fragColor;
 
 uniform sampler2D uGradientLUT;
 uniform vec2  uStripHalfSize; ///< half-width, half-height of the strip in local px.
-uniform float uTime;
-uniform float uHueRotationRate;
+uniform float uHuePhase; ///< hueRotationRate integrated over the clock, in double on the CPU (PhaseAccumulator).
 
 void main() {
     // Map local x in [-halfW, +halfW] to u in [0, 1], then apply the same
     // time-based hue scroll as the neon shader so this preview matches what
     // the perimeter is actually reading each frame (REPEAT-wrapped LUT).
     float u = vPos.x / (2.0 * uStripHalfSize.x) + 0.5;
-    u -= uTime * uHueRotationRate;
+    u -= uHuePhase;
     vec4 lut = texture(uGradientLUT, vec2(u, 0.5));
     // Scale by the baked alpha so the strip previews the EMISSION, matching
     // how neon.frag applies stop alpha to the magnitude. A stop faded to

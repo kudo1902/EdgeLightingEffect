@@ -152,6 +152,10 @@ namespace EdgeLighting
     ///                         Composes cleanly for UI indicators that need
     ///                         to track all three states.
     ///
+    /// A callback may clear or replace itself, and may attach, detach, add or
+    /// remove animations in the @ref AnimationManager or @ref AnimationGroup
+    /// that is advancing it: both walk a snapshot of their list.
+    ///
     /// @code
     ///     auto pulse = std::make_shared<IntensityPulse>(0.5f);
     ///     pulse->Play();
@@ -203,7 +207,7 @@ namespace EdgeLighting
             }
             if (mState == AnimationState::STOPPED)
             {
-                mElapsed = 0.0f;
+                mElapsed = 0.0;
             }
             transitionTo(AnimationState::PLAYING);
         }
@@ -246,9 +250,9 @@ namespace EdgeLighting
         ///          action goes dormant until the next real @ref Play.
         virtual void Reset(Config &cfg)
         {
-            mElapsed = 0.0f;
+            mElapsed = 0.0;
             mHasRun = false;
-            ApplyAt(cfg, 0.0f);
+            ApplyAt(cfg, 0.0);
         }
 
         // --- Drive -------------------------------------------------------
@@ -258,14 +262,14 @@ namespace EdgeLighting
         /// @param dt Frame delta in seconds.
         /// @details No-op when Paused or Stopped (elapsed is frozen).
         ///          Speed is folded in: elapsed accumulates
-        ///          @c dt * @ref GetSpeed.
+        ///          @c dt * @ref GetSpeed, in double - see @c mElapsed.
         virtual void Update(float dt)
         {
             if (mState != AnimationState::PLAYING)
             {
                 return;
             }
-            mElapsed += dt * mSpeed;
+            mElapsed += static_cast<double>(dt) * static_cast<double>(mSpeed);
             // Duration semantics: mDuration is the length of ONE animation
             // cycle, uniform across both modes.
             //   LOOP     - wrap mElapsed at mDuration so ApplyAt sees a
@@ -280,7 +284,7 @@ namespace EdgeLighting
             {
                 if (mMode == PlaybackMode::LOOP)
                 {
-                    mElapsed = std::fmod(mElapsed, mDuration);
+                    mElapsed = std::fmod(mElapsed, static_cast<double>(mDuration));
                 }
                 else if (mMode == PlaybackMode::ONE_SHOT && mElapsed >= mDuration)
                 {
@@ -294,7 +298,11 @@ namespace EdgeLighting
                     transitionTo(AnimationState::STOPPED);
                     if (OnComplete)
                     {
-                        OnComplete();
+                        // A copy, so the callback may clear or replace
+                        // OnComplete - a C host unregistering itself, say -
+                        // without destroying the callable it is running in.
+                        const std::function<void()> onComplete = OnComplete;
+                        onComplete();
                     }
                 }
             }
@@ -337,7 +345,7 @@ namespace EdgeLighting
             }
             case EndAction::HOLD_START:
             {
-                ApplyAt(cfg, 0.0f);
+                ApplyAt(cfg, 0.0);
                 return;
             }
             case EndAction::RESTORE:
@@ -351,7 +359,9 @@ namespace EdgeLighting
         // --- Introspection -----------------------------------------------
 
         AnimationState GetState() const { return mState; }
-        float GetElapsed() const { return mElapsed; }
+        /// Seconds of play since @ref Play from Stopped, wrapped at the
+        /// duration in LOOP mode - a double, see @c mElapsed.
+        double GetElapsed() const { return mElapsed; }
         bool IsPlaying() const { return mState == AnimationState::PLAYING; }
         bool IsPaused() const { return mState == AnimationState::PAUSED; }
         bool IsStopped() const { return mState == AnimationState::STOPPED; }
@@ -363,7 +373,7 @@ namespace EdgeLighting
         ///          NOT change state or trigger @ref OnComplete on its own -
         ///          the next @ref Update tick will complete a one-shot whose
         ///          elapsed has crossed @ref GetDuration.
-        void SetElapsed(float elapsed) { mElapsed = std::max(0.0f, elapsed); }
+        void SetElapsed(double elapsed) { mElapsed = std::max(0.0, elapsed); }
 
         /// @brief Normalised playback position in @c [0, 1].
         /// @details @c elapsed / @c duration - the reciprocal of a duration
@@ -379,7 +389,7 @@ namespace EdgeLighting
         float GetProgress() const
         {
             const float d = GetDuration();
-            return (d > 0.0f) ? (mElapsed / d) : 0.0f;
+            return (d > 0.0f) ? static_cast<float>(mElapsed / static_cast<double>(d)) : 0.0f;
         }
 
         /// @brief Set the normalised playback position.
@@ -396,7 +406,7 @@ namespace EdgeLighting
             {
                 return;
             }
-            mElapsed = std::clamp(progress, 0.0f, 1.0f) * d;
+            mElapsed = static_cast<double>(std::clamp(progress, 0.0f, 1.0f)) * static_cast<double>(d);
         }
 
         // --- Identity ----------------------------------------------------
@@ -504,7 +514,11 @@ namespace EdgeLighting
         ///          for the STOPPED @c HOLD_* dispatches; @ref Reset invokes
         ///          it with @c elapsed = 0. Subclasses should keep this pure
         ///          (no side effects other than writing @p cfg).
-        virtual void ApplyAt(Config &cfg, float elapsed) const = 0;
+        /// @param elapsed Seconds, a double: unbounded when the duration is 0.
+        ///                Hand it to a @ref Modulator as it is, which reduces
+        ///                it in double; narrow it only where the animation's
+        ///                own duration bounds it.
+        virtual void ApplyAt(Config &cfg, double elapsed) const = 0;
 
         /// @brief Hook for subclasses to rebuild duration-dependent state.
         /// @details Called by @ref SetDuration when the duration actually
@@ -529,7 +543,9 @@ namespace EdgeLighting
             mState = next;
             if (OnStateChanged)
             {
-                OnStateChanged(prev, next);
+                // A copy, for OnComplete's reason (see Update).
+                const std::function<void(AnimationState, AnimationState)> onStateChanged = OnStateChanged;
+                onStateChanged(prev, next);
             }
         }
 
@@ -542,7 +558,13 @@ namespace EdgeLighting
         // @ref Reset(cfg) once at setup - that triggers @c ApplyAt(cfg, 0)
         // without changing state.
         AnimationState mState = AnimationState::STOPPED;
-        float mElapsed = 0.0f;
+        /// Seconds of play. A DOUBLE, for the reason the Clock's time is one:
+        /// LOOP mode wraps it at the duration, but a duration of 0 - the
+        /// modulator owns its periodicity, FieldBoundAnimation's default - is
+        /// never wrapped, and a float accumulator then advanced 10 s of 60 fps
+        /// frames by 9.375 s after a day of uptime, 18.75 s after six, and not
+        /// at all past 2^19 s (~6.07 days).
+        double mElapsed = 0.0;
         PlaybackMode mMode = PlaybackMode::LOOP;
         float mDuration = 0.0f;
         float mSpeed = 1.0f;
@@ -618,50 +640,72 @@ namespace EdgeLighting
         // command), but child states can drift if a child is controlled
         // individually.
 
+        //
+        // Each of them, and Update, reaches the children's callbacks
+        // (OnStateChanged, OnComplete), which may Add or Remove children - so
+        // they walk a snapshot (forEachChild), and skip a child removed
+        // earlier in the walk. A child added during one is first reached by
+        // the next call.
+
         void Play() override
         {
             Animation::Play();
-            for (const auto &a : mAnimations)
-            {
-                a->Play();
-            }
+            forEachChild([](Animation &a)
+                         { a.Play(); });
         }
 
         void Pause() override
         {
             Animation::Pause();
-            for (const auto &a : mAnimations)
-            {
-                a->Pause();
-            }
+            forEachChild([](Animation &a)
+                         { a.Pause(); });
         }
 
         void Stop() override
         {
             Animation::Stop();
-            for (const auto &a : mAnimations)
-            {
-                a->Stop();
-            }
+            forEachChild([](Animation &a)
+                         { a.Stop(); });
         }
 
         void Reset(Config &cfg) override
         {
             Animation::Reset(cfg);
-            for (const auto &a : mAnimations)
-            {
-                a->Reset(cfg);
-            }
+            forEachChild([&cfg](Animation &a)
+                         { a.Reset(cfg); });
         }
 
         // --- Drive -------------------------------------------------------
 
+        /// @note A nested call, from a child's callback, does nothing: it would
+        ///       overwrite the walk under the outer one.
         void Update(float dt) override
         {
-            Animation::Update(dt);
-            for (const auto &a : mAnimations)
+            if (mInUpdate)
             {
-                a->Update(dt);
+                return;
+            }
+            Animation::Update(dt);
+            // The per-frame walk reuses a member snapshot, so it allocates
+            // nothing once warm; reset even if a callback throws.
+            typedef struct WalkScope
+            {
+                AnimationGroup &group;
+                explicit WalkScope(AnimationGroup &g) : group(g) { group.mInUpdate = true; }
+                ~WalkScope()
+                {
+                    group.mWalk.clear();
+                    group.mInUpdate = false;
+                }
+            } WalkScope;
+            WalkScope scope(*this);
+            mWalk = mAnimations;
+            for (const auto &a : mWalk)
+            {
+                if (contains(a))
+                {
+                    a->Update(dt);
+                }
             }
         }
 
@@ -713,7 +757,7 @@ namespace EdgeLighting
         /// @details Each child's @ref Apply performs its own state check
         ///          (Stopped children are handled inside Animation::Apply
         ///          per the child's own end action).
-        void ApplyAt(Config &cfg, float /*elapsed*/) const override
+        void ApplyAt(Config &cfg, double /*elapsed*/) const override
         {
             for (const auto &a : mAnimations)
             {
@@ -722,7 +766,32 @@ namespace EdgeLighting
         }
 
     private:
+        /// Whether @p animation is still a child.
+        bool contains(const AnimationPtr &animation) const
+        {
+            return std::find(mAnimations.begin(), mAnimations.end(), animation) != mAnimations.end();
+        }
+
+        /// @p fn on every child, over a snapshot taken now, skipping one
+        /// removed during the walk. For the broadcasts, which are not per
+        /// frame, so a local copy is fine.
+        template <typename Fn>
+        void forEachChild(Fn fn)
+        {
+            const std::vector<AnimationPtr> walk = mAnimations;
+            for (const auto &a : walk)
+            {
+                if (contains(a))
+                {
+                    fn(*a);
+                }
+            }
+        }
+
+    private:
         std::vector<AnimationPtr> mAnimations;
+        std::vector<AnimationPtr> mWalk; ///< Update's snapshot of mAnimations; empty outside it.
+        bool mInUpdate = false;          ///< True while Update walks mWalk.
     };
 
     /// @}

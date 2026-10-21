@@ -1,5 +1,6 @@
 #include "renderer/droplets-renderer.h"
 #include "renderer/droplets-tuning.h"
+#include "animation/clock.h"
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
@@ -18,6 +19,9 @@ namespace EdgeLighting
         {
             float inner; ///< Nearest distance written (negative = inside the rect).
             float outer; ///< Furthest distance written.
+
+            bool operator==(const BandExtent &o) const { return inner == o.inner && outer == o.outer; }
+            bool operator!=(const BandExtent &o) const { return !(*this == o); }
         } BandExtent;
 
         /// @ref BandExtent for the live glow side.
@@ -93,11 +97,23 @@ namespace EdgeLighting
         return true;
     }
 
-    void DropletsRenderer::Update(float, float, const Config &)
+    void DropletsRenderer::Update(float, double time, const Config &config)
     {
+        // The field's time, every frame, so a speed that moves while the layer
+        // is off is integrated as it moved; Render reads it again.
+        advanceDropTime(time, config);
     }
 
-    void DropletsRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    double DropletsRenderer::advanceDropTime(double time, const Config &config)
+    {
+        // The rate in drop-time per clock second. At speed 1 the product is
+        // DROPLET_TIME_SCALE exactly, so a constant speed reads the
+        // `time * DROPLET_TIME_SCALE * speed` it always did.
+        return mDropTime.Advance(time, DROPLET_TIME_SCALE * static_cast<double>(config.droplets.speed),
+                                 DROPLET_TIME_PERIOD);
+    }
+
+    void DropletsRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.droplets.enable || viewportWidth <= 0 || viewportHeight <= 0)
         {
@@ -134,9 +150,13 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
         mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        mShaderProgram.SetUniform("uTime", time);
+        // The field's own time, wrapped in double before it becomes a float:
+        // see DROPLET_HASH_ROWS for why the wrap leaves no seam. The speed is
+        // integrated rather than multiplied by the time (mDropTime): a changed
+        // speed used to jump the whole field by time * the change.
+        const double dropTime = advanceDropTime(time, config);
+        mShaderProgram.SetUniform("uDropTime", static_cast<float>(dropTime));
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
-        mShaderProgram.SetUniform("uSpeed", config.droplets.speed);
         mShaderProgram.SetUniform("uLanes", std::max(config.droplets.lanes, 1));
         mShaderProgram.SetUniform("uBandWidth", config.droplets.bandWidth);
         mShaderProgram.SetUniform("uBandOffset", config.droplets.bandOffset);
@@ -157,19 +177,26 @@ namespace EdgeLighting
 
     void DropletsRenderer::OnConfigChanged(const Config &config)
     {
-        // The quad is sized from the rect's extents and the band's outward
-        // reach, so it is rebuilt when either moves and left alone otherwise -
-        // every other droplet parameter is a per-frame uniform. Dragging Rain
-        // Amount or Speed must not re-upload a VBO.
+        // The ring is sized from the rect's extents and the band's extent, so
+        // it is rebuilt when either moves and left alone otherwise - every
+        // other droplet parameter is a per-frame uniform. Dragging Rain Amount
+        // or Speed must not re-upload a VBO.
+        //
+        // The band is compared as the extent setupGeometry builds from
+        // (GetBandExtent), not as a list of the fields behind it, so the gate
+        // cannot miss one. It did: the extent follows NeonConfig::glowSide as
+        // well as the band's width and offset, and a gate on those two alone
+        // kept the ring built for the old side - switching OUTSIDE to INSIDE
+        // drew 8409 of a fresh renderer's 12891 lit px, the inner third of the
+        // band falling into the old ring's hole.
         //
         // geometry.position is compared along with the rest of RectGeometry
         // even though setupGeometry ignores it (Render's transform carries the
         // position instead): one redundant rebuild on a move is cheaper than a
-        // gate that silently stops matching if the quad ever grows a
+        // gate that silently stops matching if the ring ever grows a
         // dependency on it.
         const bool geometryDirty = config.geometry != mCurrentConfig.geometry ||
-                                   config.droplets.bandWidth != mCurrentConfig.droplets.bandWidth ||
-                                   config.droplets.bandOffset != mCurrentConfig.droplets.bandOffset;
+                                   GetBandExtent(config) != GetBandExtent(mCurrentConfig);
 
         mCurrentConfig = config;
 

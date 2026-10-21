@@ -215,7 +215,7 @@ extern "C"
      *           that relied on the glow's cutoffs to bound an @c INSIDE,
      *           @c OUTSIDE or @c BOTH fill sees it grow to the whole rect, the
      *           viewport edge, or the whole viewport, until it also calls
-     *           @ref el_effect_set_opaque_cutoff. See docs/upgrade-notes.md.
+     *           @ref el_effect_set_opaque_cutoff. See docs/guides/upgrade-notes.md.
      *
      *           The meaning of the width moved as well: the feather now starts
      *           at the cutoff and runs @p softness px past it, where it used

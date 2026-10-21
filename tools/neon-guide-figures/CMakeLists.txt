@@ -1,4 +1,4 @@
-# neon-guide-figures - renders every image in docs/neon-onboarding-guide.md.
+# neon-guide-figures - renders every image in docs/guides/neon-onboarding-guide.md.
 #
 # In-tree only: configure the repo with
 #     cmake -S . -B build -G Ninja -DEDGE_LIGHTING_BUILD_TOOLS=ON

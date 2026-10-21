@@ -1,0 +1,1424 @@
+<title>C++ Design and Implementation</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Minimal reset, as in the other pages under docs/pages/: these are
+     read as local files as well as published, so they cannot rely on a
+     host supplying one.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption, pre, table, caption { margin: 0; }
+  ol, ul { padding: 0; }
+
+  /* Same token system as neon-renderer-reference.html and
+     neon-shader-outputs.html, so the three pages read as one set. :root
+     carries the COMPLETE light palette; the two blocks below redefine
+     tokens only, never component styles. */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+    --teal:       #0091ae;
+    --teal-dim:   #0091ae1f;
+    --pink:       #d4457e;
+    --pink-dim:   #d4457e1f;
+    --warn-dim:   #d4457e14;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 74ch;
+    --wide: 1100px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      --teal:       #3fc6e5;
+      --teal-dim:   #3fc6e522;
+      --pink:       #ff7cad;
+      --pink-dim:   #ff7cad22;
+      --warn-dim:   #ff7cad14;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    --teal:       #3fc6e5;
+    --teal-dim:   #3fc6e522;
+    --pink:       #ff7cad;
+    --pink-dim:   #ff7cad22;
+    --warn-dim:   #ff7cad14;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 96px;
+  }
+
+  .wrap { max-width: var(--wide); margin: 0 auto; }
+  .col { display: flex; flex-direction: column; }
+
+  .masthead {
+    padding: 60px 0 32px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.06;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 20ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 62ch;
+  }
+
+  /* ---------- table of contents ---------- */
+  nav.toc {
+    margin: 36px 0 8px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+  }
+  nav.toc h2 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+  nav.toc ol {
+    list-style: none;
+    columns: 2;
+    column-gap: 40px;
+  }
+  @media (max-width: 700px) { nav.toc ol { columns: 1; } }
+  nav.toc li {
+    display: flex;
+    gap: 10px;
+    font-size: 15px;
+    padding: 3px 0;
+    break-inside: avoid;
+  }
+  nav.toc .n {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    flex: 0 0 1.6em;
+    padding-top: 0.25em;
+  }
+  nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; }
+  nav.toc a:hover { border-bottom-color: var(--accent); }
+
+  section {
+    padding-top: 52px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 31px);
+    font-weight: 400;
+    line-height: 1.18;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    max-width: 26ch;
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    scroll-margin-top: 16px;
+  }
+  h2.sec .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+    transform: translateY(-0.35em);
+  }
+  h3 {
+    font-family: var(--font-body);
+    font-size: 14.5px;
+    font-weight: 650;
+    letter-spacing: 0.005em;
+    margin-top: 14px;
+    max-width: var(--col);
+  }
+  h3 .src {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ink-3);
+    letter-spacing: 0.03em;
+    margin-left: 8px;
+  }
+
+  p { max-width: var(--col); }
+  .lede {
+    font-family: var(--font-display);
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 62ch;
+  }
+  ul.body, ol.body {
+    max-width: var(--col);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-left: 22px;
+  }
+  ul.body { list-style: square; }
+  ol.body { list-style: decimal; }
+  li::marker { color: var(--ink-3); }
+  strong { font-weight: 650; }
+  em { font-style: italic; color: var(--ink); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    tab-size: 4;
+    max-width: var(--wide);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap {
+    max-width: var(--wide);
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    margin: 6px 0;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink); }
+  td.nw { white-space: nowrap; }
+  td.num { font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .pid, .pid {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    padding: 10px 14px 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* ---------- callouts ---------- */
+  .note, .warn {
+    max-width: var(--wide);
+    padding: 13px 18px;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .note { background: var(--teal-dim); border-left: 3px solid var(--teal); }
+  .warn { background: var(--warn-dim); border-left: 3px solid var(--pink); }
+  .note .tag, .warn .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .note .tag { color: var(--teal); }
+  .warn .tag { color: var(--pink); }
+
+  /* ---------- principles: a numbered grid of short claims ---------- */
+  .principles {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+    gap: 12px;
+    max-width: var(--wide);
+    counter-reset: pr;
+  }
+  .principles li {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 14px 16px 15px;
+    font-size: 14.5px;
+    line-height: 1.5;
+    counter-increment: pr;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .principles li::before {
+    content: counter(pr, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+  .principles b { font-weight: 650; }
+
+  /* ---------- figures ---------- */
+  figure {
+    max-width: var(--wide);
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 20px 22px 16px;
+    margin: 10px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 720px;
+    color: var(--ink);
+  }
+  figcaption {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 11px;
+    max-width: 84ch;
+  }
+  figcaption b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+
+  .dg-box    { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  .dg-box-a  { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1; }
+  .dg-group  { fill: none; stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
+  .dg-t      { font-family: var(--font-mono); font-size: 11px; fill: var(--ink); }
+  .dg-t2     { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-2); }
+  .dg-h      { font-family: var(--font-body); font-size: 12px; font-weight: 650; fill: var(--ink); }
+  .dg-line   { stroke: var(--ink-3); stroke-width: 1.25; fill: none; }
+  .dg-line-a { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .dg-life   { stroke: var(--ink-3); stroke-width: 1; fill: none; stroke-dasharray: 3 4; opacity: 0.6; }
+  .dg-dash   { stroke-dasharray: 4 3; }
+  .c-a { fill: var(--accent); }
+  .c-3 { fill: var(--ink-3); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 13.5px;
+    color: var(--ink-3);
+    max-width: var(--wide);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding: 0 16px 64px; }
+    figure { padding: 16px 14px 14px; }
+    nav.toc { padding: 20px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">EdgeLightingEffect / C++ design and implementation</div>
+    <h1>C++ Design and Implementation</h1>
+    <p class="standfirst">How the library's C++ side is cut into classes, who owns what, how one frame travels through them, and the mechanisms the implementation leans on: change detection, skip keys, lazy construction, shared buffers, the GL wrappers and the C ABI. The shaders have their own pages; this one is everything around them.</p>
+  </header>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><span class="n">01</span><a href="#s1">Scope and principles</a></li>
+      <li><span class="n">02</span><a href="#s2">Layers and modules</a></li>
+      <li><span class="n">03</span><a href="#s3">Ownership and lifetime</a></li>
+      <li><span class="n">04</span><a href="#s4">One frame through the effect</a></li>
+      <li><span class="n">05</span><a href="#s5">The renderer contract</a></li>
+      <li><span class="n">06</span><a href="#s6">Configuration and change detection</a></li>
+      <li><span class="n">07</span><a href="#s7">Time and phases</a></li>
+      <li><span class="n">08</span><a href="#s8">Animation</a></li>
+      <li><span class="n">09</span><a href="#s9">NeonRenderer: anatomy</a></li>
+      <li><span class="n">10</span><a href="#s10">NeonRenderer: the frame</a></li>
+      <li><span class="n">11</span><a href="#s11">Skip keys and caches</a></li>
+      <li><span class="n">12</span><a href="#s12">Shared buffers</a></li>
+      <li><span class="n">13</span><a href="#s13">The GL resource layer</a></li>
+      <li><span class="n">14</span><a href="#s14">The other four renderers</a></li>
+      <li><span class="n">15</span><a href="#s15">The C ABI</a></li>
+      <li><span class="n">16</span><a href="#s16">Shaders as build products</a></li>
+      <li><span class="n">17</span><a href="#s17">Rules that keep it correct</a></li>
+    </ol>
+  </nav>
+
+  <main class="col">
+
+    <!-- ============================================================ -->
+    <section id="s1">
+      <h2 class="sec"><span class="num">01</span> Scope and principles</h2>
+
+      <p class="lede">The library is an OpenGL renderer for a glowing rounded-rectangle outline and a few companion layers. Its C++ side does three jobs: it holds the state a host authors, it turns that state into GPU work as cheaply as each frame allows, and it keeps the GL context exactly as the host handed it over.</p>
+
+      <p>This page describes the code as of the <code>add_shared_buffer_architecture</code> branch on 2026-10-20. Where it and a header under <code>lib/include/</code> disagree, the header wins. For the shading itself - what each program computes and why - read <a href="neon-renderer-reference.html">the mechanism reference</a> and <a href="neon-shader-outputs.html">the shader outputs page</a>; for the GPU vocabulary, <a href="../guides/neon-onboarding-guide.md">the onboarding guide</a>; for the short version of this page, <a href="../guides/implementation.md">implementation.md</a>.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Where</th><th>What lives there</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">lib/include/core/</td><td>The orchestrator (<code>edge-lighting.h</code>), the whole configuration (<code>config.h</code>), and the shared-buffer types (<code>shared-buffer.h</code>, <code>shared-buffer-registry.h</code>).</td></tr>
+            <tr><td class="mono nw">lib/include/renderer/</td><td><code>BaseRenderer</code> and its five subclasses; the four tuning headers that C++ and GLSL both include; the LUT wrappers (<code>BaseLUT</code>, <code>GradientRingLUT</code>, <code>SpanAtlasLUT</code>).</td></tr>
+            <tr><td class="mono nw">lib/include/animation/</td><td><code>Clock</code> and <code>PhaseAccumulator</code>, the <code>Modulator</code> family, <code>Animation</code> and its presets, <code>FieldBoundAnimation</code>, <code>AnimationManager</code>.</td></tr>
+            <tr><td class="mono nw">lib/include/gl/</td><td>Move-only RAII wrappers: <code>ShaderProgram</code>, <code>Framebuffer</code> (with <code>RenderTargetState</code>), <code>UniformBuffer</code>, <code>VertexArray</code>, <code>Texture</code> / <code>Texture2D</code>; <code>gl-header.h</code>, the one include for GLAD.</td></tr>
+            <tr><td class="mono nw">lib/include/util/</td><td>Geometry (<code>GetPointOnRectangle</code>), colour sampling, segment merging, GL scope guards, offscreen capture, logging.</td></tr>
+            <tr><td class="mono nw">lib/src/</td><td>The definitions, mirroring the include tree. <code>neon-renderer.cpp</code> (about 5000 lines) is most of it.</td></tr>
+            <tr><td class="mono nw">lib/capi/</td><td>The flat <code>extern "C"</code> surface built as <code>libedge-lighting-c.dylib</code>.</td></tr>
+            <tr><td class="mono nw">lib/shaders/</td><td>GLSL sources and <code>shaders.h.in</code>; CMake turns them into <code>build/lib/generated/shaders.h</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The design principles, in one place</h3>
+      <p>Every section below is one of these applied to a particular piece. They are not aspirations; each one is in the code because breaking it was measured or caused a defect.</p>
+      <ul class="principles">
+        <li><b>The orchestrator owns state; plug-ins own drawing.</b> <code>EdgeLightingEffect</code> holds the configuration, the clock and the animations and draws nothing. Each visual layer is a <code>BaseRenderer</code> that draws one thing and knows nothing of the others.</li>
+        <li><b>Configuration is a value, compared whole.</b> A <code>Config</code> is plain data with <code>operator==</code> on every struct. The effect notifies renderers only when the composite actually changed, and renderers rebuild only what the changed fields feed.</li>
+        <li><b>Skip by key, not by guess.</b> A pass runs only when something it reads moved, and "what it reads" is taken from what the pass binds - version numbers on the GL objects - wherever a hand-written field list could fall out of step with a shader.</li>
+        <li><b>Build late, release early.</b> A program is compiled on the first frame that draws with it; a buffer is allocated on the first frame that writes it and given back when the layer is off or the buffer goes unread. A host that never uses a feature never pays for it.</li>
+        <li><b>Leave the host's GL state as found.</b> Every pass that retargets restores the framebuffer and viewport it was handed - never framebuffer 0 - and every layer leaves one known blend state. What the library does not set, the host supplies.</li>
+        <li><b>Offscreen first, then one run on the target.</b> A frame is two phases across all layers, so a tile-based GPU draws the caller's framebuffer in one unbroken run, and a layer that reads another's image sees this frame's.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s2">
+      <h2 class="sec"><span class="num">02</span> Layers and modules</h2>
+
+      <p>Dependencies point down only. A host talks to <code>EdgeLightingEffect</code>, directly in C++ or through the C ABI; the effect talks to its renderers only through <code>BaseRenderer</code>'s virtuals; renderers build everything from the GL wrappers and the generated shader sources. The one place the effect names concrete renderers is its factory, <code>CreateRenderer</code>, which is why <code>edge-lighting.cpp</code> includes all five headers and <code>edge-lighting.h</code> includes none.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 612" role="img" aria-label="Layer diagram. At the top, a C++ host and a C or FFI host. The FFI host goes through libedge-lighting-c. Both reach EdgeLightingEffect, which owns three Config values, a Clock, an AnimationManager, a SharedBufferRegistry and the list of renderers. Below it the five BaseRenderer subclasses, then what they are built from - GL wrappers, LUT wrappers, SharedBuffer, util and the generated shaders - and at the bottom OpenGL through GLAD.">
+          <defs>
+            <marker id="cd1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <rect x="60" y="16" width="440" height="46" class="dg-box"/>
+          <text x="76" y="36" class="dg-t">C++ host - demo/, any app linking the .a</text>
+          <text x="76" y="52" class="dg-t2">includes lib/include/; SetConfig, Update(dt), Render(w, h)</text>
+          <rect x="560" y="16" width="440" height="46" class="dg-box"/>
+          <text x="576" y="36" class="dg-t">C / FFI host - demo-capi/, P-Invoke, ctypes, cgo</text>
+          <text x="576" y="52" class="dg-t2">sees edge-lighting-capi.h and nothing else</text>
+
+          <line x1="780" y1="62" x2="780" y2="82" class="dg-line" marker-end="url(#cd1a)"/>
+          <rect x="560" y="84" width="440" height="46" class="dg-box"/>
+          <text x="576" y="104" class="dg-t">libedge-lighting-c.dylib - lib/capi/</text>
+          <text x="576" y="120" class="dg-t2">opaque handles, a staging Config, el_result_e, nothing thrown out</text>
+          <line x1="780" y1="130" x2="780" y2="150" class="dg-line" marker-end="url(#cd1a)"/>
+          <line x1="280" y1="62" x2="280" y2="150" class="dg-line" marker-end="url(#cd1a)"/>
+          <text x="290" y="110" class="dg-t2">the C++ API</text>
+
+          <rect x="60" y="152" width="940" height="110" class="dg-box-a"/>
+          <text x="76" y="173" class="dg-h">EdgeLightingEffect - core/edge-lighting.h: owns the state, draws nothing</text>
+          <rect x="76" y="186" width="164" height="62" class="dg-box"/>
+          <text x="158" y="212" class="dg-t" text-anchor="middle">Config x 3</text>
+          <text x="158" y="230" class="dg-t2" text-anchor="middle">base, active, scratch</text>
+          <rect x="262" y="186" width="164" height="62" class="dg-box"/>
+          <text x="344" y="212" class="dg-t" text-anchor="middle">Clock</text>
+          <text x="344" y="230" class="dg-t2" text-anchor="middle">double time; play, pause</text>
+          <rect x="448" y="186" width="164" height="62" class="dg-box"/>
+          <text x="530" y="212" class="dg-t" text-anchor="middle">AnimationManager</text>
+          <text x="530" y="230" class="dg-t2" text-anchor="middle">attach list (unique_ptr)</text>
+          <rect x="634" y="186" width="164" height="62" class="dg-box"/>
+          <text x="716" y="212" class="dg-t" text-anchor="middle">SharedBufferRegistry</text>
+          <text x="716" y="230" class="dg-t2" text-anchor="middle">slot per SharedBufferId</text>
+          <rect x="820" y="186" width="164" height="62" class="dg-box"/>
+          <text x="902" y="212" class="dg-t" text-anchor="middle">renderers</text>
+          <text x="902" y="230" class="dg-t2" text-anchor="middle">layer order, bottom first</text>
+
+          <line x1="530" y1="262" x2="530" y2="288" class="dg-line" marker-end="url(#cd1a)"/>
+          <rect x="60" y="290" width="940" height="104" class="dg-group"/>
+          <text x="76" y="311" class="dg-h">BaseRenderer subclasses - renderer/, one per RendererLayer</text>
+          <rect x="76" y="322" width="164" height="58" class="dg-box-a"/>
+          <text x="158" y="346" class="dg-t" text-anchor="middle">NeonRenderer</text>
+          <text x="158" y="364" class="dg-t2" text-anchor="middle">11 programs, 7 buffers</text>
+          <rect x="262" y="322" width="164" height="58" class="dg-box"/>
+          <text x="344" y="346" class="dg-t" text-anchor="middle">DropletsRenderer</text>
+          <text x="344" y="364" class="dg-t2" text-anchor="middle">band ring, one pass</text>
+          <rect x="448" y="322" width="164" height="58" class="dg-box"/>
+          <text x="530" y="346" class="dg-t" text-anchor="middle">LensFlareRenderer</text>
+          <text x="530" y="364" class="dg-t2" text-anchor="middle">fullscreen; scaled path</text>
+          <rect x="634" y="322" width="164" height="58" class="dg-box"/>
+          <text x="716" y="346" class="dg-t" text-anchor="middle">SpotlightRenderer</text>
+          <text x="716" y="364" class="dg-t2" text-anchor="middle">lamp strips, screened</text>
+          <rect x="820" y="322" width="164" height="58" class="dg-box"/>
+          <text x="902" y="346" class="dg-t" text-anchor="middle">DebugRenderer</text>
+          <text x="902" y="364" class="dg-t2" text-anchor="middle">overlays; drawn last</text>
+
+          <line x1="530" y1="394" x2="530" y2="418" class="dg-line" marker-end="url(#cd1a)"/>
+          <rect x="60" y="420" width="940" height="104" class="dg-group"/>
+          <text x="76" y="441" class="dg-h">What the renderers are built from - gl/, the LUT wrappers, core/, util/, generated</text>
+          <rect x="76" y="452" width="164" height="58" class="dg-box"/>
+          <text x="158" y="476" class="dg-t" text-anchor="middle">gl/ RAII wrappers</text>
+          <text x="158" y="494" class="dg-t2" text-anchor="middle">program, FBO, UBO, VAO</text>
+          <rect x="262" y="452" width="164" height="58" class="dg-box"/>
+          <text x="344" y="476" class="dg-t" text-anchor="middle">LUT wrappers</text>
+          <text x="344" y="494" class="dg-t2" text-anchor="middle">ring, span atlas</text>
+          <rect x="448" y="452" width="164" height="58" class="dg-box"/>
+          <text x="530" y="476" class="dg-t" text-anchor="middle">SharedBuffer</text>
+          <text x="530" y="494" class="dg-t2" text-anchor="middle">core/shared-buffer.h</text>
+          <rect x="634" y="452" width="164" height="58" class="dg-box"/>
+          <text x="716" y="476" class="dg-t" text-anchor="middle">util/</text>
+          <text x="716" y="494" class="dg-t2" text-anchor="middle">geometry, colour, capture</text>
+          <rect x="820" y="452" width="164" height="58" class="dg-box"/>
+          <text x="902" y="476" class="dg-t" text-anchor="middle">shaders.h</text>
+          <text x="902" y="494" class="dg-t2" text-anchor="middle">embedded GLSL sources</text>
+
+          <line x1="530" y1="524" x2="530" y2="548" class="dg-line" marker-end="url(#cd1a)"/>
+          <rect x="60" y="550" width="940" height="46" class="dg-box"/>
+          <text x="76" y="570" class="dg-t">OpenGL 3.3 core (macOS today) or OpenGL ES 3.0, loaded through GLAD</text>
+          <text x="76" y="586" class="dg-t2">the host owns the context and the state the library never sets: culling, depth, write mask, blend equation</text>
+        </svg>
+        <figcaption><b>Figure 1</b> The modules, top to bottom. Arrows are "calls into"; nothing calls upward. Renderers never call each other: they meet only in the framebuffer they all composite onto and, for a layer that shares one, in a <code>SharedBuffer</code> (section 12).</figcaption>
+      </figure>
+
+      <p>Three consequences of that shape are worth stating, because the code relies on them:</p>
+      <ul class="body">
+        <li><strong><code>Config</code> is the only type every layer shares.</strong> Each renderer reads its own sub-config plus <code>geometry</code>; the exceptions are deliberate and few - the droplets read <code>neon.glowSide</code> for the band's side, the debug layer reads <code>neon</code> to describe it, the neon reads <code>debug.opaqueOnly</code> because it selects which of its passes run, and the spotlight reads nothing but <code>spotlight</code>.</li>
+        <li><strong>A renderer can be driven without the effect.</strong> Nothing in a renderer calls back into the effect; a host (or a tool such as <code>neon-scale-check</code>) can construct one, call its four methods and get the same frame. The renderers with an offscreen phase detect a missing <code>RenderOffscreen</code> and run it themselves (section 5).</li>
+        <li><strong>The C ABI is a client, not a layer underneath.</strong> <code>libedge-lighting-c</code> wraps <code>EdgeLightingEffect</code> exactly as a C++ host would; there is no second implementation of anything. <code>demo-capi/</code> cannot see <code>lib/include/</code>, which proves the ABI is enough for a real UI.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s3">
+      <h2 class="sec"><span class="num">03</span> Ownership and lifetime</h2>
+
+      <p>Ownership follows one rule: <strong>sole ownership where only one object can sensibly hold the thing, shared ownership where something may outlive its creator.</strong> The interesting cases are the shared ones - each exists because a pointer could otherwise dangle.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 430" role="img" aria-label="Ownership graph. The host creates the C ABI handle, which owns the effect by unique_ptr. The effect owns its configs and clock by value, the AnimationManager by unique_ptr, and shares the SharedBufferRegistry and every renderer by shared_ptr. The manager and the host share each Animation. Every renderer holds the registry; the registry slot and NeonRenderer share the SharedBuffer; DebugRenderer reads it through a const shared_ptr.">
+          <defs>
+            <marker id="cd2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="cd2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <!-- column A -->
+          <rect x="20" y="20" width="200" height="56" class="dg-box"/>
+          <text x="32" y="42" class="dg-t">host</text>
+          <text x="32" y="60" class="dg-t2">keeps its own AnimationPtrs</text>
+          <rect x="20" y="140" width="200" height="56" class="dg-box"/>
+          <text x="32" y="162" class="dg-t">el_effect_handle_impl</text>
+          <text x="32" y="180" class="dg-t2">C ABI: staging Config</text>
+          <rect x="20" y="300" width="200" height="56" class="dg-box"/>
+          <text x="32" y="322" class="dg-t">Animation subclasses</text>
+          <text x="32" y="340" class="dg-t2">IntensityPulse, ArcWipe, ...</text>
+
+          <!-- column B -->
+          <rect x="290" y="20" width="240" height="56" class="dg-box"/>
+          <text x="302" y="42" class="dg-t">Config x 3, Clock</text>
+          <text x="302" y="60" class="dg-t2">base, active, scratch; time</text>
+          <rect x="290" y="140" width="240" height="56" class="dg-box-a"/>
+          <text x="302" y="162" class="dg-t">EdgeLightingEffect</text>
+          <text x="302" y="180" class="dg-t2">the orchestrator</text>
+          <rect x="290" y="300" width="240" height="56" class="dg-box"/>
+          <text x="302" y="322" class="dg-t">AnimationManager</text>
+          <text x="302" y="340" class="dg-t2">vector&lt;AnimationPtr&gt;</text>
+
+          <!-- column C -->
+          <rect x="590" y="20" width="200" height="56" class="dg-box"/>
+          <text x="602" y="42" class="dg-t">the other layers</text>
+          <text x="602" y="60" class="dg-t2">droplets, flare, spotlight</text>
+          <rect x="590" y="140" width="200" height="56" class="dg-box"/>
+          <text x="602" y="162" class="dg-t">NeonRenderer</text>
+          <text x="602" y="180" class="dg-t2">producer of NEON</text>
+          <rect x="590" y="300" width="200" height="56" class="dg-box"/>
+          <text x="602" y="322" class="dg-t">DebugRenderer</text>
+          <text x="602" y="340" class="dg-t2">a reader of NEON</text>
+
+          <!-- column D -->
+          <rect x="850" y="140" width="190" height="56" class="dg-box"/>
+          <text x="862" y="162" class="dg-t">SharedBufferRegistry</text>
+          <text x="862" y="180" class="dg-t2">array of slots</text>
+          <rect x="850" y="300" width="190" height="56" class="dg-box-a"/>
+          <text x="862" y="322" class="dg-t">SharedBuffer</text>
+          <text x="862" y="340" class="dg-t2">Framebuffer + state</text>
+
+          <!-- edges: sole ownership (accent) -->
+          <line x1="120" y1="76" x2="120" y2="138" class="dg-line-a" marker-end="url(#cd2b)"/>
+          <text x="128" y="112" class="dg-t2">el_effect_create</text>
+          <line x1="220" y1="168" x2="288" y2="168" class="dg-line-a" marker-end="url(#cd2b)"/>
+          <text x="226" y="160" class="dg-t2">unique_ptr</text>
+          <line x1="410" y1="140" x2="410" y2="78" class="dg-line-a" marker-end="url(#cd2b)"/>
+          <text x="418" y="112" class="dg-t2">by value</text>
+          <line x1="410" y1="196" x2="410" y2="298" class="dg-line-a" marker-end="url(#cd2b)"/>
+          <text x="418" y="276" class="dg-t2">unique_ptr</text>
+
+          <!-- edges: shared ownership (grey) -->
+          <path d="M20,40 H10 V328 H18" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="30" y="254" class="dg-t2">the host's copy: shared_ptr</text>
+          <line x1="290" y1="328" x2="222" y2="328" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="228" y="320" class="dg-t2">shared_ptr</text>
+          <line x1="530" y1="168" x2="560" y2="168" class="dg-line"/>
+          <line x1="560" y1="48" x2="560" y2="328" class="dg-line"/>
+          <line x1="560" y1="48" x2="588" y2="48" class="dg-line" marker-end="url(#cd2a)"/>
+          <line x1="560" y1="168" x2="588" y2="168" class="dg-line" marker-end="url(#cd2a)"/>
+          <line x1="560" y1="328" x2="588" y2="328" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="568" y="112" class="dg-t2">shared_ptr each, in layer order</text>
+          <path d="M480,196 V244 H900 V198" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="604" y="238" class="dg-t2">shared_ptr</text>
+          <line x1="790" y1="168" x2="848" y2="168" class="dg-line" marker-end="url(#cd2a)"/>
+          <line x1="990" y1="196" x2="990" y2="298" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="982" y="262" class="dg-t2" text-anchor="end">slot NEON</text>
+          <path d="M740,196 V272 H880 V298" class="dg-line" marker-end="url(#cd2a)"/>
+          <text x="748" y="290" class="dg-t2">mScaled</text>
+
+          <!-- edges: read-only handle (dashed) -->
+          <line x1="790" y1="328" x2="848" y2="328" class="dg-line dg-dash" marker-end="url(#cd2a)"/>
+          <text x="602" y="376" class="dg-t2">Find(NEON): shared_ptr&lt;const SharedBuffer&gt;, in Render</text>
+
+          <!-- legend -->
+          <line x1="20" y1="410" x2="60" y2="410" class="dg-line-a"/>
+          <text x="68" y="414" class="dg-t2">sole owner: unique_ptr or by value</text>
+          <line x1="360" y1="410" x2="400" y2="410" class="dg-line"/>
+          <text x="408" y="414" class="dg-t2">shared ownership: shared_ptr</text>
+          <line x1="660" y1="410" x2="700" y2="410" class="dg-line dg-dash"/>
+          <text x="708" y="414" class="dg-t2">read-only handle</text>
+        </svg>
+        <figcaption><b>Figure 2</b> Who keeps what alive. Every renderer, not only the neon, holds the registry too (the arrow from NeonRenderer stands for all of them): <code>BaseRenderer</code> keeps it in a private member that only the effect, a <code>friend</code>, can set.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Object</th><th>Held by</th><th>As</th><th>Why that way</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">Config (base, active, scratch)</td><td>the effect</td><td>values</td><td>Plain data. The third copy is a scratch the animated composite is built in, so the per-frame path allocates nothing (section 4).</td></tr>
+            <tr><td class="mono nw">Clock</td><td>the effect</td><td>value</td><td>One clock for every layer and animation; <code>GetClock()</code> exposes it for play, pause and seeking.</td></tr>
+            <tr><td class="mono nw">AnimationManager</td><td>the effect</td><td class="mono">unique_ptr</td><td>Forward-declared in <code>edge-lighting.h</code>, which keeps its header out of every host's include graph; nothing else ever holds it.</td></tr>
+            <tr><td class="mono nw">Animation</td><td>the manager and the host</td><td class="mono">shared_ptr</td><td>The host keeps driving an animation (play, pause, speed, callbacks) after attaching it. Attaching never transfers ownership, in C++ or in the C ABI.</td></tr>
+            <tr><td class="mono nw">BaseRenderer</td><td>the effect, and the host if it wants</td><td class="mono">shared_ptr</td><td>A host or a tool keeps its own pointer to reach a renderer's own API (<code>NeonRenderer::SetBypass</code>); a renderer may therefore outlive the effect.</td></tr>
+            <tr><td class="mono nw">SharedBufferRegistry</td><td>the effect and every renderer</td><td class="mono">shared_ptr</td><td>Because a renderer may outlive the effect, the registry it claimed a slot in must outlive it too.</td></tr>
+            <tr><td class="mono nw">SharedBuffer</td><td>its producer, the registry slot, any reader</td><td class="mono">shared_ptr / shared_ptr&lt;const&gt;</td><td>A reader may keep the handle across frames and can never dangle: the producer's destructor gives the slot back and releases the GL buffer, leaving an object that reports not ready.</td></tr>
+            <tr><td class="mono nw">GL objects</td><td>their wrapper, a member of the renderer</td><td>RAII, move-only</td><td>Created in the wrapper's constructor and deleted in its destructor, so a GL context must be current at <em>both</em> - including when a renderer is constructed, not only at <code>Initialize</code>.</td></tr>
+            <tr><td class="mono nw">el_effect_handle_impl</td><td>the C host</td><td>opaque pointer</td><td>Created and destroyed by the host (<code>el_effect_create</code> / <code>_destroy</code>); owns its staging <code>Config</code> and the effect by <code>unique_ptr</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Threading</span>
+        There is none. Every call - configuration, update, render, a renderer's construction and destruction, a shared-buffer read - runs on the thread whose GL context is current, and nothing is locked. <code>el_effect_create</code> is the one entry point that touches no GL, so a host can make a handle before it has a context; everything from <code>el_effect_init</code> on belongs to the GL thread.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s4">
+      <h2 class="sec"><span class="num">04</span> One frame through the effect</h2>
+
+      <p>A host makes two calls per frame - <code>Update(dt)</code>, then <code>Render(w, h)</code> - and optionally <code>SetConfig</code> before them. Figure 3 is what the effect does with them.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 560" role="img" aria-label="Sequence diagram with four lifelines: host, EdgeLightingEffect, AnimationManager and the renderers. Update: the clock ticks, the manager advances, refreshActiveConfig composites and swaps, OnConfigChanged goes to every renderer only if the composite changed, then every renderer's Update. Render: every renderer's RenderOffscreen, then every renderer's Render; a reader samples a shared buffer during Render.">
+          <defs>
+            <marker id="cd3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="cd3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <rect x="20" y="16" width="160" height="40" class="dg-box"/>
+          <text x="100" y="40" class="dg-t" text-anchor="middle">host</text>
+          <rect x="260" y="16" width="200" height="40" class="dg-box-a"/>
+          <text x="360" y="40" class="dg-t" text-anchor="middle">EdgeLightingEffect</text>
+          <rect x="520" y="16" width="200" height="40" class="dg-box"/>
+          <text x="620" y="40" class="dg-t" text-anchor="middle">AnimationManager</text>
+          <rect x="780" y="16" width="200" height="40" class="dg-box"/>
+          <text x="880" y="40" class="dg-t" text-anchor="middle">renderers, layer order</text>
+
+          <line x1="100" y1="56" x2="100" y2="544" class="dg-life"/>
+          <line x1="360" y1="56" x2="360" y2="544" class="dg-life"/>
+          <line x1="620" y1="56" x2="620" y2="544" class="dg-life"/>
+          <line x1="880" y1="56" x2="880" y2="544" class="dg-life"/>
+
+          <line x1="100" y1="96" x2="358" y2="96" class="dg-line-a" marker-end="url(#cd3b)"/>
+          <text x="110" y="89" class="dg-t">Update(dt)</text>
+
+          <path d="M360,120 H392 V138 H364" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="398" y="133" class="dg-t2">mClock.Update(dt): dt playing, 0 paused</text>
+
+          <line x1="360" y1="172" x2="618" y2="172" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="165" class="dg-t2">Update(clock delta): snapshot walk</text>
+
+          <path d="M360,198 H392 V218 H364" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="398" y="206" class="dg-t">refreshActiveConfig()</text>
+          <text x="398" y="222" class="dg-t2">scratch = base, Apply, compare, swap</text>
+
+          <line x1="360" y1="252" x2="618" y2="252" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="245" class="dg-t2">Apply(scratch): overlays, attach order</text>
+
+          <line x1="360" y1="292" x2="878" y2="292" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="285" class="dg-t">OnConfigChanged(active)</text>
+          <text x="370" y="306" class="dg-t2">only when the composite differs from the last one</text>
+
+          <line x1="360" y1="338" x2="878" y2="338" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="331" class="dg-t">Update(dt, t, active)</text>
+          <text x="370" y="352" class="dg-t2">every frame: phases, cross-fades, timed releases - no drawing</text>
+
+          <line x1="100" y1="392" x2="358" y2="392" class="dg-line-a" marker-end="url(#cd3b)"/>
+          <text x="110" y="385" class="dg-t">Render(w, h)</text>
+
+          <line x1="360" y1="428" x2="878" y2="428" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="421" class="dg-t">RenderOffscreen(w, h, t, active)</text>
+          <text x="370" y="442" class="dg-t2">phase 1, every layer: offscreen passes; a producer marks its shared buffer ready</text>
+
+          <line x1="360" y1="478" x2="878" y2="478" class="dg-line" marker-end="url(#cd3a)"/>
+          <text x="370" y="471" class="dg-t">Render(w, h, t, active)</text>
+          <text x="370" y="492" class="dg-t2">phase 2, every layer: composite onto the caller's framebuffer</text>
+
+          <rect x="740" y="508" width="300" height="34" class="dg-box"/>
+          <text x="752" y="529" class="dg-t2">a reader: Find(NEON), IsReady(), BindTexture</text>
+        </svg>
+        <figcaption><b>Figure 3</b> <code>EdgeLightingEffect::Update</code> and <code>Render</code> (<code>lib/src/core/edge-lighting.cpp</code>). The renderers' <code>Update</code> receives the host's <code>dt</code> and the clock's absolute time; animations receive the clock's delta, so pausing the clock freezes animations and phases but not a colour cross-fade.</figcaption>
+      </figure>
+
+      <h3>The composite, and why it allocates nothing <span class="src">refreshActiveConfig</span></h3>
+      <p>With no animation attached, the active config is the base: it is copied only when they differ. With animations, the composite is built in <code>mScratchConfig</code> - copy-<em>assigned</em> from the base, which reuses the vector capacity already there - then every animation's <code>Apply</code> writes its overlay, the result is compared with the active config, and on a difference the two are <em>swapped</em>. The swap hands the scratch the buffers the old active config owned, already the right size for the next frame. A local copy-construct allocated 3 blocks a frame on the default config and 19 at the segment and arc caps; this path allocates none. That was not a throughput problem (about a microsecond) but a fragmentation and jitter one on the embedded targets the library ships to.</p>
+
+      <h3>Notification is conditional, and may come twice <span class="src">SetConfig</span></h3>
+      <p><code>SetConfig</code> returns at once when the new base equals the old; otherwise it stores it and runs the same <code>refreshActiveConfig</code>. Two things follow, and every renderer is written for both:</p>
+      <ul class="body">
+        <li><strong><code>OnConfigChanged</code> is not a per-frame callback.</strong> An idle effect never fires it; a running animation fires it nearly every frame. A renderer can treat each call as a real change but must still gate its own rebuilds on what changed.</li>
+        <li><strong>It can run more than once between two frames</strong> - a host's <code>SetConfig</code>, then <code>Update</code> with an animation running - and before <code>Initialize</code> (<code>AddRenderer</code> hands a renderer the current config at once). So the neon <em>accumulates</em> what moved (its dirty masks and <code>mIntensityMoving</code> are OR-ed, never assigned) and defers GL rebuilds until <code>mInitialized</code>.</li>
+      </ul>
+
+      <h3>Render runs in two phases <span class="src">EdgeLightingEffect::Render</span></h3>
+      <p>Every layer's <code>RenderOffscreen</code> runs before any layer's <code>Render</code>. Two reasons, both load-bearing. On a tile-based GPU, every switch away from the caller's target and back stores its tiles out and reloads them; with all offscreen work first, the target is drawn in one unbroken run per frame. And a layer that reads another layer's shared buffer sees <em>this</em> frame's image wherever the two sit in the order (section 12). The order between layers decides only compositing - what lands on top - and <code>SetRendererOrder</code> can change it without re-initialising anything.</p>
+
+      <h3>Registration and initialisation</h3>
+      <ul class="body">
+        <li><code>Initialize()</code> logs the driver's extensions and caps, initialises every registered renderer, and drops any that fail - the rest of the effect still runs. Call it once.</li>
+        <li><code>AddRenderer(ptr)</code> hands the renderer the registry first (so <code>Initialize</code> can claim a slot), initialises it on the spot if the effect is already initialised (a late renderer is not left drawing with program 0; one that fails is not added), and then calls its <code>OnConfigChanged</code> with the current <em>active</em> config so its first frame is not blank.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s5">
+      <h2 class="sec"><span class="num">05</span> The renderer contract</h2>
+
+      <p><code>BaseRenderer</code> (<code>lib/include/renderer/base-renderer.h</code>) is the whole interface between the effect and a layer: five pure virtuals and one with a default.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Call</th><th>When</th><th>May</th><th>Must not</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">Initialize()</td><td>once, or at <code>AddRenderer</code> when late</td><td>compile the programs every frame needs, allocate fixed-size GL objects, claim a shared-buffer slot. Return false to be dropped.</td><td>assume any config beyond the last <code>OnConfigChanged</code> - it builds from the one it stored.</td></tr>
+            <tr><td class="mono nw">OnConfigChanged(cfg)</td><td>when the composite changed; at registration; possibly twice a frame; possibly before <code>Initialize</code></td><td>record what moved, rebuild CPU-side data and geometry, release buffers the config no longer uses</td><td>draw; overwrite a dirty flag a previous call set; rebuild GL objects before initialisation.</td></tr>
+            <tr><td class="mono nw">Update(dt, t, cfg)</td><td>every frame, before <code>Render</code></td><td>advance phases and fades, run timers, release a buffer that went unread</td><td>draw.</td></tr>
+            <tr><td class="mono nw">RenderOffscreen(w, h, t, cfg)</td><td>every frame, phase 1. Default: nothing.</td><td>draw its own buffers, write and <code>MarkReady</code> a shared buffer</td><td>draw on the caller's framebuffer; leave the framebuffer, viewport or blend state other than it found / <code>Render</code> leaves them.</td></tr>
+            <tr><td class="mono nw">Render(w, h, t, cfg)</td><td>every frame, phase 2</td><td>composite onto the caller's framebuffer; read other layers' shared buffers</td><td>draw offscreen (it splits the tiler's run); delete a framebuffer - <code>Framebuffer::Release</code> on a bound target reverts the binding to 0.</td></tr>
+            <tr><td class="mono nw">GetLayer()</td><td>any time</td><td>return its <code>RendererLayer</code>; a host's own renderer returns <code>CUSTOM</code></td><td>be left out - pure virtual on purpose, or the layer calls could not reach it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Layers as bits <span class="src">RendererLayer</span></h3>
+      <p>Each layer is one bit - <code>NEON</code> 1, <code>DROPLETS</code> 2, <code>LENS_FLARE</code> 4, <code>SPOTLIGHT</code> 8, <code>DEBUG</code> 1&lt;&lt;30, <code>CUSTOM</code> 0 - numbered exactly as the C ABI's <code>el_renderer_flags_e</code>, with <code>static_assert</code>s in <code>capi-internal.h</code> holding the two together. <code>DEBUG</code> sits on bit 30 so that a content layer added later takes the next free low bit and never renumbers it. The effect builds and reorders its stack by layer:</p>
+      <ul class="body">
+        <li><code>CreateRenderer(layer)</code> and <code>GetDefaultLayerOrder()</code> (neon, droplets, flare, spotlight, debug) are the only places that list the layers; <code>IsValidLayerList</code> reads "known" from the second, so a new layer is added in those two functions and nowhere else in the core.</li>
+        <li><code>AddRenderer(layer)</code> refuses a second renderer for a named layer, so the layer calls can always tell which one to move.</li>
+        <li><code>SetLayerOrder</code> refills the named layers' slots in the new order and leaves <code>CUSTOM</code> renderers where they are; <code>SetRendererOrder</code> underneath accepts any permutation of the registered pointers and refuses everything else, so neither can add or drop a layer.</li>
+      </ul>
+
+      <h3>The frame-state pattern</h3>
+      <p>The three renderers with an offscreen phase (neon, flare, spotlight) keep a small <code>FrameState</code>: <code>RenderOffscreen</code> resets it, sets <code>prepared</code> and the viewport, and leaves what <code>Render</code> needs (whether the scaled buffer is ready; for the neon, the UV maps and the ring's decision). <code>Render</code> consumes it, and runs <code>RenderOffscreen</code> itself when no call for this viewport came first - which <code>EdgeLightingEffect</code> never does, but a host driving one renderer directly might.</p>
+
+      <h3>GL state: who owns what</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>State</th><th>Owner</th><th>Rule</th></tr></thead>
+          <tbody>
+            <tr><td>Framebuffer binding</td><td>the host</td><td>A pass that retargets captures the binding <em>and</em> the viewport (<code>RenderTargetState::Capture</code>) before its first bind and restores both after - never framebuffer 0, because during an <code>OffscreenCapture</code> the "backbuffer" is a real FBO.</td></tr>
+            <tr><td>Viewport</td><td>the host</td><td>Must be <code>(0, 0, w, h)</code>: shaders compare <code>gl_FragCoord</code> against uniforms computed for a viewport at the origin, so a sub-viewport is not supported.</td></tr>
+            <tr><td>Blend enable and function</td><td>each renderer's two phase methods</td><td>Set immediately before each pass that depends on it; every layer leaves <code>GL_BLEND</code> on with <code>GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA</code>. Offscreen data passes disable it themselves rather than inheriting it.</td></tr>
+            <tr><td>Scissor</td><td>the host</td><td>Lifted only for an offscreen pass (<code>GLUtils::NoScissorScope</code>) - a host box in window pixels lands on the wrong texels of a reduced buffer - and put back.</td></tr>
+            <tr><td>Colour mask</td><td>the host</td><td>Must be full RGBA. The coverage bake narrows it per light type and restores the host's.</td></tr>
+            <tr><td>Culling, depth, blend equation</td><td>the host</td><td>Never set by the library: culling off (or a front face the meshes' winding survives), depth test and write off, <code>GL_FUNC_ADD</code>. The scope guards <code>NoCullScope</code> and <code>CompositeStateScope</code> exist for a host that wants them; nothing in the library takes them.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Adding a renderer</h3>
+      <ol class="body">
+        <li>Subclass <code>BaseRenderer</code>; implement the five pure virtuals, and <code>RenderOffscreen</code> if it draws offscreen at all.</li>
+        <li>Add a sub-config to <code>Config</code>, with <code>operator==</code> over every field, and add it to <code>Config::operator==</code>.</li>
+        <li>Add a <code>RendererLayer</code> bit, a case in <code>CreateRenderer</code>, an entry in <code>GetDefaultLayerOrder</code>; mirror the bit in <code>el_renderer_flags_e</code> with its <code>static_assert</code>.</li>
+        <li>Register it in <code>demo/src/main.cpp</code> and give it a section in <code>DebugUI</code> (and in <code>demo-capi/</code>, through C ABI setters, if it is exposed there).</li>
+      </ol>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s6">
+      <h2 class="sec"><span class="num">06</span> Configuration and change detection</h2>
+
+      <p><code>Config</code> (<code>lib/include/core/config.h</code>) is six sub-structs - <code>geometry</code>, <code>neon</code>, <code>debug</code>, <code>droplets</code>, <code>lensFlare</code>, <code>spotlight</code> - each a plain value with <code>operator==</code> and <code>operator!=</code> covering every field, down through the nested types (<code>Cutoff</code>, <code>ColorStop</code>, <code>SegmentBoost</code>, <code>Arc</code>, <code>SpotLight</code>, <code>ClipArea</code>, ...). Two mechanisms rest on those operators: the effect's decision to notify at all, and every renderer's decision about what to rebuild. <strong>A field missing from its <code>operator==</code> breaks both silently</strong> - the most common way to introduce a bug here, and nothing but review catches it.</p>
+
+      <p>Inside the renderers, three styles of gate decide what work a change causes. They trade differently between precision and the risk of going stale, and the code chooses deliberately between them:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Style</th><th>Compares</th><th>Examples</th><th>How it fails</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Field-list gate</strong>, in <code>OnConfigChanged</code></td><td>named fields, old against new</td><td>the neon's <code>samplesDirty</code>, <code>geometryDirty</code>, <code>fillDirty</code>, <code>glowCoverShapeDirty</code>; the droplets' geometry and band extent; the flare's three ghost fields; the spotlight's whole sub-config</td><td>A field that feeds the rebuild but is missing from the list leaves the previous config's result in place. Two real cases: <code>glowSide</code> and <code>insideCutoff</code> once bounded the glow quad without being in its gate; the light blocks were gated on the arcs and segments and missed the perimeter (V28).</td></tr>
+            <tr><td><strong>Self-guarding wrapper</strong></td><td>its own inputs, or the bytes it would upload</td><td><code>GradientRingLUT::Bake</code> (stops, blend space, size), <code>SpanAtlasLUT::Bake</code> (each row's stops and space), <code>UniformBuffer::SetData</code> (<code>memcmp</code> with the last upload), <code>ShaderProgram::SetUniform</code> (last value per location)</td><td>It cannot go stale; its cost is the compare. Call sites call it unconditionally - <code>bakeLUTs</code> runs on every config change, and the light blocks are packed on every frame.</td></tr>
+            <tr><td><strong>Version key</strong>, at the pass</td><td>the upload counts of the GL objects the pass binds, plus its value uniforms</td><td><code>EmissionInputs</code>, <code>GatherInputs</code>, <code>LazyBake</code>'s viewport and gradient upload count</td><td>An input added to the pass but not to its key: the pass is skipped on a frame only that input moved - a stale image. <code>neon-scale-check sequence</code> is built to find exactly this.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The preferred direction has been, over the branch's history, away from field lists and toward the other two. The emission pre-pass used to re-bake on "any config change" (<code>mEmissionDirty</code>); it now keys on what it binds, so an intensity or geometry animation never re-bakes it and nothing that does move it can be missed. Field lists remain where the inputs are visible in the same place as the gate (the flare's ghosts) or where the alternative would be comparing large state each frame (the neon's geometry gates, each commented with the fields it reads and why).</p>
+
+      <div class="warn">
+        <span class="tag">Wide where it must be, narrow where it pays</span>
+        The neon clears its offscreen reuse (<code>mOffscreen.reusable</code>) on <em>any</em> change to <code>config.neon</code> or <code>config.geometry</code> - deliberately wide, since pass 1b reads most of the neon's config. But <em>not</em> on another layer's change: the call comes for any change to the composite, and an animation of the flare's sun changes it every frame. Gated on "anything", the neon drew pass 1 directly every frame - 4.9x with the hue rotating and 15x still at scale 1.0 on the AMD 5300M (I47).
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s7">
+      <h2 class="sec"><span class="num">07</span> Time and phases</h2>
+
+      <p>An effect may run for days. <code>Clock</code> (<code>animation/clock.h</code>) keeps its time in <code>double</code>; its <code>Update(dt)</code> adds <code>dt</code> while playing and returns it, or returns 0 while paused. Every renderer's <code>time</code> parameter is that double. A float accumulator stepped 10 s of 60 fps frames by 9.375 s after half a day and froze past 2<sup>19</sup> s (about 6.07 days).</p>
+
+      <p><strong>No shader is handed an absolute time.</strong> Each renderer reduces it on the CPU, in double, to the bounded phase its shader reads, and each phase driven by a config rate is a <code>PhaseAccumulator</code>: the rate <em>integrated</em> over clock time, re-anchored whenever the rate changes, wrapped to its period. Not <code>time * rate</code>, whose slope under a moving rate is <code>rate + time * d(rate)/dt</code> - a minute into the clock the <code>HueRotationEaseReverse</code> preset moved the hue 0.44 turn a frame against the 0.013 its rate allows. While a rate holds, the accumulator returns exactly <code>GetCyclePhase</code> / <code>WrapPeriod</code>, so a constant rate renders as it always did; a rate set to 0 holds the phase where it stopped.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Renderer</th><th>Member</th><th>Rate</th><th>Shader reads</th></tr></thead>
+          <tbody>
+            <tr><td>NeonRenderer</td><td class="mono">mHuePhase</td><td class="mono">neon.hueRotationRate</td><td><code>uHuePhase</code>, one turn - and through it the emission table's key</td></tr>
+            <tr><td>DebugRenderer</td><td class="mono">mHuePhase</td><td class="mono">neon.hueRotationRate</td><td>the strip's <code>uHuePhase</code>, fed the same times and rates so it agrees with the glow</td></tr>
+            <tr><td>LensFlareRenderer</td><td class="mono">mRotation</td><td class="mono">lensFlare.rotationRate</td><td><code>uRotation</code>, one turn times 2 pi</td></tr>
+            <tr><td>DropletsRenderer</td><td class="mono">mDropTime</td><td class="mono">droplets.speed</td><td><code>uDropTime</code>, wrapped seamlessly by <code>DROPLET_TIME_PERIOD</code></td></tr>
+            <tr><td>SpotlightRenderer</td><td>-</td><td>-</td><td>nothing time-driven</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Each accumulator is advanced in the renderer's <code>Update</code> every frame - even while the layer is off, so a rate that moved meanwhile is integrated as it moved - and read again in its draw for the same time, which moves nothing. A new time-driven term in a shader gets a phase the same way. <code>neon-scale-check clock</code> is the gate: frames of every time-reading layer started at about 10 days must match the same frames started at 0.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s8">
+      <h2 class="sec"><span class="num">08</span> Animation</h2>
+
+      <p>Animations never touch a renderer. They write into a <code>Config</code> - the effect's scratch composite - and the renderers see the result like any other change. Three layers, low to high:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>File</th><th>Design</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">Modulator</td><td class="mono nw">animation/modulator.h</td><td>Header-only pure functions of time: <code>Constant</code>, <code>Oscillator</code> (sine, triangle, square, sawtooth), <code>Ease</code>, <code>Sequence</code>, <code>Multiplier</code>, <code>Adder</code>, <code>Remap</code>. Composable, stateless, no coupling to <code>Config</code>; <code>Evaluate</code> takes a <code>double</code>.</td></tr>
+            <tr><td class="mono nw">Animation</td><td class="mono nw">animation/animation.h</td><td>Modulators plus play state (<code>STOPPED</code>, <code>PLAYING</code>, <code>PAUSED</code>), a <code>double</code> elapsed time, speed, <code>PlaybackMode</code> (<code>LOOP</code> / <code>ONE_SHOT</code>) and <code>EndAction</code> (<code>HOLD_CURRENT</code>, <code>HOLD_END</code>, <code>HOLD_START</code>, <code>RESTORE</code>). Two-phase: <code>Update(dt)</code> advances, <code>Apply(cfg)</code> writes through the subclass's <code>ApplyAt(cfg, elapsed)</code>. <code>AnimationGroup</code> is itself an <code>Animation</code>. Presets in <code>neon-animations.h</code>; <code>FieldBoundAnimation</code> binds modulators to named fields (<code>AnimatableField</code>, <code>SegmentField</code>, <code>ArcField</code>, <code>SpotlightField</code>, <code>ColorStopField</code>) at runtime.</td></tr>
+            <tr><td class="mono nw">AnimationManager</td><td class="mono nw">animation/animation-manager.h</td><td>The attach list. <code>Update</code> ticks each animation; <code>Apply</code> layers them onto the composite in attach order, so a later animation of the same field wins.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Two implementation details make the run loop robust to its own callbacks. <code>OnComplete</code> and <code>OnStateChanged</code> fire from inside <code>Update</code>, and a callback may attach, detach or even re-enter: so <code>AnimationManager::Update</code> (and <code>AnimationGroup::Update</code>) walks a <em>snapshot</em> of the list, skips anything detached earlier in the walk, defers anything attached during it to the next frame, and ignores a re-entrant <code>Update</code> - with a scope guard that resets the walk even if a callback throws. And each callback is copied before it is invoked, so a callback that replaces itself does not destroy the function it is running in. There is no "revert to base" end action: <code>Detach</code> gives that, since the next composite simply no longer contains the overlay.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s9">
+      <h2 class="sec"><span class="num">09</span> NeonRenderer: anatomy</h2>
+
+      <p class="lede">The neon is most of the library: one header of about 1900 lines, one source of about 5000, eleven programs and seven offscreen buffers. It stays navigable because both files are laid out by role, in the same order.</p>
+
+      <p>The header's private section runs: <em>types</em>, <em>programs</em> (the <code>ensure*</code> builders), <em>buffers</em> (<code>ensureGlowCoverBuffer</code>), <em>CPU-side inputs</em> (<code>rebuildLoopSamples</code>, <code>bakeLUTs</code>, <code>packLightBlocks</code>), <em>geometry</em> (<code>setup*Geometry</code>), <em>skip keys</em> (<code>getEmissionInputs</code>, <code>isEmissionTableStale</code>, <code>getGatherInputs</code>), <em>uniform uploads</em>, then <em>the passes in the order the frame runs them</em>. The members follow the same roles, then one group per offscreen buffer. The <code>.cpp</code> defines the methods in the header's order, and above them, in an anonymous namespace, about sixty free helpers - each a pure function of the config and a few numbers (<code>GetGatherScale</code>, <code>GetBufferRegion</code>, <code>GetGlowInnerReach</code>, <code>IsFieldEligible</code>, <code>IsGlowCoverUnread</code>, <code>PackArcFlags</code>, ...), which keeps the class's own methods to scheduling and GL.</p>
+
+      <h3>Value types <span class="src">NeonDetail, and private nested types</span></h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">Annulus</td><td>A box with a hole, as half-extents in full-resolution px from the rect's centre. The glow quad (<code>mGlowBounds</code>), the edge ring (<code>mRingBounds</code>), the gather quad (<code>mGatherBounds</code>); <code>PushAnnulus</code> meshes one, <code>AnnulusCovers</code> compares two.</td></tr>
+            <tr><td class="mono nw">BufferRegion</td><td>The part of the frame a buffer covers - origin and size in rect-local full-res px - and its texel count. One grid rule for all: texels anchored to the viewport's corner, so a moving rect reads the same texel centres. Counts round up to <code>REGION_ALLOC_STEP</code> so a resizing rect does not reallocate every frame.</td></tr>
+            <tr><td class="mono nw">UVMap</td><td><code>uv = px * scale + offset</code>: how a reader finds its texel in a region from its own <code>vPos</code>. Built per reader, because a pass drawn in scaled px and one drawn in full-res px read the same buffer through different maps.</td></tr>
+            <tr><td class="mono nw">GlowCoverLayout</td><td>The coverage table's column layout, stored <em>with</em> the table and never recomputed from the config at read time, so a read can only use the layout the table was baked with.</td></tr>
+            <tr><td class="mono nw">Mesh</td><td>A <code>VertexArray</code> and its vertex count; a count of 0 is how a builder says "nothing to draw", and the passes test it.</td></tr>
+            <tr><td class="mono nw">EmissionInputs / EmissionBake</td><td>Pass 0's key and its record (section 11).</td></tr>
+            <tr><td class="mono nw">GatherInputs / GatherCache</td><td>Pass 1a's key and what it last drew, region and bounds included.</td></tr>
+            <tr><td class="mono nw">LazyBake</td><td>When a field is baked and when it is used - one schedule type, two instances, so the glow's field and the ring's cannot drift apart.</td></tr>
+            <tr><td class="mono nw">RingFieldLayout</td><td>How the ring's pixels pack into four strips of one atlas. The C++ that computes it, the bake that writes it and the shader that reads it change together.</td></tr>
+            <tr><td class="mono nw">ShadeLimits</td><td>The quad's fade margin and the corner-skip distance, one pair for pass 1b (scaled px) and one for the ring (full-res px).</td></tr>
+            <tr><td class="mono nw">EmissionTable, GlowCoverTable, GatherTarget, GlowField, RingField</td><td>One struct per offscreen buffer: the <code>Framebuffer</code> plus everything that says what it holds - format tier, layout, dirty masks, cache, schedule.</td></tr>
+            <tr><td class="mono nw">OffscreenState, FrameState</td><td>Whether passes 1a and 1b can be skipped this frame; what <code>RenderOffscreen</code> leaves for <code>Render</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Programs, built on first use <span class="src">ensureProgram</span></h3>
+      <p>Every program goes through <code>ensureProgram(program, source, name, bit, blocks, consequence)</code>: build once over <code>neon.vert</code>, bind exactly the uniform blocks the source declares (binding a block a program lacks logs an error), and on failure record the program's bit in <code>mFailedPrograms</code>, log the consequence once, and never retry. A failure degrades the frame - to the fill alone for a glow program, to direct shading for a field program - instead of failing the renderer.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Member</th><th>Source</th><th>Pass</th><th>Built</th><th>Blocks</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">mEmissionShader</td><td class="mono">neon-emission.frag</td><td><span class="pid">P0</span></td><td>in <code>Initialize</code> - the only one; its failure fails it</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mGlowCoverShader</td><td class="mono">neon-glow-cover.frag</td><td><span class="pid">P0b P0s</span></td><td>the first frame that bakes the coverage table (never for a uniformly lit ring)</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mGlowCoverFillShader</td><td class="mono">neon-glow-cover-fill.frag</td><td><span class="pid">P0f</span></td><td>the first frame whose segments get a table of their own</td><td>-</td></tr>
+            <tr><td class="mono nw">mGatherShader</td><td class="mono">neon-gather.frag</td><td><span class="pid">P1a</span></td><td>the first frame</td><td>segment, samples</td></tr>
+            <tr><td class="mono nw">mShadeShader</td><td class="mono">neon.frag</td><td><span class="pid">P1b</span></td><td>the first frame</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mFieldBakeShader</td><td class="mono">neon-field-bake.frag</td><td><span class="pid">P1f P1r</span></td><td>the first frame a field can serve</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mFieldCompositeShader</td><td class="mono">neon-field.frag</td><td><span class="pid">P1c</span></td><td>with the bake</td><td>-</td></tr>
+            <tr><td class="mono nw">mFillShader</td><td class="mono">black-rect.frag</td><td><span class="pid">P2a</span></td><td>the first fill that draws through a shader (a clear usually stands in)</td><td>-</td></tr>
+            <tr><td class="mono nw">mBlitShader</td><td class="mono">neon-blit.frag</td><td><span class="pid">P2b</span></td><td>the first frame</td><td>-</td></tr>
+            <tr><td class="mono nw">mRingShader</td><td class="mono">neon.frag</td><td><span class="pid">P2c</span></td><td>the first frame</td><td>segment, arc</td></tr>
+            <tr><td class="mono nw">mRingFieldCompositeShader</td><td class="mono">neon-ring-field.frag</td><td><span class="pid">P2r</span></td><td>the first frame the ring's field can serve</td><td>-</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warn">
+        <span class="tag">Two objects from one source, on purpose</span>
+        <code>mShadeShader</code> and <code>mRingShader</code> are the same <code>neon.frag</code> compiled twice, so that each program object draws one render target in one blend state per frame. One program drawing an offscreen buffer unblended and the caller's framebuffer blended in the same frame measured 93-624x slower on the AMD macOS driver (build AB, <a href="../design/neon-resolution-scale-plan.md">resolution-scale plan</a> section 7). The ring field's composite is its own object for the same reason. Do not merge them as a cleanup.
+      </div>
+      <p>Building late has a cost the schedule accounts for: this driver finishes a program's compile on its first <em>draw</em>, in the target and blend state it draws with, so a program linked early still stalls the first frame that uses it (about 125 ms for the field bake on the AMD 5300M). The first frame of a config a field can serve therefore builds the field's programs <em>and</em> bakes, while still shading directly, so every first draw lands on that one frame. <code>OnConfigChanged</code> gates its rebuilds on <code>mInitialized</code>, not on a program's <code>IsValid()</code>, which is false on a host that has not drawn yet.</p>
+
+      <h3>Buffers <span class="src">one struct each, in pass order</span></h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Member</th><th>Written by</th><th>Size and format</th><th>Allocated</th><th>Released</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">mEmission.buffer</td><td><span class="pid">P0</span></td><td>128 x 2 (the sample ceiling), RGBA16F, else RGBA8</td><td>once, in <code>Initialize</code></td><td>never</td></tr>
+            <tr><td class="mono nw">mGlowCover.buffer</td><td><span class="pid">P0b P0f</span></td><td>256-1024 x 128; RGBA16F (1 MB at 1024), RG16F with no segments; 8-bit fallbacks</td><td>the first frame that bakes it</td><td>layer off; unread for 5 s of frame time (in <code>Update</code>)</td></tr>
+            <tr><td class="mono nw">mGlowCover.segBuffer</td><td><span class="pid">P0s</span></td><td>from 128 wide x 128, RG16F</td><td>when segments get a table of their own</td><td>with the main table; when segments go back to direct</td></tr>
+            <tr><td class="mono nw">mGather.buffer</td><td><span class="pid">P1a</span></td><td>the gather quad's region at <code>GetGatherScale</code>; 1-2 attachments, RGBA16F, else RGBA8</td><td>the first frame</td><td>layer off</td></tr>
+            <tr><td class="mono nw">mScaled (SharedBuffer)</td><td><span class="pid">P1b P1c</span></td><td>the whole viewport at the scale, RGBA16F, else RGBA8 - 4.1 MB at 1080p and 0.5</td><td>the first frame (<code>BeginWrite</code>)</td><td>layer off; destructor</td></tr>
+            <tr><td class="mono nw">mGlowField.buffer</td><td><span class="pid">P1f</span></td><td>the glow quad's window of the reduced grid, R16F or RG16F; no 8-bit fallback</td><td>the first bake</td><td>when the config can no longer use it</td></tr>
+            <tr><td class="mono nw">mRingField.buffer</td><td><span class="pid">P1r</span></td><td>the ring packed into four strips, full resolution, R16F or RG16F</td><td>the first bake</td><td>when the config can no longer use it</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Releases happen in <code>OnConfigChanged</code> or <code>Update</code>, never in <code>Render</code>. Bindings are fixed: textures on units 0 (gradient ring), 1 (segment atlas), 2 (arc atlas), 3 (emission table in the gather; gather attachment 0 in the shading), 4 (gather attachment 1), 5 (coverage table), 6 (glow field), 7 (ring field); uniform blocks on 0 (<code>SegmentBlock</code>), 1 (<code>LoopSamplesBlock</code>), 2 (<code>ArcBlock</code>) - and 3 is the flare's <code>GhostBlock</code>.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s10">
+      <h2 class="sec"><span class="num">10</span> NeonRenderer: the frame</h2>
+
+      <p><code>RenderOffscreen</code> is a pass schedule and nothing else: it decides, then calls one method per pass. Every decision is made <em>before</em> the first draw, so the target is captured only on a frame that actually leaves it. In order:</p>
+      <ol class="body">
+        <li>Reset <code>mFrame</code>. Layer off: <code>MarkNotReady</code> and return.</li>
+        <li>Consume <code>mIntensityMoving</code> (set by <code>OnConfigChanged</code>); read the hue phase for this time.</li>
+        <li><code>debug.opaqueOnly</code>: <code>MarkNotReady</code> and return - <code>Render</code> draws the fill alone, and no glow program is compiled.</li>
+        <li><code>glowReady</code> = the four glow programs build, and either the coverage table is unread (a uniformly lit ring) or its program, fill program and buffer are ready.</li>
+        <li><code>packLightBlocks</code>: pack both light blocks (an unchanged pack uploads nothing) and bind their bases. First, because the emission key reads their upload counts.</li>
+        <li><code>emissionStale</code> = <code>isEmissionTableStale(huePhase)</code>; <code>glowCoverStale</code> = a dirty piece and the table is read.</li>
+        <li><code>reuseOffscreen</code> = <code>mOffscreen.reusable</code>, neither table stale, same viewport.</li>
+        <li>Regions: the reduced buffer is the viewport; the glow quad's window of it is both the field's region and what <code>BeginWrite</code> clears.</li>
+        <li>The glow field's decision: eligible, worth its memory (<code>FIELD_MIN_FILL</code>), programs built, not a reuse frame - then <code>mGlowField.schedule.Decide(...)</code>. The ring field's likewise, recording its layout on a bake frame.</li>
+        <li>Capture the target if anything will draw offscreen. Run <span class="pid">P0</span>, <span class="pid">P0b</span>, <span class="pid">P1a</span> (unless reused or its cache answers), <span class="pid">P1f</span> then <span class="pid">P1c</span> or <span class="pid">P1b</span>, <span class="pid">P1r</span>. Restore the target.</li>
+        <li><code>mOffscreen.reusable = glowReady &amp;&amp; !field.use</code>; <code>MarkReady</code> or <code>MarkNotReady</code>; fill <code>mFrame</code>; leave blending on with <code>GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA</code>.</li>
+      </ol>
+      <p><code>Render</code> then draws on the caller's framebuffer, premultiplied over: <span class="pid">P2a</span> the fill (under the glow), then - if the offscreen phase succeeded - <span class="pid">P2b</span> the blit and <span class="pid">P2c</span> or <span class="pid">P2r</span> the edge ring, through <strong>one</strong> full-resolution matrix built once and handed to both. The blit and the ring tile the frame exactly only if their shared edges land on bit-identical positions: the same vertex floats (<code>setupRingGeometry</code> emits both from one set), the same vertex stage (<code>invariant gl_Position</code> in <code>neon.vert</code>), and the same <code>uMVP</code>. <code>neon-scale-check partition</code> tests the result across a thousand random configs.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <caption>The passes, as the C++ sees them</caption>
+          <thead><tr><th>Pass</th><th>Method</th><th>Program</th><th>Target, blend</th><th>Skipped when</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pid">P0</span></td><td class="mono">renderEmissionPass</td><td class="mono">mEmissionShader</td><td>emission table, off</td><td>its key and the hue phase match the last bake</td></tr>
+            <tr><td><span class="pid">P0b P0s P0f</span></td><td class="mono">renderGlowCoverPass</td><td class="mono">mGlowCoverShader, mGlowCoverFillShader</td><td>coverage tables, off; colour mask per light type</td><td>no dirty piece, or a uniformly lit ring</td></tr>
+            <tr><td><span class="pid">P1a</span></td><td class="mono">renderGatherPass</td><td class="mono">mGatherShader</td><td>gather buffer, off</td><td>a reuse frame, or the cache still answers</td></tr>
+            <tr><td><span class="pid">P1f</span></td><td class="mono">renderFieldPass</td><td class="mono">mFieldBakeShader</td><td>glow field, off</td><td>the schedule says no bake</td></tr>
+            <tr><td><span class="pid">P1b</span></td><td class="mono">renderShadePass</td><td class="mono">mShadeShader</td><td>reduced buffer, off</td><td>a reuse frame, or the field is used</td></tr>
+            <tr><td><span class="pid">P1c</span></td><td class="mono">renderFieldCompositePass</td><td class="mono">mFieldCompositeShader</td><td>reduced buffer, off</td><td>the field is not used</td></tr>
+            <tr><td><span class="pid">P1r</span></td><td class="mono">renderRingFieldPass</td><td class="mono">mFieldBakeShader</td><td>ring field, off; one draw per strip</td><td>the ring's schedule says no bake</td></tr>
+            <tr><td><span class="pid">P2a</span></td><td class="mono">renderFillPass</td><td class="mono">mFillShader, or a scissored clear</td><td>caller's, over</td><td><code>OpaqueMode::NONE</code></td></tr>
+            <tr><td><span class="pid">P2b</span></td><td class="mono">renderBlitPass</td><td class="mono">mBlitShader</td><td>caller's, over</td><td>the blit area is empty; the offscreen phase failed</td></tr>
+            <tr><td><span class="pid">P2c</span></td><td class="mono">renderRingPass</td><td class="mono">mRingShader</td><td>caller's, over</td><td>the ring's field is used</td></tr>
+            <tr><td><span class="pid">P2r</span></td><td class="mono">renderRingFieldCompositePass</td><td class="mono">mRingFieldCompositeShader</td><td>caller's, over</td><td>the ring's field is not used</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">State ownership inside the schedule</span>
+        The two phase methods own blend state and set it right before each pass that depends on it; a pass owns its program; a pass that retargets restores what it found. Every pass that needs blending off disables it itself: pass 1b once inherited "off" from pass 1a, and drew blended into its cleared buffer the first time pass 1a was skipped.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s11">
+      <h2 class="sec"><span class="num">11</span> Skip keys and caches</h2>
+
+      <p>Most frames a host draws change little or nothing, and most of the neon's cost is in passes whose output persists between frames. So the implementation's central technique is to <strong>record what each persistent buffer was drawn from, and skip the pass while that still holds</strong>. Eight mechanisms do it. The first five are exact - a frame drawn with them is byte-identical to one without - and the last three are approximations measured to stay within a level or two.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Mechanism</th><th>Skips</th><th>Keyed on</th><th>Cleared by</th><th>Bypass bit</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">isEmissionTableStale</td><td><span class="pid">P0</span></td><td><code>EmissionInputs</code>: the sample count, and the upload counts of the three LUTs and two light blocks the pass binds; plus the hue phase</td><td>nothing - each bake records itself, and the table lives for the renderer's life</td><td class="mono">EMISSION</td></tr>
+            <tr><td class="mono nw">dirty piece masks</td><td><span class="pid">P0b</span> per piece</td><td>one bit per piece of the outline, separately for the arcs' channels and the segments'</td><td>set by <code>OnConfigChanged</code> (the shape: every piece; a light: the pieces its old and new supports reach) and by a fresh allocation; cleared by the bake</td><td class="mono">GLOW_COVER</td></tr>
+            <tr><td class="mono nw">mOffscreen.reusable</td><td><span class="pid">P1a P1b</span>, and the target capture</td><td>a flag and the viewport; honoured only with both tables current</td><td>any change to <code>neon</code> or <code>geometry</code>; a frame whose reduced buffer holds the field's composite</td><td class="mono">OFFSCREEN</td></tr>
+            <tr><td class="mono nw">SharedBuffer windowed clear</td><td>clearing the whole reduced buffer</td><td>the last write's window</td><td>a reallocation or release (the next clear is whole)</td><td class="mono">CLEAR</td></tr>
+            <tr><td class="mono nw">OnConfigChanged gates</td><td>CPU rebuilds and uploads</td><td>field lists (section 6)</td><td>-</td><td class="mono">REBUILD</td></tr>
+            <tr><td class="mono nw">GatherCache</td><td><span class="pid">P1a</span></td><td><code>GatherInputs</code> (the table's version, sample uploads, shape, viewport, centre) and a quad inside the one drawn (<code>AnnulusCovers</code>)</td><td>replaced whole by each gather; within 1 level (I55)</td><td class="mono">GATHER</td></tr>
+            <tr><td class="mono nw">mGlowField.schedule</td><td><span class="pid">P1b</span> becomes <span class="pid">P1c</span></td><td><code>LazyBake</code>: config held, viewport, gradient uploads, intensity</td><td><code>Invalidate</code>; within 1/255 on hue frames, 2-6 levels while the intensity moves (I56)</td><td class="mono">GLOW_FIELD</td></tr>
+            <tr><td class="mono nw">mRingField.schedule</td><td><span class="pid">P2c</span> becomes <span class="pid">P2r</span></td><td>the same, on its own instance</td><td><code>Invalidate</code>; within 1/255 (I52)</td><td class="mono">RING_FIELD</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Keys made of version numbers</h3>
+      <p>The two keys at the bottom of the pipeline compare <em>versions</em>, not contents and not config fields. <code>UniformBuffer::GetUploadCount</code> moves only on an upload whose bytes changed; <code>BaseLUT::GetUploadCount</code> moves on every upload, a cross-fade frame's included; <code>EmissionBake::version</code> moves on every bake of the table. So the gather's key holds the table's version, and a fresh table re-runs the gather without anyone comparing texels. The hue phase is the emission table's only time input - it reaches the shader once, as <code>si - uHuePhase</code> - so at a hue rate of 0 time never re-bakes it. The rule that keeps all of this honest is written at each key: <strong>add an input to the pass and it belongs in the key</strong> - a field, a term in <code>operator==</code>, a line in <code>get*Inputs</code>.</p>
+
+      <h3>What a config change leaves for the next frame</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Gate in OnConfigChanged</th><th>Fires on</th><th>Does</th><th>Read next frame by</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">samplesDirty</td><td>geometry, resolution scale, sample count</td><td><code>rebuildLoopSamples</code> - the block's upload count moves</td><td><code>GatherInputs</code> (<span class="pid">P1a</span>)</td></tr>
+            <tr><td class="mono nw">geometryDirty, emissionDirty</td><td>the above, glow radius, bloom, intensity, line width, filament falloff, glow side, both glow cutoffs; the brightest emission the lights carry</td><td><code>setupGeometry</code> then <code>setupRingGeometry</code>: glow, ring, blit and gather meshes, shade limits, inner reach</td><td>every pass that draws a mesh; <code>AnnulusCovers</code></td></tr>
+            <tr><td class="mono nw">fillDirty</td><td>geometry, opaque mode, the fill's own cutoffs</td><td><code>setupFillGeometry</code></td><td><span class="pid">P2a</span></td></tr>
+            <tr><td class="mono nw">segmentsDirty, arcsDirty</td><td>either segment pool; the arcs</td><td>refill the merged segment list; OR the reached pieces into the dirty masks</td><td><code>glowCoverStale</code> (<span class="pid">P0b</span>)</td></tr>
+            <tr><td class="mono nw">glowCoverShapeDirty</td><td>width, height, corner radius, winding, glow radius - not position</td><td>every piece dirty, both masks</td><td><code>glowCoverStale</code></td></tr>
+            <tr><td>any <code>neon</code> or <code>geometry</code> change</td><td>-</td><td><code>mOffscreen.reusable = false</code>; both <code>LazyBake::Invalidate</code> unless only the intensity moved; OR <code>mIntensityMoving</code></td><td><code>reuseOffscreen</code>; <code>Decide</code></td></tr>
+            <tr><td>always</td><td>-</td><td><code>bakeLUTs</code> - each LUT re-bakes only if its own inputs moved</td><td><code>EmissionInputs</code> (<span class="pid">P0</span>)</td></tr>
+            <tr><td><code>enable</code> off</td><td>-</td><td>release the reduced buffer, the gather buffer and the coverage tables</td><td>the next frame reallocates on demand</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The field schedule <span class="src">LazyBake</span></h3>
+      <p>A field is a bake reused across frames, so baking one on a frame whose config changes again next frame is pure loss - a bake and a composite on every frame measured 5-7% slower than shading directly. <code>LazyBake</code> therefore bakes only a config that has held for a frame, with two exceptions: the very first frame a config the field can serve is drawn (to warm every program's first draw at once), and the intensity, which a field baked at intensity I<sub>0</sub> can serve scaled by I / I<sub>0</sub> while the intensity moves below I<sub>0</sub>.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 290" role="img" aria-label="State diagram of LazyBake. Three states: stale, settled and current. Stale goes to settled when a frame holds, the frame shading directly. Settled goes to current by baking and using the field. Current loops on itself using the field, scaled while the intensity dims, baking again when it rises or stops. Any invalidation returns current to stale. The first frame of a servable config goes from stale straight to current by baking only, still shading directly.">
+          <defs>
+            <marker id="cd6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="cd6b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <rect x="40" y="110" width="240" height="64" rx="10" class="dg-box"/>
+          <text x="160" y="137" class="dg-t" text-anchor="middle">stale</text>
+          <text x="160" y="155" class="dg-t2" text-anchor="middle">current = settled = false</text>
+          <rect x="410" y="110" width="240" height="64" rx="10" class="dg-box"/>
+          <text x="530" y="137" class="dg-t" text-anchor="middle">settled</text>
+          <text x="530" y="155" class="dg-t2" text-anchor="middle">a bake now would be reused</text>
+          <rect x="780" y="110" width="240" height="64" rx="10" class="dg-box-a"/>
+          <text x="900" y="137" class="dg-t" text-anchor="middle">current</text>
+          <text x="900" y="155" class="dg-t2" text-anchor="middle">the buffer describes the frame</text>
+
+          <line x1="280" y1="142" x2="408" y2="142" class="dg-line" marker-end="url(#cd6a)"/>
+          <text x="290" y="132" class="dg-t2">Decide: nothing</text>
+          <text x="290" y="160" class="dg-t2">shade; settled</text>
+          <line x1="650" y1="142" x2="778" y2="142" class="dg-line-a" marker-end="url(#cd6b)"/>
+          <text x="660" y="132" class="dg-t2">Decide: bake + use</text>
+          <text x="660" y="160" class="dg-t2">OnBaked(true)</text>
+
+          <path d="M900,110 V60 H160 V108" class="dg-line" marker-end="url(#cd6a)"/>
+          <text x="180" y="52" class="dg-t2">Invalidate(): a neon or geometry change other than the intensity alone; or Decide sees a new viewport or gradient upload</text>
+
+          <path d="M160,174 V226 H820 V176" class="dg-line dg-dash" marker-end="url(#cd6a)"/>
+          <text x="180" y="244" class="dg-t2">first frame of a config the field serves: bake only, still shading directly; OnBaked(true)</text>
+
+          <path d="M1020,130 H1046 V160 H1022" class="dg-line-a" marker-end="url(#cd6b)"/>
+          <text x="1040" y="196" class="dg-t2" text-anchor="end">Decide: use, x I/I0 while dimming</text>
+          <text x="1040" y="210" class="dg-t2" text-anchor="end">rises or stops: bake + use</text>
+        </svg>
+        <figcaption><b>Figure 4</b> <code>LazyBake</code>, one instance per field. Not drawn: <code>unavailable</code>, set for good when a field program fails to build or a bake cannot allocate its half-float target - the field is then never used on that driver, and the frame shades directly.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <caption>LazyBake::Decide - the first row that holds decides</caption>
+          <thead><tr><th>State</th><th>Decision</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>viewport or gradient upload count moved</td><td>invalidate, then read on</td><td>what the buffer holds was drawn for another frame</td></tr>
+            <tr><td><code>current</code>, intensity unchanged</td><td>use</td><td>the field still describes this frame</td></tr>
+            <tr><td><code>current</code>, intensity moving, 0 &lt;= I &lt; I<sub>0</sub></td><td>use, gain I / I<sub>0</sub></td><td>the dimmer frame, scaled - the quad baked at I<sub>0</sub> covers it</td></tr>
+            <tr><td><code>current</code>, any other intensity</td><td>bake + use</td><td>brighter, or stopped: bake again, exactly</td></tr>
+            <tr><td><code>settled</code></td><td>bake + use</td><td>the config held for a frame: a bake now is reused</td></tr>
+            <tr><td>first frame</td><td>bake</td><td>warm every program's first draw on one frame; still shade directly</td></tr>
+            <tr><td>otherwise</td><td>nothing; sets <code>settled</code></td><td>the config just changed: shade directly, bake next frame if it holds</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Verifying a skip <span class="src">NeonBypass</span></h3>
+      <p>Every skip is a correctness risk - a key missing an input draws a stale frame - so every skip has a bypass bit. <code>NeonRenderer::SetBypass(mask)</code> is a verification hook with no config field and no C ABI mirror: with <code>NeonBypass::ALL</code> the renderer redoes everything it would otherwise keep. <code>neon-scale-check sequence</code> drives seeded random config sequences through three renderers side by side - all bypassed, only the exact skips active (must be byte-identical, frame and shared buffer), and as shipped (within 2 levels, 6 where the intensity moved) - and <code>--isolate</code> names the skip behind a failure. A new skip gets a bit, or the tool cannot see it.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s12">
+      <h2 class="sec"><span class="num">12</span> Shared buffers</h2>
+
+      <p class="lede">Layers composite by blending, and that is all most of them see of each other. A layer that already draws an offscreen image can also <em>share</em> it: no pass is added, nothing is copied, and the reader samples the producer's own buffer.</p>
+
+      <p>Three types, split across two headers on purpose:</p>
+      <ul class="body">
+        <li><strong><code>SharedBufferId</code></strong> - one value per shared image; <code>NEON</code> today, then <code>COUNT</code>.</li>
+        <li><strong><code>SharedBufferRegistry</code></strong> (<code>core/shared-buffer-registry.h</code>) - a directory: one slot per id, holding its producer's buffer. It allocates, draws and schedules nothing. <code>Register</code> lets one producer claim a slot (a second is refused and logged), <code>Unregister</code> gives it back if the caller is the holder, <code>Find</code> hands a reader a <code>shared_ptr&lt;const SharedBuffer&gt;</code>. This header only <em>declares</em> <code>SharedBuffer</code>: it reaches every host through <code>base-renderer.h</code> and <code>edge-lighting.h</code>, and the full type would drag in the GL loader, which collides with a host's own GL headers.</li>
+        <li><strong><code>SharedBuffer</code></strong> (<code>core/shared-buffer.h</code>) - the GL buffer and the state that says what it holds: format tier, last write window, viewport, version, ready. Producers and readers include it themselves.</li>
+      </ul>
+
+      <figure>
+        <svg viewBox="0 0 1060 380" role="img" aria-label="Lifecycle grid of the neon's shared buffer, with three lanes - producer, the buffer itself, a reader - across five moments: Initialize, RenderOffscreen, Render, the layer disabled, and the destructor. The producer registers it, writes and marks it ready each frame and releases it; the reader finds it in Render, checks IsReady and binds it.">
+          <defs>
+            <marker id="cd5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="cd5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <text x="264" y="34" class="dg-h" text-anchor="middle">Initialize</text>
+          <text x="440" y="34" class="dg-h" text-anchor="middle">RenderOffscreen</text>
+          <text x="616" y="34" class="dg-h" text-anchor="middle">Render</text>
+          <text x="792" y="34" class="dg-h" text-anchor="middle">layer disabled</text>
+          <text x="968" y="34" class="dg-h" text-anchor="middle">destructor</text>
+
+          <text x="16" y="86" class="dg-h">producer</text>
+          <text x="16" y="102" class="dg-t2">NeonRenderer</text>
+          <text x="16" y="196" class="dg-h">SharedBuffer</text>
+          <text x="16" y="212" class="dg-t2">registry slot NEON</text>
+          <text x="16" y="306" class="dg-h">reader</text>
+          <text x="16" y="322" class="dg-t2">any renderer</text>
+
+          <!-- producer lane -->
+          <rect x="180" y="52" width="168" height="84" class="dg-box"/>
+          <text x="190" y="74" class="dg-t2">Register(NEON, mScaled)</text>
+          <text x="190" y="90" class="dg-t2">a second producer is</text>
+          <text x="190" y="104" class="dg-t2">refused, and logged</text>
+          <rect x="356" y="52" width="168" height="84" class="dg-box-a"/>
+          <text x="366" y="74" class="dg-t2">BeginWrite(texels, win)</text>
+          <text x="366" y="90" class="dg-t2">P1b or P1c draws</text>
+          <text x="366" y="104" class="dg-t2">MarkReady(viewport)</text>
+          <text x="366" y="120" class="dg-t2">or MarkNotReady()</text>
+          <rect x="532" y="52" width="168" height="84" class="dg-box"/>
+          <text x="542" y="74" class="dg-t2">the blit (P2b) reads it</text>
+          <text x="542" y="90" class="dg-t2">through scaledUV</text>
+          <rect x="708" y="52" width="168" height="84" class="dg-box"/>
+          <text x="718" y="74" class="dg-t2">OnConfigChanged:</text>
+          <text x="718" y="90" class="dg-t2">Release()</text>
+          <rect x="884" y="52" width="168" height="84" class="dg-box"/>
+          <text x="894" y="74" class="dg-t2">Unregister(NEON, this)</text>
+          <text x="894" y="90" class="dg-t2">Release()</text>
+
+          <!-- buffer lane -->
+          <rect x="180" y="162" width="168" height="84" class="dg-box"/>
+          <text x="190" y="184" class="dg-t2">the slot holds it</text>
+          <text x="190" y="200" class="dg-t2">unallocated, not ready</text>
+          <rect x="356" y="162" width="168" height="84" class="dg-box"/>
+          <text x="366" y="184" class="dg-t2">clears two windows;</text>
+          <text x="366" y="200" class="dg-t2">version++ on a write;</text>
+          <text x="366" y="216" class="dg-t2">a reused frame keeps it</text>
+          <rect x="532" y="162" width="168" height="84" class="dg-box"/>
+          <text x="542" y="184" class="dg-t2">IsReady(): this frame</text>
+          <text x="542" y="200" class="dg-t2">the whole viewport,</text>
+          <text x="542" y="216" class="dg-t2">at the neon's scale</text>
+          <rect x="708" y="162" width="168" height="84" class="dg-box"/>
+          <text x="718" y="184" class="dg-t2">GL buffer freed</text>
+          <text x="718" y="200" class="dg-t2">IsReady() false</text>
+          <rect x="884" y="162" width="168" height="84" class="dg-box"/>
+          <text x="894" y="184" class="dg-t2">slot empty; the object</text>
+          <text x="894" y="200" class="dg-t2">lives while a reader</text>
+          <text x="894" y="216" class="dg-t2">still holds it</text>
+
+          <!-- reader lane -->
+          <rect x="180" y="272" width="168" height="84" class="dg-box"/>
+          <text x="190" y="294" class="dg-t2">holds the registry</text>
+          <text x="190" y="310" class="dg-t2">(set by the effect)</text>
+          <rect x="356" y="272" width="168" height="84" class="dg-box"/>
+          <text x="366" y="294" class="dg-t2">must not read yet:</text>
+          <text x="366" y="310" class="dg-t2">not every layer's</text>
+          <text x="366" y="326" class="dg-t2">phase 1 has run</text>
+          <rect x="532" y="272" width="168" height="84" class="dg-box-a"/>
+          <text x="542" y="294" class="dg-t2">Find(NEON); IsReady()?</text>
+          <text x="542" y="310" class="dg-t2">BindTexture(unit)</text>
+          <text x="542" y="326" class="dg-t2">uv = fragCoord / viewport</text>
+          <rect x="708" y="272" width="168" height="84" class="dg-box"/>
+          <text x="718" y="294" class="dg-t2">IsReady() false:</text>
+          <text x="718" y="310" class="dg-t2">draw without it</text>
+          <rect x="884" y="272" width="168" height="84" class="dg-box"/>
+          <text x="894" y="294" class="dg-t2">still a valid object,</text>
+          <text x="894" y="310" class="dg-t2">never ready again</text>
+
+          <!-- flows -->
+          <line x1="440" y1="136" x2="440" y2="160" class="dg-line-a" marker-end="url(#cd5b)"/>
+          <line x1="616" y1="246" x2="616" y2="270" class="dg-line-a" marker-end="url(#cd5b)"/>
+          <line x1="660" y1="162" x2="660" y2="138" class="dg-line" marker-end="url(#cd5a)"/>
+        </svg>
+        <figcaption><b>Figure 5</b> The neon's shared buffer over its life. Writes happen only in phase 1 and reads only in phase 2, so every reader sees the frame the producer just drew, wherever the two sit in the layer order. <code>DebugRenderer</code>'s inset (<code>showSharedBuffer</code>) is the in-tree reader.</figcaption>
+      </figure>
+
+      <h3>The contract a reader relies on</h3>
+      <ul class="body">
+        <li>It covers the <strong>whole viewport</strong> it was drawn for (<code>GetViewport()</code>), so a fragment of a pass at that viewport finds its own pixel at <code>uv = gl_FragCoord.xy / viewport</code>. Colour attachment 0, <code>GL_LINEAR</code>, clamped to edge.</li>
+        <li><code>IsReady()</code> holds this frame's image from the end of the producer's <code>RenderOffscreen</code>; <code>GetVersion()</code> moves whenever the producer redraws it, so an unchanged version means unchanged texels - a reader may cache against it.</li>
+        <li>The handle is read-only by type. The write side - <code>BeginWrite</code>, <code>MarkReady</code>, <code>MarkNotReady</code>, <code>Release</code> - is the producer's alone.</li>
+        <li>For <code>NEON</code>: the filament, halo and bloom at <code>NeonConfig::resolutionScale</code>, premultiplied, tone-mapped and <em>undithered</em>, RGBA16F (RGBA8 fallback). No opaque fill, and <em>not</em> the one-sided cut or the cutoffs, which the blit applies at full resolution; a reader that wants them multiplies them in from the config, as <code>neon-blit.frag</code> does. Not ready while the layer is off, in <code>opaqueOnly</code>, or after a failed pass.</li>
+      </ul>
+
+<pre><code>// A reader: any renderer's Render (phase 2), wherever it sits in the order.
+#include "core/shared-buffer.h"
+
+std::shared_ptr&lt;const SharedBuffer&gt; neon;
+if (GetSharedBufferRegistry())
+{
+    neon = GetSharedBufferRegistry()-&gt;Find(SharedBufferId::NEON);
+}
+if (neon &amp;&amp; neon-&gt;IsReady())
+{
+    mShader.Use();
+    neon-&gt;BindTexture(6);
+    mShader.SetUniform("uNeon", 6);
+    mShader.SetUniform("uNeonViewport", glm::vec2(neon-&gt;GetViewport()));
+    // GLSL: vec2 uv = gl_FragCoord.xy / uNeonViewport;
+}</code></pre>
+
+      <h3>The write side <span class="src">SharedBuffer::BeginWrite</span></h3>
+      <p><code>BeginWrite(texels, window)</code> sizes the buffer in the best format left - walking the producer's list from the best one the driver has not refused, the tier only ever advancing - binds it, and clears only what can hold anything but 0: the union of this write's window and the last write's, or the whole buffer when its texels are undefined (fresh, reallocated, released). Clearing the whole viewport-sized buffer on every hue or intensity frame cost a small rect up to 1.65x at 4K on the AMD 5300M. It refuses to bind when no format allocates, because binding a failed <code>Framebuffer</code> binds id 0 - the caller's framebuffer - and the clear would erase it. The caller lifts the host's scissor first (<code>NoScissorScope</code>), since a box in window pixels lands on the wrong texels of a reduced buffer.</p>
+
+      <h3>Adding a producer</h3>
+      <ol class="body">
+        <li>Add a <code>SharedBufferId</code> value before <code>COUNT</code>.</li>
+        <li>Own a <code>std::shared_ptr&lt;SharedBuffer&gt;</code> with its format list; <code>Register</code> it in <code>Initialize</code> and remember whether the registry accepted it.</li>
+        <li>In <code>RenderOffscreen</code>: <code>BeginWrite</code>, draw, <code>MarkReady(viewport)</code> - or <code>MarkNotReady()</code> on a frame with nothing to share. Keep the version on a frame that reuses the image.</li>
+        <li><code>Release()</code> when the layer is disabled (from <code>OnConfigChanged</code>); in the destructor, <code>Unregister</code> then <code>Release</code>, while the context is still current.</li>
+      </ol>
+      <p><code>neon-scale-check shared-buffer</code> is the gate for the neon's: probe renderers before and after the neon must be handed the same ready buffer on every scene and scale, still frames must not move its version, and the buffer's light on the line must not fall short of the frame's.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s13">
+      <h2 class="sec"><span class="num">13</span> The GL resource layer</h2>
+
+      <p>Renderer code never calls <code>glGen*</code> or <code>glDelete*</code>. Every GL object lives in a move-only RAII wrapper that creates it in its constructor and deletes it in its destructor - so a context must be current at both - and most wrappers also remember enough to skip redundant GL calls.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Wrapper</th><th>Header</th><th>What it does beyond RAII</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">ShaderProgram</td><td class="mono nw">gl/shader-program.h</td><td>Compiles and links in its constructor, logging errors with the program's name; <code>IsValid()</code> says whether it built. Caches each uniform's location - keyed by <code>string_view</code>s into a <code>deque</code> of names, so a lookup builds no string (I81) - and each uniform's last value by type, skipping an unchanged upload. A missing uniform logs once.</td></tr>
+            <tr><td class="mono nw">UniformBuffer</td><td class="mono nw">gl/uniform-buffer.h</td><td><code>SetData</code> compares the bytes with the last upload and skips an identical one; <code>GetUploadCount</code> counts only uploads that changed the contents - the version the skip keys read. <code>BindBase(point)</code>.</td></tr>
+            <tr><td class="mono nw">Framebuffer</td><td class="mono nw">gl/framebuffer.h</td><td>One to three colour attachments. <code>Resize</code> early-outs while size, format, filter and attachment count hold, and destroys the attachment on failure. <code>Bind</code> sets the viewport with the target. <code>ClearBuffer</code> / <code>ClearBufferRect</code>; static <code>GetBoundId</code> / <code>BindId</code>; <code>Release</code> - never on the bound target mid-pass.</td></tr>
+            <tr><td class="mono nw">RenderTargetState</td><td class="mono nw">gl/framebuffer.h</td><td><code>Capture()</code> reads the draw framebuffer and the viewport as a pair; <code>Restore()</code> puts both back, and is a no-op on a state never captured - so a path that never leaves the target pays neither the queries nor a bogus restore.</td></tr>
+            <tr><td class="mono nw">VertexArray</td><td class="mono nw">gl/vertex-array.h</td><td>A VAO and its one VBO. The neon declares each mesh's attribute format once in <code>Initialize</code> and afterwards only re-uploads vertices.</td></tr>
+            <tr><td class="mono nw">Texture, Texture2D</td><td class="mono nw">gl/texture*.h</td><td>A texture name; data, sub-data and parameter setters.</td></tr>
+            <tr><td class="mono nw">BaseLUT</td><td class="mono nw">renderer/base-lut.h</td><td>An RGBA8 table: respecifies on a size change, otherwise sub-uploads; sets parameters only when they change; restores the active unit and the binding it found; counts uploads.</td></tr>
+            <tr><td class="mono nw">GradientRingLUT, SpanAtlasLUT&lt;T&gt;</td><td class="mono nw">renderer/*-lut.h</td><td>Bake guards on their own inputs. The ring cross-fades to a new set of stops over <code>colorTransitionDuration</code> (<code>Tick</code>, from <code>Update</code>), chases a target that moves mid-fade, and snaps when its width changes; the atlases hold one row per segment or arc.</td></tr>
+            <tr><td class="mono nw">GLUtils scopes</td><td class="mono nw">util/gl-utils.h</td><td><code>NoScissorScope</code> around each offscreen pass. <code>NoCullScope</code> and <code>CompositeStateScope</code> are available to a host; the library takes neither.</td></tr>
+            <tr><td class="mono nw">OffscreenCapture, CaptureUtil</td><td class="mono nw">util/capture-util.h</td><td>Render into a real FBO and read it back - never <code>glReadPixels</code> on the window's default framebuffer, whose post-swap contents are undefined and whose size follows the HiDPI backing scale.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The failure model</h3>
+      <ul class="body">
+        <li><strong>Formats fall back, once.</strong> The buffers that want half float (the emission table, the coverage tables, the gather buffer, the reduced buffer) carry a list, best first, walked by <code>ResizeInBestFormat</code> or <code>SharedBuffer::BeginWrite</code> from a tier kept <em>beside</em> the buffer - a released buffer cannot remember a refusal itself. A fallback is logged once, with what it costs - for the emission table, that arc intensities and stacked segment boosts above 1.0 will clamp. The fields have no 8-bit fallback: a driver that cannot render half float shades directly (<code>LazyBake::unavailable</code>).</li>
+        <li><strong>Programs fail once.</strong> Recorded, logged with what the frame loses, never retried.</li>
+        <li><strong>A frame degrades, it does not break.</strong> A failed glow pass skips the composites that would read its buffer, so the frame shows the fill alone rather than a stale image; <code>Initialize</code> fails only if the emission program or table cannot be built, and then the effect drops the layer and runs the rest.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s14">
+      <h2 class="sec"><span class="num">14</span> The other four renderers</h2>
+
+      <p>Each is a few hundred lines on the same skeleton: compile in <code>Initialize</code>, gate a rebuild in <code>OnConfigChanged</code>, advance a phase in <code>Update</code>, draw in <code>Render</code> - with an offscreen phase only where a resolution scale needs one.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Renderer</th><th>Phases</th><th>GL objects</th><th>Rebuild gate</th><th>The design point</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">DropletsRenderer</td><td><code>Render</code></td><td>one program; the band ring's VAO (24 vertices, or 6 with no hole)</td><td>geometry or band extent moved: <code>setupGeometry</code></td><td>Geometry bounds the band - four strips, not a fullscreen quad - so cost follows the perimeter, not the display. The strips must not overlap: the pass blends premultiplied, so a doubly covered pixel composites twice. No resolution scale: its rims are single-pixel features.</td></tr>
+            <tr><td class="mono nw">LensFlareRenderer</td><td><code>RenderOffscreen</code> below scale 1.0, <code>Render</code></td><td>flare and blit programs; scaled buffer; <code>GhostBlock</code> UBO (binding 3); fullscreen VAO</td><td>ghost offset, colour or tint: <code>bakeGhostBlock</code>; scaled buffer released at 1.0</td><td>Per-ghost distance and colour are CPU work baked into a 160-byte std140 block, the emission pre-pass's invariant one tier cheaper. Two uniforms differ between the resolution paths, because the shader normalises every term by the resolution.</td></tr>
+            <tr><td class="mono nw">SpotlightRenderer</td><td><code>RenderOffscreen</code> below 1.0, <code>Render</code></td><td>lamp and blit programs; one strip VBO, ceiling-sized and allocated once; scaled buffer</td><td>the whole <code>SpotlightConfig</code>: <code>buildStrips</code></td><td>Each lamp is a strip hugging the region its falloff solves to be lit; per-lamp scalars ride as <code>flat</code> vertex attributes, so no shader has a per-index array. App coordinates in the VBO and a flipped ortho, so a resize is one uniform. Screens rather than adds. A clipped lamp pins the scale to 1.0.</td></tr>
+            <tr><td class="mono nw">DebugRenderer</td><td><code>Render</code></td><td>four programs (LUT strip, stop markers, wireframe, shared-buffer inset); its own <code>GradientRingLUT</code></td><td>its own ring is baked only while the strip is visible (<code>IsStripVisible</code>, one predicate for bake, tick and draw)</td><td>Last in the default order, because it annotates what the layers under it drew. Keeps its own ring so the neon carries no debug member; snaps instead of fading when re-shown. Reads the neon's shared buffer like any reader.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s15">
+      <h2 class="sec"><span class="num">15</span> The C ABI</h2>
+
+      <p><code>libedge-lighting-c</code> (<code>lib/capi/</code>) is a flat <code>extern "C"</code> surface over the C++ library for P-Invoke, ctypes and cgo. <code>edge-lighting-capi.h</code> is the single public include. Its design is a thin, strict adapter:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Concern</th><th>How it is handled</th></tr></thead>
+          <tbody>
+            <tr><td>Handles</td><td>Three opaque families - effect, animation, modulator - defined in <code>capi-internal.h</code>. An effect handle is <code>{ Config config; unique_ptr&lt;EdgeLightingEffect&gt; impl; }</code>; the other two wrap an <code>AnimationPtr</code> / <code>ModulatorPtr</code>, so attaching an animation shares it rather than transferring it.</td></tr>
+            <tr><td>Lifecycle</td><td><code>el_effect_create</code> owns only the staging config - no GL - so a host can create it before a context exists. <code>el_effect_init</code> (the default order), <code>_init_with_renderers(mask)</code> or <code>_init_with_renderer_order</code> builds the effect and its layers on the GL thread. <code>el_effect_destroy</code> tears it down.</td></tr>
+            <tr><td>Staging config</td><td>Every <code>el_effect_set_*</code> writes the staging <code>Config</code> and nothing else; every <code>get_*</code> reads it back, not the animated composite. <code>el_effect_update</code> is the <em>only</em> call that hands it to the effect (<code>SetConfig</code>, then <code>Update</code>), so a host that sets and then only renders renders the previous frame's config. <code>el_effect_capture</code> re-syncs staging from the effect's base.</td></tr>
+            <tr><td>Errors</td><td>No C++ exception crosses the boundary: each entry point catches and maps to <code>el_result_e</code>.</td></tr>
+            <tr><td>Validation</td><td>Before any work: a null handle (<code>VALIDATE_*_PTR</code>), an effect not yet initialised (<code>IsInitialized</code>), an integer that names no enumerator (<code>VALIDATE_ENUM</code>), a negative index, a non-finite float (<code>REQUIRE_FINITE</code> - one NaN in the config compares unequal to itself forever, notifying every renderer every frame and defeating every skip), a zero duration where one is not allowed.</td></tr>
+            <tr><td>Quiet setters</td><td><code>SET_AND_LOG</code> returns <code>EL_SUCCESS</code> without logging when the value is unchanged, so a debug UI's get-widget-set loop does not flood the log.</td></tr>
+            <tr><td>Arrays</td><td>A <code>_count</code> setter plus per-index accessors for colour stops, segments, arcs and each one's own stops.</td></tr>
+            <tr><td>ABI parity</td><td>A wall of <code>static_assert</code>s pins every mirrored enum's values to its <code>el_*</code> twin, and <code>RendererLayer</code>'s bits to <code>el_renderer_flags_e</code>, so the layer calls only cast and forward. New values go at the end.</td></tr>
+            <tr><td>Visibility</td><td>Symbols hidden by default; only <code>EL_API</code>-marked functions export. Old opaque-softness entry points survive as shims in <code>el-deprecated.{h,cpp}</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s16">
+      <h2 class="sec"><span class="num">16</span> Shaders as build products</h2>
+
+      <p>There is no runtime shader I/O. <code>lib/CMakeLists.txt</code> reads every <code>lib/shaders/*.{vert,frag}</code> and substitutes it into <code>shaders.h.in</code> through <code>configure_file()</code>, producing <code>build/lib/generated/shaders.h</code>: each source a <code>const char* const</code> raw string in <code>EdgeLighting::ShaderSource</code>. The C++ side sees a shader as a string constant and nothing more.</p>
+      <ul class="body">
+        <li><strong>Constants shared by both languages</strong> live in the four tuning headers (<code>neon-</code>, <code>droplets-</code>, <code>lens-flare-</code>, <code>spotlight-tuning.h</code>), written with <code>#define</code> - the only form valid in C++ and GLSL ES 3.00 - and injected verbatim, so a shader constant and its CPU mirror cannot drift.</li>
+        <li><strong>GLSL shared by several programs</strong> lives in <code>.glsl</code> chunks (<code>neon-common</code>, <code>neon-pieces</code>, <code>neon-sdf</code>, <code>neon-grade</code>, <code>spotlight-dither</code>) injected the same way, since GLSL has no <code>#include</code>.</li>
+        <li><strong>Variants</strong> are sources of their own over a shared chunk (the field bake is <code>neon-field-bake.frag</code> over <code>neon-shade.glsl</code>, calling <code>neonShade</code> with a constant argument), not a runtime branch in a hot program.</li>
+        <li><strong>Per-index data</strong> goes in a <code>layout(std140)</code> uniform block uploaded through <code>UniformBuffer</code>, never a bare uniform array - the form is unavailable on the restricted targets the library ships to and compiles fine on desktop GL, so testing would not catch it.</li>
+        <li><strong>Adding a shader</strong> touches three places: both lists in <code>lib/CMakeLists.txt</code> (<code>CMAKE_CONFIGURE_DEPENDS</code> and <code>file(READ ...)</code>) and <code>shaders.h.in</code>.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s17">
+      <h2 class="sec"><span class="num">17</span> Rules that keep it correct</h2>
+
+      <p>The library has no unit-test target. What stands in for one is a set of rules the code is written to, and an optional tool (<code>-DEDGE_LIGHTING_BUILD_TOOLS=ON</code>) that checks the ones a machine can.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Rule</th><th>What breaks without it</th><th>Checked by</th></tr></thead>
+          <tbody>
+            <tr><td>Every <code>Config</code> field is in its struct's <code>operator==</code>.</td><td>No notification, no rebuild: the change is silently ignored.</td><td>review</td></tr>
+            <tr><td>An input added to a pass joins its key - <code>getEmissionInputs</code>, <code>getGatherInputs</code>, the <code>OnConfigChanged</code> gates, the coverage dirty gate - and a new skip gets a <code>NeonBypass</code> bit.</td><td>The pass is skipped on a frame that input moved: a stale image.</td><td><code>neon-scale-check sequence</code></td></tr>
+            <tr><td>Dirty state set in <code>OnConfigChanged</code> accumulates; it is consumed by the frame.</td><td>A change lost when the call comes twice in one frame.</td><td><code>neon-scale-check sequence</code></td></tr>
+            <tr><td>Offscreen work only in <code>RenderOffscreen</code>; composites only in <code>Render</code>.</td><td>A tiler stores and reloads the target mid-frame; a reader sees last frame's shared image.</td><td><code>neon-scale-check shared-buffer</code></td></tr>
+            <tr><td>Restore the framebuffer and viewport you were handed, never framebuffer 0; leave blend as every layer leaves it; never delete a framebuffer in <code>Render</code>.</td><td>A capture comes back empty while the window receives the frame; later layers draw into the wrong target.</td><td>captures through <code>OffscreenCapture</code></td></tr>
+            <tr><td>One program object per render target and blend state.</td><td>93-624x slower on the AMD macOS driver.</td><td>review</td></tr>
+            <tr><td>The blit and the ring share vertex floats, one matrix and <code>invariant gl_Position</code>.</td><td>Pixels drawn twice or by neither along their seam.</td><td><code>neon-scale-check partition</code></td></tr>
+            <tr><td>No absolute time reaches a shader; rate-driven phases integrate their rate.</td><td>Precision loss after days; phases that race when a rate moves.</td><td><code>neon-scale-check clock</code></td></tr>
+            <tr><td>Changes to <code>neon.frag</code>, <code>neon-blit.frag</code>, <code>neon.vert</code> or the pass schedule keep the twelve scenes' pixels.</td><td>Drift from the committed reference images.</td><td><code>neon-scale-check check</code></td></tr>
+            <tr><td>Mirrored C ABI enums are appended to, never renumbered; every float argument passes <code>REQUIRE_FINITE</code>.</td><td>A broken ABI; a NaN that defeats every skip forever.</td><td><code>static_assert</code>s at compile time; review</td></tr>
+            <tr><td>No bare uniform arrays in a shader.</td><td>Programs that fail only on the restricted targets.</td><td>review</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Written from the headers and sources on the <code>add_shared_buffer_architecture</code> branch at <code>0ea55a4</code>, 2026-10-20. Measurements are quoted from the code comments and records they were taken in, by item number (I47, I52, I55, I56, V28, ...): the items are in <a href="../records/review-findings.md">review-findings.md</a>, closed ones in git (<code>git show f153e1c:docs/review-findings.md</code>). Timer-query figures from the AMD Radeon Pro 5300M are ratios only; that GPU's timers read about 3.85x wall-clock time.</p>
+    <p>See also: <a href="../guides/implementation.md">implementation.md</a> (the short version), <a href="neon-renderer-reference.html">the mechanism reference</a>, <a href="neon-shader-outputs.html">the shader outputs</a>, <a href="../../tools/neon-scale-check/README.md">neon-scale-check</a>.</p>
+  </footer>
+</div>

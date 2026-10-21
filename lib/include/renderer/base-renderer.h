@@ -47,9 +47,15 @@ namespace EdgeLighting
 
         /// Called every frame before @ref Render.
         /// @param deltaTime  Seconds since the last frame.
-        /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
+        /// @param time       Accumulated clock time in seconds (paused when the clock is paused). A
+        ///                   double, since an effect may run for days: never upload it to a
+        ///                   shader as a float - reduce it on the CPU, in double, to the
+        ///                   bounded phase the shader needs. A phase driven by a
+        ///                   config rate is a @ref PhaseAccumulator, which
+        ///                   integrates the rate (animation/clock.h): `time *
+        ///                   rate` races whenever the rate moves.
         /// @param config     Current active configuration.
-        virtual void Update(float deltaTime, float time, const Config &config) = 0;
+        virtual void Update(float deltaTime, double time, const Config &config) = 0;
 
         /// Phase 1 of a frame: draw whatever this layer draws OFFSCREEN - its
         /// own buffers, and any @ref SharedBuffer it produces - and nothing on
@@ -66,7 +72,7 @@ namespace EdgeLighting
         /// @ref Render, for the same frame. Does nothing by default: a layer
         /// with no offscreen work, or one that keeps it in Render, need not
         /// override it.
-        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, double time, const Config &config)
         {
             (void)viewportWidth;
             (void)viewportHeight;
@@ -100,9 +106,15 @@ namespace EdgeLighting
         ///
         /// @param viewportWidth  Current framebuffer width.
         /// @param viewportHeight Current framebuffer height.
-        /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
+        /// @param time       Accumulated clock time in seconds (paused when the clock is paused). A
+        ///                   double, since an effect may run for days: never upload it to a
+        ///                   shader as a float - reduce it on the CPU, in double, to the
+        ///                   bounded phase the shader needs. A phase driven by a
+        ///                   config rate is a @ref PhaseAccumulator, which
+        ///                   integrates the rate (animation/clock.h): `time *
+        ///                   rate` races whenever the rate moves.
         /// @param config     Current active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) = 0;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) = 0;
 
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.

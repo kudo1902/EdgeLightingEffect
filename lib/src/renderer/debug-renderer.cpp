@@ -1,5 +1,6 @@
 #include "renderer/debug-renderer.h"
 #include "core/shared-buffer.h"
+#include "animation/clock.h"
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
@@ -81,8 +82,13 @@ namespace EdgeLighting
         return true;
     }
 
-    void DebugRenderer::Update(float deltaTime, float, const Config &config)
+    void DebugRenderer::Update(float deltaTime, double time, const Config &config)
     {
+        // The strip's hue phase, every frame whether or not it is shown: the
+        // neon advances its own the same way, so a rate that moves while the
+        // strip is hidden still leaves the two agreeing when it comes back.
+        mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
+
         // Advances this renderer's own copy of the ring cross-fade. It is
         // handed the same deltaTime as the neon renderer's copy and was baked
         // from the same stops, so the two stay in step frame for frame - which
@@ -108,7 +114,7 @@ namespace EdgeLighting
         }
     }
 
-    void DebugRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void DebugRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.debug.enable)
         {
@@ -341,7 +347,7 @@ namespace EdgeLighting
         mWireframeVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
-    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config)
+    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, double time, const Config &config)
     {
         // Overwrites the neon output within the strip rect so the baked ring is
         // readable regardless of the glow's tone-mapped brightness, which is
@@ -349,8 +355,9 @@ namespace EdgeLighting
         mLUTDebugShader.Use();
         mLUTDebugShader.SetUniform("uMVP", mvp);
         mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
-        mLUTDebugShader.SetUniform("uTime", time);
-        mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        // The same phase the neon integrates the hue rate to (uHuePhase), so
+        // the strip scrolls with the ring it previews.
+        mLUTDebugShader.SetUniform("uHuePhase", mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate));
         mGradientLUT.Bind(0);
         mLUTDebugShader.SetUniform("uGradientLUT", 0);
         mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);

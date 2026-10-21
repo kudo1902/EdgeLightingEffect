@@ -1,4 +1,4 @@
-// neon-guide-figures - renders every image in docs/neon-onboarding-guide.md.
+// neon-guide-figures - renders every image in docs/guides/neon-onboarding-guide.md.
 //
 //   neon-guide-figures [OUTDIR]
 //

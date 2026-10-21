@@ -333,7 +333,7 @@ namespace
     ///
     /// Without the note the sliders look live and move nothing, which is
     /// exactly the confusion that produced the report behind
-    /// docs/glow-side-comparison.md section 4.3. A note rather than a
+    /// docs/design/glow-side-comparison.md section 4.3. A note rather than a
     /// BeginDisabled so the value can still be staged ahead of switching the
     /// glow side back.
     inline void CutoffRow(const char *label, const char *idSuffix,
@@ -548,7 +548,7 @@ namespace
         }
 
         // --- Elapsed status line ---
-        float elapsed = anim.GetElapsed();
+        const float elapsed = static_cast<float>(anim.GetElapsed());
         if (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
         {
             if (dur > 0.0f)

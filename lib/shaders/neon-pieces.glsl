@@ -175,7 +175,7 @@ vec4 arcTangentSegment(vec2 w, float r) {
 // PERIMETER, indexed by the foot's perimeter position, and convolved along a
 // straight line through the foot that ran on past the piece's ends - so near a
 // corner where a lit stretch met a dark one, each piece borrowed its
-// neighbour's coverage (V21 in docs/review-findings.md).
+// neighbour's coverage (V21 in docs/records/review-findings.md).
 //
 // `tableLayout.x` texels across - the table's width - and four bands of
 // GLOW_COVER_ROWS rows down. Band b holds straight b at its left and corner b

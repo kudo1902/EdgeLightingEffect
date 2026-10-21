@@ -2,7 +2,7 @@
 #define _NEON_SCALE_CHECK_COVER_H_
 
 // The `cover` scene set: animated scenes for the glow coverage table
-// (docs/neon-glow-cover-resolution-plan.md, section 2.3 and step 0).
+// (docs/design/neon-glow-cover-resolution-plan.md, section 2.3 and step 0).
 //
 // Unlike the page's twelve scenes (scenes.h), these MOVE: arcs and segments
 // change length, and some segments travel, every frame - so every frame is

@@ -51,7 +51,7 @@ namespace EdgeLighting
         mAnimationManager->Update(mClock.Update(deltaTime));
         refreshActiveConfig();
 
-        float time = mClock.GetTime();
+        const double time = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
             renderer->Update(deltaTime, time, mActiveConfig);
@@ -60,7 +60,7 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        float t = mClock.GetTime();
+        const double t = mClock.GetTime();
         // Two phases: every layer's offscreen work first, then every layer's
         // composite. A layer that reads another's shared image (SharedBufferRegistry)
         // then sees this frame's wherever it sits in the order, and the

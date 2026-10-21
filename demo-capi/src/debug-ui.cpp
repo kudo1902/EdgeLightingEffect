@@ -175,7 +175,7 @@ namespace
         }
 
         // The GLOW's cutoffs. One on the side glowSide culls is ignored (see
-        // neon.frag's band-distance block and docs/glow-side-comparison.md
+        // neon.frag's band-distance block and docs/design/glow-side-comparison.md
         // section 4.3); neither reaches the opaque fill, which has its own
         // pair in the opaque section.
         DrawCutoffRow(effect, "Inside Cutoff", idSuffix, el_effect_get_inside_cutoff,

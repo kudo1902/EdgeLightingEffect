@@ -12,7 +12,7 @@
 // perimeter's length. The gather loop itself is neon-gather.frag's alone -
 // it used to live here too, compiled out of neon.frag's reading variant, while
 // neon.frag could also run it inline at 1.0; that path is gone
-// (docs/neon-shader-cleanup-plan.md step 3).
+// (docs/design/neon-shader-cleanup-plan.md step 3).
 
 precision highp float;
 

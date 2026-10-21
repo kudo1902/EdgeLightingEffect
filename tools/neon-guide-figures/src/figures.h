@@ -1,7 +1,7 @@
 #ifndef _NEON_GUIDE_FIGURES_FIGURES_H_
 #define _NEON_GUIDE_FIGURES_FIGURES_H_
 
-// Every figure in docs/neon-onboarding-guide.md, one function per group, each
+// Every figure in docs/guides/neon-onboarding-guide.md, one function per group, each
 // writing its files into a directory. The guide names the files; renaming one
 // here means renaming its reference there.
 

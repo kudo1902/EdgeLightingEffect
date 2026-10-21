@@ -2,6 +2,8 @@
 #define _EDGE_LIGHTING_SEGMENT_UTILS_H_
 
 #include "core/config.h"
+#include <algorithm>
+#include <cstdint>
 #include <vector>
 
 namespace EdgeLighting
@@ -11,39 +13,6 @@ namespace EdgeLighting
     // live here as free functions so the config struct stays a plain data holder.
     namespace SegmentUtils
     {
-        /// Append a default entry to @c neon.preservedSegmentBoosts and hand back
-        /// its id, or @c 0 if the preserved pool is already at
-        /// @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP. The id lets the caller mutate
-        /// exactly that entry via @ref FindPreservedSegment regardless of what
-        /// other owners do to either pool.
-        ///
-        /// The id is derived from the pool - one past the highest live id (ids
-        /// 1-9 stay reserved for well-known / sentinel entries), so it is always
-        /// unique among the entries that exist and needs no stored counter: it
-        /// travels with the config for free and survives both a host rebuilding
-        /// @c NeonConfig from a base and (de)serialization. Caveat: releasing the
-        /// highest id frees that value for reuse, so do not keep using an id
-        /// after releasing it.
-        inline uint32_t AcquireSegment(NeonConfig &neon)
-        {
-            if (static_cast<int>(neon.preservedSegmentBoosts.size()) >= NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
-            {
-                return 0;
-            }
-            uint32_t id = 10;
-            for (const PreservedSegment &p : neon.preservedSegmentBoosts)
-            {
-                if (p.id >= id)
-                {
-                    id = p.id + 1;
-                }
-            }
-            PreservedSegment ps;
-            ps.id = id;
-            neon.preservedSegmentBoosts.push_back(ps);
-            return ps.id;
-        }
-
         /// Index into @c neon.preservedSegmentBoosts of the entry owning @p id,
         /// or @c -1 if none. @c id 0 never matches.
         inline int FindPreservedSegment(const NeonConfig &neon, uint32_t id)
@@ -60,6 +29,49 @@ namespace EdgeLighting
                 }
             }
             return -1;
+        }
+
+        /// Append a default entry to @c neon.preservedSegmentBoosts and hand back
+        /// its id, or @c 0 if the preserved pool is already at
+        /// @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP. The id lets the caller mutate
+        /// exactly that entry via @ref FindPreservedSegment regardless of what
+        /// other owners do to either pool.
+        ///
+        /// The id is derived from the pool - one past the highest live id (ids
+        /// 1-9 stay reserved for well-known / sentinel entries), so it is always
+        /// unique among the entries that exist and needs no stored counter: it
+        /// travels with the config for free and survives both a host rebuilding
+        /// @c NeonConfig from a base and (de)serialization. Caveat: releasing the
+        /// highest id frees that value for reuse, so do not keep using an id
+        /// after releasing it. When the highest id is already @c UINT32_MAX (a
+        /// config carrying it from elsewhere) the lowest free id from 10 up is
+        /// taken instead, since one past it would wrap to 0.
+        inline uint32_t AcquireSegment(NeonConfig &neon)
+        {
+            if (static_cast<int>(neon.preservedSegmentBoosts.size()) >= NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+            {
+                return 0;
+            }
+            const uint32_t firstId = 10;
+            uint32_t highest = firstId - 1;
+            for (const PreservedSegment &p : neon.preservedSegmentBoosts)
+            {
+                highest = std::max(highest, p.id);
+            }
+            uint32_t id = highest + 1;
+            if (highest == UINT32_MAX)
+            {
+                // One past the highest would wrap to 0, which no lookup ever
+                // matches: take the lowest free id instead. The pool is capped
+                // above, so one exists.
+                for (id = firstId; FindPreservedSegment(neon, id) >= 0; ++id)
+                {
+                }
+            }
+            PreservedSegment ps;
+            ps.id = id;
+            neon.preservedSegmentBoosts.push_back(ps);
+            return ps.id;
         }
 
         /// Drop the preserved entry owning @p id; others keep their ids. Returns

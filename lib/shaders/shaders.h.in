@@ -12,7 +12,10 @@
 // injected into neon.frag and the bake that writes that table. neon-sdf.glsl
 // (the rounded box's distance and the band's boundaries) goes into the three
 // programs that draw that edge - neon.frag, the blit and the opaque fill - and
-// neon-grade.glsl (the tone map) into neon.frag and the field's composite.
+// neon-grade.glsl (the tone map) into neon.frag and the field's two
+// composites, and neon-field-common.glsl (what those two composites share)
+// into both. neon-shade.glsl (the shading up to the grade) goes into the two
+// programs that shade - neon.frag and the field's bake.
 // spotlight-dither.glsl (the spotlight's output noise) goes into the two
 // programs that write that layer to the caller's framebuffer - spotlight.frag
 // and the spotlight's blit.
@@ -41,7 +44,18 @@ namespace EdgeLighting
 @NEON_PIECES@
 @NEON_SDF@
 @NEON_GRADE@
+@NEON_SHADE@
 @NEON_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const NEON_FIELD_BAKE_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_COMMON@
+@NEON_PIECES@
+@NEON_SDF@
+@NEON_GRADE@
+@NEON_SHADE@
+@NEON_FIELD_BAKE_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const NEON_GATHER_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
@@ -80,7 +94,16 @@ namespace EdgeLighting
 @NEON_TUNING@
 @NEON_GRADE@
 @NEON_SDF@
+@NEON_FIELD_COMMON@
 @NEON_FIELD_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const NEON_RING_FIELD_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_GRADE@
+@NEON_SDF@
+@NEON_FIELD_COMMON@
+@NEON_RING_FIELD_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
