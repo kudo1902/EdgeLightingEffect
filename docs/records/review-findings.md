@@ -42,7 +42,7 @@ old fork survived.
 | ----- | ----- |
 | open | V9, V16, V18, V29, I13, I18, I82, I83, I84, I86, I88, I90, I91, I92 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
-| fixed or changed | every other V, I and R item, through the thirty-eighth pass |
+| fixed or changed | every other V, I and R item, through the thirty-eighth pass and the 2026-10-21 memory measurement |
 
 The R items come from a re-read after the V and I fixes landed - see
 Second pass. V8 and V9 come from a later read of
@@ -518,6 +518,19 @@ shader files; the tuning headers' `#define` lines survive it - would remove
 both costs, and one more if the `PLATFORM_WINDOWS` branch is ever finished:
 MSVC refuses a string literal over 16 KB (C2026).
 
+**Measured** on 2026-10-21 (Apple M2 Pro), with a strip built and then
+deferred: `[ \t]*//[^\n]*` removed from every file `lib/CMakeLists.txt`
+reads, newlines kept so a driver's line numbers do not move, and configure
+failing on a `/* */` comment or a backslash before a newline - the two forms
+that expression would get wrong; the sources use neither. 916 -> 157 KB of
+embedded source, every shader equal to the old one less its comments, every
+frame byte-identical; `libedge-lighting-c.dylib` 4.10 -> 3.34 MB in Debug.
+The driver's heap it would have saved (0.79 MB for one of each program) is
+gone since I93: a detached shader's source is freed with it, so the strip is
+now a library-size change only. It does not clear MSVC's limit either - three
+sources stay over 16 KB (`neon.frag` 34 KB, the field bake 34 KB, the glow
+coverage bake 21 KB). First-frame compile time not measured.
+
 ### I86. The C ABI logs on paths a host calls every frame - OPEN
 
 *From the Thirty-fifth pass.*
@@ -643,7 +656,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. The thirty-seventh fixed V35, found by `sequence`. The thirty-eighth measured and fixed V32, and found and fixed V36. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. The thirty-seventh fixed V35, found by `sequence`. The thirty-eighth measured and fixed V32, and found and fixed V36. A measurement of the effect's memory on 2026-10-21 found and fixed I93, and measured I84. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -720,7 +733,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I81 | fixed | uniform lookups key on a string_view into names stored once; no allocation per call |
 | [I82](#i82-the-output-dither-is-added-where-the-glow-is-0---open) | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
 | [I83](#i83-what-the-library-leaves-changed-in-the-hosts-gl-state-is-not-documented---open) | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
-| [I84](#i84-the-embedded-shader-text-is-85-comments---open) | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size and driver lexing, and clear MSVC's 16 KB literal limit |
+| [I84](#i84-the-embedded-shader-text-is-85-comments---open) | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size (measured: 916 -> 157 KB, the C library 760 KB smaller) and driver lexing; since I93 it saves no driver heap, and three sources stay over MSVC's 16 KB literal limit |
 | V33 | fixed | an HSV or HSL blend toward an achromatic stop took its hue as 0 and swept toward red; an achromatic endpoint (saturation 0, or HSV value 0) now takes the other stop's hue - blue -> white HSV mid (1.0, 0.5, 1.0) -> (0.5, 0.5, 1.0); RGB unchanged |
 | V34 | fixed | the colour cross-fade restarted on every bake, so a stop edited each frame lagged (23% of a one-second drag shown at its end); a fade retargeted in flight now chases the new target exponentially at a time constant of a third of the duration - lag 0.77 -> 0.09; a change from rest keeps the smoothstep |
 | I85 | fixed | `CaptureUtil::ReadRegion` tested `GL_SAMPLES`, the DRAW framebuffer's, so a single-sample capture read after `End` was refused under a multisampled window; the pre-check is gone (glReadPixels' own INVALID_OPERATION is named instead) and a host pack buffer is unbound for the read and restored |
@@ -733,6 +746,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | [I92](#i92-an-animation-attached-to-two-effects-advances-twice-a-frame---open) | open | an animation attached to two effects is advanced by both (60 frames at 1/60 on each read 2.000 s elapsed); undocumented and unguarded |
 | V36 | fixed | each ray slot's hashed length jumped at the slot boundary, which is where the sub needle peaks, so every needle was cut down its middle - up to 1.84 levels at 1080p, 0.64 at 1000 px from the sun where the haze moves 0.002 a pixel; a straight radial line the V32 dither did not hide (AMD 5300M). Each needle now takes the mean of the two slots it straddles, constant across it and changing only at the slot centres, where it is exactly 0 - boundaries stepping over twice the local gradient 27 / 21 / 18 / 6 per scene -> 0, the far step 0.64 -> 0.000; the flare moves by at most 1.1 levels, by more than half a level on under 0.85% of pixels; the primary rays untouched. A linear blend between slot centres was built too: within 0.1 level of the mean, slightly dearer. 1.03x the flare at 1.0 for the second hash |
 | V35 | fixed | the glow field's bake (pass 1f) made pass 1b's culls itself, through its own region's projection, so its `vPos` differed from pass 1b's in the last bits: on a texel right on a cull's boundary it culled where pass 1b kept, and pass 1c - which repeats the culls from pass 1b's own `vPos` (I76) - composited its 0, a shared-buffer texel 200 levels under pass 1b's guard band on a rounded corner's outside cutoff, the frame within 1 (`sequence` seed 1, sequence 13, frames 69-71); the bake now culls nothing and the composites make every cull on the frame's own grid - `sequence` 3 failing frames -> 0 (on 100 x 150, `normal`'s only failures in 15,000 frames -> none), the `cover` set and the 210 page images byte-identical |
+| I93 | fixed | `ShaderProgram` deleted its shaders after linking but never detached them, and a deleted shader still attached is only flagged, so the driver kept every shader object - source and compiled form - alive with its program: 486 KB of heap per `neon.frag` program against 177 KB detached (Apple M2 Pro); it now detaches both after the link status query - 1.6 MB less heap per effect with the neon alone (3.9 -> 2.2 MB), 2.0 MB with every layer (4.9 -> 2.9 MB), every frame byte-identical across 14 scenes of all five layers at 1080p and 4K |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

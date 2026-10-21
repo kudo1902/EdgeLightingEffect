@@ -5,6 +5,42 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-21 - Shaders detached after link (I93); the comment strip measured (I84)
+
+Uncommitted, on `54a7479`. Apple M2 Pro; I93 and I84 in
+[`review-findings.md`](review-findings.md).
+
+- **Asked for.** Ways to cut the effect's memory. Measured first with a
+  scratch probe that wraps GLAD's texture and buffer calls and attributes each
+  allocation to its caller: 4.5-7.7 MB of textures at 1080p and 17-27 MB at 4K
+  for the neon at 0.5, 25 / 98 MB at scale 1.0, nothing left after the effect
+  is destroyed - most of it the shared buffer, which is the viewport's size
+  whatever the rect's (4.0 MB at 1080p, 15.8 MB at 4K). The heap grew
+  3.7-5.0 MB per effect, most of it the driver's copies of the shaders.
+- **What changed.** `ShaderProgram` detaches both shaders after the link
+  status query, before deleting them (I93): attached, a deleted shader is only
+  flagged and lives as long as the program.
+- **Measured.** Heap per effect against an unmodified build of `54a7479`
+  (same Debug build type): 3.87 -> 2.24 MB with the neon alone, 4.91 -> 2.94 MB
+  with every layer, the same at 1080p and 4K. Per program, `neon.frag` 486 ->
+  177 KB; one of each program 2.63 -> 0.93 MB. GPU memory unchanged, as
+  expected.
+- **Verified.** 14 frames (seven scenes, every layer among them, at 1080p and
+  4K) byte-identical against the old build. `check` passes.
+- **Built, measured and deferred: the comment strip (I84).** `//` comments
+  removed from every embedded file at configure time, newlines kept, configure
+  failing on the two forms a regular expression would get wrong: 916 -> 157 KB
+  of embedded source, the C library 760 KB smaller, frames byte-identical. With
+  the shaders detached it saves no heap, so it is a library-size change only;
+  reverted to do later. The measurement and the approach are in I84.
+- **Open.** Larger, and not started: the shared buffer back to the glow's
+  region (15.8 -> ~0.4 MB for a small rect at 4K, nothing for a full-screen
+  band; it would reverse the 2026-10-19 decision that let a reader take
+  `gl_FragCoord.xy / viewport`), and the glow field packed into strips as the
+  ring field is (at most half, `FIELD_MIN_FILL`: ~4 MB at 4K). The detach is
+  untested on the Tizen device. Otherwise unchanged: V9, V16, V18, V29,
+  I13, I18, I82, I83, I84, I86, I88, I90, I91, I92.
+
 ## 2026-10-21 - The flare's ray needles are no longer cut in half (V36)
 
 Not committed; on top of `4467d61`, the V32 entry below. The rest of the thirty-eighth
