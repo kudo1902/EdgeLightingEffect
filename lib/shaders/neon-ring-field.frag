@@ -6,12 +6,12 @@
 //
 // Its field is full resolution but holds only the ring, PACKED: the ring is an
 // axis-aligned annulus - a box minus a hole (setupRingGeometry) - so its
-// pixels are four strips, stored one above the other on the viewport's pixel
-// grid: the bottom and the top as they are, the left and the right
-// transposed, so a side strip lies along the atlas's width rather than
-// wasting a column of it. A fragment finds its box pixel q from vPos, its
-// strip from q against the hole, and its texel from the strip's row. The hole
-// is CONSERVATIVE - only box pixels the ring can never draw - so every ring
+// pixels are four strips on the viewport's pixel grid: the bottom and the top
+// as they are, the left and the right transposed, so a side strip lies along
+// the atlas's width rather than wasting a column of it. A fragment finds its
+// box pixel q from vPos and its texel from fieldStripTexel
+// (neon-field-common.glsl), which the glow's field shares. The hole is
+// CONSERVATIVE - only box pixels the ring can never draw - so every ring
 // fragment lands in a strip. The ring shades with scale-1.0 uniforms, so
 // unlike pass 1b it multiplies the one-sided cut and the cutoffs in after its
 // tone map; this composite does the same, from the pixel's own distance to
@@ -20,32 +20,12 @@
 
 uniform vec2      uRingLo;      ///< vPos (full-res px) of the ring box's lower-left pixel corner.
 uniform vec4      uRingHole;    ///< Box pixels the ring never draws: [x0, x1) x [y0, y1), as x0, y0, x1, y1.
-uniform vec2      uRingRows;    ///< First atlas row of the left strip and of the right strip.
+uniform vec2      uRingSides;   ///< The side rows' first atlas row, and how many each atlas column holds.
 
 void main() {
-    // Bottom strip, then the top stacked on it, then the left and the right
-    // transposed - the layout computeRingFieldLayout builds and
-    // renderRingFieldPass bakes. Keep the three together.
-    ivec2 q    = ivec2(floor(vPos - uRingLo));
-    ivec4 hole = ivec4(uRingHole);
-    ivec2 texel;
-    if (q.y < hole.y)
-    {
-        texel = q;
-    }
-    else if (q.y >= hole.w)
-    {
-        texel = ivec2(q.x, q.y - hole.w + hole.y);
-    }
-    else if (q.x < hole.x)
-    {
-        texel = ivec2(q.y - hole.y, int(uRingRows.x) + q.x);
-    }
-    else
-    {
-        texel = ivec2(q.y - hole.y, int(uRingRows.y) + q.x - hole.z);
-    }
-    vec2 field = texelFetch(uField, texel, 0).rg;
+    // The ring's texels are the viewport's pixels: the box pixel is vPos's.
+    ivec2 q = ivec2(floor(vPos - uRingLo));
+    vec2 field = texelFetch(uField, fieldStripTexel(q, ivec4(uRingHole), ivec2(uRingSides)), 0).rg;
     vec3 result = fieldShade(field);
 
     // The one-sided cut and the cutoffs, which the ring's own shading applies

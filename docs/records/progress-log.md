@@ -5,9 +5,74 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-22 - The glow's field packed into strips (I94)
+
+On `optimize_memory`, on top of `b5e5156`. Apple M2 Pro; I94 in
+[`review-findings.md`](review-findings.md).
+
+- **Asked for.** The glow's hue-invariant field packed into strips as the
+  edge ring's is, and the saving measured on a full-screen band at 1080p and
+  4K.
+- **Measured first.** Whether there was anything to pack: `FIELD_MIN_FILL`
+  keeps the field off a glow that fills under half its box, and the
+  production band never takes it. On an 1840 x 1000 rect with the default
+  glow and the hue rotating, the quad's hole is 13.6% of the field's window
+  at 1080p and 51% at 4K (the glow's reach is fixed in px); 80-92% with an
+  inside cutoff or a one-sided glow; none with four segment boosts at 1080p,
+  whose emission bound puts the reach past the middle.
+- **What changed.** `RingFieldLayout` became `FieldLayout`, shared by both
+  fields: an origin and a texel density (1 for the ring, the reduced grid's
+  for the glow), the box, a conservative hole, and the side strips' placement.
+  `computeGlowFieldLayout` builds the glow's from its region and
+  `mGlowBounds.hole`; `packFieldStrips` packs both; `drawFieldStrips` bakes
+  both (the box through each strip piece's viewport, as V24 requires); and
+  `fieldStripTexel` in `neon-field-common.glsl` is both composites' lookup.
+  The side strips' rows go in as many columns side by side as makes the
+  smallest atlas no wider than one column's: stacked, as the ring had them, a
+  short hole's side strips made the glow's atlas BIGGER than its box
+  (960 x 621 against 960 x 540, and 37 against 32 MB at 4K at scale 1.0), and
+  a layout no smaller than the box now keeps the box. `FIELD_MIN_FILL` is
+  still measured against the box, so the same configs take the field.
+  `neon-guide-figures` takes the last strip of the glow's bake for its figure.
+- **Review.** A deep review of the change found two defects, both fixed. The
+  first packing let columns widen the atlas past the box - the 4K ring
+  packed 4084 wide against 3782 - which on a GPU whose
+  `GL_MAX_TEXTURE_SIZE` is 4096 (GLES 3.0 guarantees 2048) a ring round a
+  whole 4K screen would pass, and a failed allocation turns a field off for
+  good; the width is now bounded by one column's, which keeps a screen-sized
+  rect's ring in one column. And the glow's buffer followed the hole, which
+  moves with the intensity: under a +/-10% pulse it was reallocated on 8-9
+  of 120 frames, against once for the box; it now keeps rows to spare (twice).
+  Skipped: the composite's lookup could take a reciprocal uniform for its
+  division (not measured), the conservative-hole rule could be one helper for
+  both fields (the ring's float order would change), and no gate scene
+  exercises a multi-column glow field (the probe below did).
+- **Measured.** Field memory, R16F (RG16F with segments), against `b5e5156`:
+  the band at 1080p 0.99 -> 0.90 MB, at 4K 3.96 -> 2.20 MB; with an inside
+  cutoff 0.99 -> 0.24 / 3.96 -> 0.62 MB; one-sided 0.99 -> 0.24 /
+  3.96 -> 0.48 MB; with segments 1.98 MB unchanged at 1080p, 7.91 -> 7.14 MB
+  at 4K; at scale 1.0 at 4K, with segments, 31.6 -> 28.3 MB. The band's ring
+  keeps one column (0.43 / 0.87 MB); an 1840 x 260 rect's ring packs
+  0.43 -> 0.24 MB at 1080p. No config measured grew. Release, interleaved, at
+  4K: hue frames 1.014-1.017 and intensity frames 1.013-1.022 (noise under
+  0.6%) - the composite's lookup, which with an int division cost 1.039 and
+  with a float one picks the same texels; 1080p hue frames and 4K still
+  frames unchanged within noise (alternating runs).
+- **Verified.** 26 frames (13 scenes at 1080p and 4K, every layer among them,
+  the hole cases included) within 1 level of `b5e5156`, still frames
+  byte-identical. `check`, `partition`, `shared-buffer` and `sequence` (exact
+  0, normal 2 / held 1) pass, before the review's fixes and after. The
+  ring-field figure on `neon-shader-outputs.html` re-rendered
+  (458 x 108 -> 458 x 81, its two side columns fitting inside its box); the
+  glow-field figure's scene has no hole, so it keeps its box.
+- **Open.** `FIELD_MIN_FILL`'s memory reason has mostly gone; its time reason
+  (1.02x on the band) has not, so it stays - lowering it would hand the field
+  to thin bands. Unchanged: V9, V16, V18, V29, I13, I18, I82, I83, I84,
+  I86, I88, I90, I91, I92.
+
 ## 2026-10-21 - Shaders detached after link (I93); the comment strip measured (I84)
 
-Uncommitted, on `54a7479`. Apple M2 Pro; I93 and I84 in
+Commit `b5e5156`, on `54a7479`. Apple M2 Pro; I93 and I84 in
 [`review-findings.md`](review-findings.md).
 
 - **Asked for.** Ways to cut the effect's memory. Measured first with a

@@ -1210,10 +1210,12 @@ namespace NeonGuideFigures
         // page's scale with the hue rotating - the frames the field serves.
         // The field from its FIRST frame, which shades pass 1b and also bakes
         // the field (the first frame a config the field can serve is drawn
-        // builds and first draws its programs) - the first P1F draw, before
-        // the ring's own field bakes; the composite from the SECOND, one clock
-        // tick on, so the hue has moved and pass 1c draws in pass 1b's place
-        // rather than the frame reusing the buffer.
+        // builds and first draws its programs) - its P1F draws, one per strip
+        // into the packed buffer, before the ring's own field bakes through a
+        // box of its own: the LAST draw through the first draw's box holds all
+        // four strips. The composite from the SECOND, one clock tick on, so
+        // the hue has moved and pass 1c draws in pass 1b's place rather than
+        // the frame reusing the buffer.
         {
             Config field = c;
             field.neon.segmentBoosts.clear();
@@ -1223,10 +1225,9 @@ namespace NeonGuideFigures
             const DrawRecord *p1f = nullptr;
             for (const DrawRecord &d : PassRecorder::GetDraws())
             {
-                if (d.kind == PassKind::P1F)
+                if (d.kind == PassKind::P1F && (!p1f || d.vertexArray == p1f->vertexArray))
                 {
                     p1f = &d;
-                    break;
                 }
             }
             if (p1f)

@@ -189,14 +189,23 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   only linked there left a ~125 ms stall on the bake frame, and a first frame
   that composited instead of shading deferred the shading program's own
   first-draw stall to the first config change - keep all three first draws on
-  that frame. R16F at half the reduced buffer's size (0.84 MB at 0.5 for a
-  960 x 540 rect at 1080p), RG16F with segments (`GetFieldFormat`, 1.7 MB) -
+  that frame. R16F on the reduced buffer's grid, RG16F with segments
+  (`GetFieldFormat`) -
   the composite's `uFieldSegments` follows the same test; no 8-bit fallback - a driver that cannot render
   half float shades directly (`LazyBake::unavailable`). That schedule is
   `NeonRenderer::LazyBake`, one instance per field (`mGlowField.schedule`, `mRingField.schedule`),
-  so the two fields cannot drift apart. The composite finds its texel from
+  so the two fields cannot drift apart. The composite finds its box texel from
   `vPos` (`floor((vPos - uFieldOrigin) * uFieldTexelScale)`), not
-  `gl_FragCoord`.
+  `gl_FragCoord`. **PACKED like the ring's field** (I94, `FieldLayout`,
+  `computeGlowFieldLayout`, below): the box less the glow quad's hole, which
+  on a screen-sized rect is most of it at 4K - for an 1840 x 1000 rect, the
+  default glow and the hue rotating, 0.99 -> 0.90 MB at 1080p and 3.96 ->
+  2.20 MB at 4K at 0.5; with an inside cutoff or a one-sided glow 76-88% less.
+  Where packing would not be smaller than the box the layout keeps the box.
+  `FIELD_MIN_FILL` is still measured against the box, so the same configs take
+  the field as before. The buffer keeps rows to spare past the atlas
+  (`renderFieldPass`): the hole moves with the intensity, and sized exactly an
+  intensity pulse reallocated it on 8-9 of 120 frames (twice with the spare).
 
   **The edge ring has a field of its own** (pass 1r / 2r, I52).
   The ring is re-shaded on EVERY frame - it draws onto the caller's
@@ -210,11 +219,18 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   shading directly every frame). So the bake
   program shades the ring's pixels with the ring's own uniforms
   (`mRingLimits.quadMargin`, `mRingLimits.cornerSkip`) into `mRingField.buffer` - full
-  resolution but PACKED (`RingFieldLayout`, `computeRingFieldLayout`): the ring
+  resolution but PACKED (`FieldLayout`, `computeRingFieldLayout`): the ring
   is an axis-aligned annulus, so its pixels are four strips, stored bottom, top,
-  then the two side strips transposed, every texel on a viewport pixel; one
-  draw per strip, each through its atlas rows as the viewport. Each draw is
-  the layout's whole BOX (`mRingField.box`), which the viewport clips to the
+  then the two side strips transposed into rows - in as many columns side by
+  side as makes the smallest atlas no wider than one column's
+  (`packFieldStrips`; a wider one can pass `GL_MAX_TEXTURE_SIZE` where the
+  viewport does not, and a failed allocation turns the field off for good) -
+  every texel on a viewport pixel. A screen-sized rect's ring keeps one column,
+  its hole nearly as tall as its box; a short rect's takes more. The glow's field (above)
+  takes the same layout on the reduced grid, and both bakes draw it through
+  one method, `drawFieldStrips`: one draw per strip piece, each through its
+  atlas texels as the viewport. Each draw is
+  the layout's whole BOX (`mRingField.box`, `mGlowField.box`), which the viewport clips to the
   strip - NOT the ring mesh: a transposed strip turns a left edge into a
   bottom one, which the fill rule hands the other way, so a ring edge that
   snapped onto a pixel centre left that texel unbaked and the composite drew a
@@ -222,12 +238,16 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   (`neon-ring-field.frag`, `mRingFieldCompositeShader` - its
   own object, since it draws the caller's framebuffer blended in the frame
   pass 1c draws the reduced buffer unblended) finds its strip from the box
-  pixel against a CONSERVATIVE hole, so every ring pixel lands in one. The
-  layout, the bake's per-strip projections and the shader's lookup must change
+  pixel against a CONSERVATIVE hole, so every ring pixel lands in one - through
+  `fieldStripTexel` in `neon-field-common.glsl`, which pass 1c shares. The
+  layout (`packFieldStrips`), the bake's per-strip projections (`drawFieldStrips`)
+  and the shaders' lookup (`fieldStripTexel`) must change
   together; and its mask is `neon.frag`'s post-grade cut and cutoffs copied
   term for term, fed by the same upload (`UploadEdgeMaskUniforms`) - change
-  either and change both. R16F (RG16F with segments, twice it), ~0.27 MB for a 960 x 540 rect at 1080p (1.06 MB as a plain
-  box). 1.4-1.9x on still frames and 1.2-1.6x on hue frames on the
+  either and change both. R16F (RG16F with segments, twice it): 0.43 MB for an
+  1840 x 1000 rect at 1080p, one column; 0.24 MB for an 1840 x 260 one, which
+  takes more (0.43 MB stacked, before I94).
+  1.4-1.9x on still frames and 1.2-1.6x on hue frames on the
   AMD 5300M, within 1/255; its own `LazyBake` (`mRingField.schedule`), so its own
   settle and first-frame bake.
   `PassRecorder` files its composite as P2C (by `uRingHole`), so `partition`

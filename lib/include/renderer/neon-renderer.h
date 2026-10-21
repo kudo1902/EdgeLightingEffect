@@ -844,18 +844,24 @@ namespace EdgeLighting
             }
         } LazyBake;
 
-        /// How the ring's pixels are packed into @c mRingField.buffer. The ring
-        /// is an axis-aligned annulus (setupRingGeometry's PushAnnulus), so a
-        /// box of pixels minus a hole: its bottom and top strips are stored as
-        /// they are, one above the other, and its left and right strips
-        /// TRANSPOSED above those, so each runs along the atlas's width. Every
-        /// texel sits on one of the viewport's pixels, so the composite reads
-        /// the texel of its own pixel.
-        /// neon-ring-field.frag reads this layout and
-        /// @ref renderRingFieldPass bakes it: change the three together.
+        /// How a field's texels are packed into its buffer: @c mRingField.buffer
+        /// (the edge ring's) and @c mGlowField.buffer (the glow's, since
+        /// I94). Each field covers an axis-aligned annulus - the ring
+        /// (setupRingGeometry's PushAnnulus) or the glow quad (setupGeometry's)
+        /// - so a box of texels minus a hole: its bottom and top strips are
+        /// stored as they are, one above the other, and its left and right
+        /// strips TRANSPOSED above those, so each runs along the atlas's width,
+        /// in as many columns side by side as makes the smallest atlas no
+        /// wider than one column's. The
+        /// composite finds a fragment's box texel from its own @c vPos, so the
+        /// layout is all it needs to find the stored one.
+        /// neon-ring-field.frag and neon-field.frag read this layout
+        /// (fieldStripTexel, in neon-field-common.glsl), @ref drawFieldStrips
+        /// bakes it, and @ref computeRingFieldLayout /
+        /// @ref computeGlowFieldLayout build it: change them together.
         ///
         /// @par The box and its strips
-        /// In box px, y up, with @c hole = (x0, y0, x1, y1):
+        /// In box texels, y up, with @c hole = (x0, y0, x1, y1):
         /// @verbatim
         ///   size.y +-------------------------+
         ///          |          top            |
@@ -870,51 +876,79 @@ namespace EdgeLighting
         /// @endverbatim
         ///
         /// @par The atlas
-        /// The same strips in texels, y up; the side strips transposed, so a
-        /// column of the box becomes a row of the atlas:
+        /// The same strips in texels, y up: the bottom and the top as they
+        /// are, and the side strips TRANSPOSED, so each box column beside the
+        /// hole becomes an atlas row as long as the hole is tall (y1 - y0) -
+        /// the SIDE ROWS, the left strip's columns 0 .. x0 and then the
+        /// right's x1 .. size.x, numbered on from x0. They are cut into
+        /// columns of @c sides.y rows each, laid side by side from row
+        /// @c sides.x:
         /// @verbatim
-        ///   atlas.y +----------------+
-        ///           | right, x <-> y |   x1 .. size.x as rows, y0 .. y1 along
-        ///    rows.y +----------------+
-        ///           | left,  x <-> y |   0 .. x0 as rows, y0 .. y1 along
-        ///    rows.x +----------------+--------+
-        ///           |          top            |
-        ///        y0 +-------------------------+
-        ///           |         bottom          |
-        ///         0 +-------------------------+
+        ///   atlas.y +---------+---------+-----+
+        ///           | side    | side    | ... |   column c: side rows
+        ///           | rows    | rows    |     |   c * sides.y .. (c + 1) * sides.y
+        ///   sides.x +---------+---------+-----+-------+
+        ///           |              top                |
+        ///        y0 +---------------------------------+
+        ///           |             bottom              |
+        ///         0 +---------------------------------+
         /// @endverbatim
-        /// So <tt>rows.x = y0 + (size.y - y1)</tt>, <tt>rows.y = rows.x +
-        /// x0</tt>, and the atlas is <tt>max(size.x, y1 - y0)</tt> wide by
-        /// <tt>rows.y + (size.x - x1)</tt> tall - with no hole the side strips
-        /// are empty and it is just the box. About 0.27 MB of R16F for a
-        /// 960 x 540 rect at 1080p, against 1.06 MB as the plain box.
+        /// <tt>max(size.x, y1 - y0)</tt> wide by <tt>sides.x + sides.y</tt>
+        /// tall, the column count the one that makes the atlas smallest
+        /// without widening it past one column's (@ref packFieldStrips): a
+        /// wider atlas could pass GL_MAX_TEXTURE_SIZE where the viewport does
+        /// not. One column is the two strips stacked - the ring's shape round
+        /// a screen-sized rect, whose hole is nearly as tall as its box; a
+        /// short rect's ring, and the glow of a screen-sized one, whose hole is
+        /// a fraction of the box's height, take as many as fit the width, where
+        /// stacked most of every atlas row their side strips took would be
+        /// empty. Where no packing is smaller than the box - a hole too small to
+        /// pay for the side strips' slack - the layout has no hole and the
+        /// atlas is the box, as it is with no hole at all. For an 1840 x 1000
+        /// rect, the default glow and the hue rotating (Apple M2 Pro,
+        /// 2026-10-22): the glow's field 960 x 474 at 0.5 against its 960 x 540
+        /// box at 1080p, 1920 x 585 against 1920 x 1080 at 4K; its ring keeps
+        /// one column (1862 x 120 at 1080p). An 1840 x 260 rect's ring takes
+        /// 1862 x 68.
         ///
-        /// @par Finding a pixel's texel
-        /// The composite takes its box pixel <tt>q = floor(vPos - origin)</tt>
-        /// and, by the first strip that holds it:
+        /// @par Finding a texel
+        /// The composite takes its box texel
+        /// <tt>q = floor((vPos - origin) * texelScale)</tt> and, by the first
+        /// strip that holds it:
         ///   - bottom, <tt>q.y < y0</tt>: texel @c q;
         ///   - top, <tt>q.y >= y1</tt>: <tt>(q.x, q.y - y1 + y0)</tt>;
-        ///   - left, <tt>q.x < x0</tt>: <tt>(q.y - y0, rows.x + q.x)</tt>;
-        ///   - right: <tt>(q.y - y0, rows.y + q.x - x1)</tt>.
+        ///   - a side, its side row <tt>r = q.x</tt> (left, <tt>q.x < x0</tt>)
+        ///     or <tt>x0 + q.x - x1</tt> (right), in column
+        ///     <tt>c = r / sides.y</tt>: <tt>(c (y1 - y0) + q.y - y0,
+        ///     sides.x + r - c sides.y)</tt>.
         ///
         /// @par Built
-        /// By @ref computeRingFieldLayout from @c mRingBounds, every frame the
-        /// ring's field can serve; kept in @c mRingField.layout only on a frame
-        /// that bakes, since the composite has to read the layout the field was
-        /// baked with. The box is every pixel whose centre the ring's outer box
-        /// can reach, plus a pixel of slack each side, clipped to the viewport.
-        /// The hole is CONSERVATIVE - only pixels whose centre lies more than a
-        /// pixel inside the ring's hole - so every pixel the ring can draw falls
-        /// in a strip; with no such pixel (a hole of a pixel or less) there is
-        /// no hole, and the bottom strip is the whole box.
-        typedef struct RingFieldLayout
+        /// Kept in each field only on a frame that bakes, since the composite
+        /// has to read the layout the field was baked with. The hole is
+        /// CONSERVATIVE - only texels whose centre lies more than a texel
+        /// inside the annulus's hole - so every texel the composite can draw
+        /// falls in a strip; with no such texel (a hole of a texel or less)
+        /// there is no hole, and the bottom strip is the whole box.
+        ///   - The ring's (@ref computeRingFieldLayout, from @c mRingBounds):
+        ///     every viewport pixel whose centre the ring's outer box can
+        ///     reach, plus a pixel of slack each side, clipped to the
+        ///     viewport; @c vPos full-res px and @c texelScale 1, every texel
+        ///     on one of the viewport's pixels.
+        ///   - The glow's (@ref computeGlowFieldLayout): the field's region
+        ///     (GetFieldRegion), a window of whole texels of the reduced
+        ///     buffer's grid, less the glow quad's hole (@c mGlowBounds);
+        ///     @c vPos SCALED px and @c texelScale that grid's texels per
+        ///     scaled px - 1, but on an axis capped to the viewport, whose
+        ///     texel count is truncated.
+        typedef struct FieldLayout
         {
-            glm::vec2 origin{0.0f}; ///< The box's lower-left pixel corner, rect-local full-res px - a whole viewport pixel minus centerFull.
-            glm::ivec2 size{0};     ///< The box, in px: the ring's outer box, clipped to the viewport.
-            glm::ivec4 hole{0};     ///< Box px the ring never draws, [x0, x1) x [y0, y1) as x0, y0, x1, y1.
-            glm::ivec2 rows{0};     ///< First atlas row of the left strip and of the right strip.
-            glm::ivec2 atlas{0};    ///< The buffer's size, in texels.
-        } RingFieldLayout;
+            glm::vec2 origin{0.0f};     ///< The box's lower-left texel corner, rect-local, in the px the composite's vPos is in.
+            glm::vec2 texelScale{1.0f}; ///< Box texels per vPos px: 1 for the ring, the reduced grid's density for the glow.
+            glm::ivec2 size{0};         ///< The box, in texels: the annulus's outer box, clipped to the viewport.
+            glm::ivec4 hole{0};         ///< Box texels the composite never draws, [x0, x1) x [y0, y1) as x0, y0, x1, y1.
+            glm::ivec2 sides{0};        ///< The side rows' first atlas row, and how many of them each atlas column holds.
+            glm::ivec2 atlas{0};        ///< The atlas's size, in texels: the ring's buffer's; the glow's may have rows to spare past it.
+        } FieldLayout;
 
         /// The two limits a neon.frag program shades within, as a pair: the
         /// quad's fade margin and the corner-arc skip, in the px of the pass
@@ -1120,7 +1154,12 @@ namespace EdgeLighting
             /// glow quad's box as whole texels of the reduced buffer's grid
             /// (GetFieldRegion): the reduced buffer covers the whole viewport,
             /// and a field that size would fail FIELD_MIN_FILL for any rect
-            /// smaller than the screen. Released with the
+            /// smaller than the screen. PACKED as @c layout, the quad's hole left
+            /// out (I94): on a screen-sized rect the glow cannot reach the
+            /// middle, and the box held it anyway. Allocated with rows to spare
+            /// past the layout's (see @ref renderFieldPass), so an intensity
+            /// animation, which moves the hole, does not reallocate it on every
+            /// bake. Released with the
             /// conditions that want it - see OnConfigChanged - and never allocated
             /// for a config that cannot use it (a hue that does not rotate with
             /// the intensity still).
@@ -1129,14 +1168,18 @@ namespace EdgeLighting
             /// When @c mGlowField.buffer is baked and read - see @ref LazyBake.
             LazyBake schedule;
 
-            /// How pass 1c finds a fragment's texel of the field it was baked as -
-            /// floor((vPos - origin) * texelScale), both in vPos's scaled
-            /// rect-local px: the field region's origin, and the reduced buffer's
-            /// texels per scaled px, which the field shares.
-            /// Recorded by the bake, from the region it drew (@ref BufferRegion),
-            /// and uploaded as @c uFieldOrigin / @c uFieldTexelScale.
-            glm::vec2 origin{0.0f};     ///< The region's lower-left corner, scaled rect-local px.
-            glm::vec2 texelScale{1.0f}; ///< Texels per scaled px: 1 but on an axis capped to the viewport, whose texel count is truncated.
+            /// The packing it was baked with (@ref computeGlowFieldLayout), which
+            /// is how pass 1c finds a fragment's texel: its box texel
+            /// floor((vPos - origin) * texelScale), in vPos's scaled rect-local
+            /// px, then its strip's. Recorded by the bake and uploaded as
+            /// @c uFieldOrigin, @c uFieldTexelScale, @c uFieldHole and
+            /// @c uFieldSides.
+            FieldLayout layout{};
+
+            /// The layout's box as one quad, SCALED rect-local px, a texel
+            /// past it each side: what pass 1f draws for every strip, as the
+            /// ring's field does (@c mRingField.box) and for its reason.
+            Mesh box{"NeonRenderer.FieldBox"};
         } GlowField;
 
         /// The edge ring's field (pass 1r, read by 2r): its buffer, how the
@@ -1150,7 +1193,7 @@ namespace EdgeLighting
             /// (a colour-stop alpha time cannot move). Released with the conditions
             /// that want it - see OnConfigChanged.
             Framebuffer buffer{"NeonRenderer.RingField"};
-            RingFieldLayout layout{}; ///< The packing it was baked with.
+            FieldLayout layout{}; ///< The packing it was baked with.
 
             /// The layout's box as one quad, FULL-RES rect-local px, a pixel
             /// past it each side: what pass 1r draws for every strip, so each
@@ -1414,8 +1457,22 @@ namespace EdgeLighting
         /// a viewport of @p viewportWidth x @p viewportHeight. The hole is
         /// CONSERVATIVE - only pixels whose centre lies more than a pixel
         /// inside it - so every pixel the ring can draw falls in a strip.
-        static RingFieldLayout computeRingFieldLayout(const Annulus &ring, const glm::vec2 &centerFull,
-                                                      int viewportWidth, int viewportHeight);
+        static FieldLayout computeRingFieldLayout(const Annulus &ring, const glm::vec2 &centerFull,
+                                                  int viewportWidth, int viewportHeight);
+
+        /// The packing for the glow's field over @p region (GetFieldRegion)
+        /// at @p scale, less the glow quad's hole @p hole (@c mGlowBounds.hole,
+        /// full-res half-extents; 0 for none). CONSERVATIVE as the ring's -
+        /// only texels whose centre lies more than a texel inside the hole -
+        /// so every texel pass 1c can draw falls in a strip.
+        static FieldLayout computeGlowFieldLayout(const BufferRegion &region, const glm::vec2 &hole, float scale);
+
+        /// Set @p layout's @c hole, @c sides and @c atlas from its @c size and
+        /// the hole [@p h0, @p h1) in box texels (@p h0 = (0, size.y) and
+        /// @p h1 = (0, size.y) for none): the strips, and the side strips in
+        /// as many columns as makes the smallest atlas no wider than one
+        /// column's - see @ref FieldLayout. The one packing both fields use.
+        static void packFieldStrips(FieldLayout &layout, const glm::ivec2 &h0, const glm::ivec2 &h1);
 
         // --- Skip keys: whether a pass has to run ----------------------------
         /// The pass-0 inputs other than the hue phase, as @ref renderEmissionPass would
@@ -1511,6 +1568,18 @@ namespace EdgeLighting
         /// to texture 0 whether or not it is read.
         void bindGatherBuffer(ShaderProgram &shader, const UVMap &gatherUV);
 
+        /// Bake a field's strips: upload @p layout's box as @p box, a texel
+        /// past it each side, and draw it once per strip with
+        /// @c mFieldBakeShader - the strip's atlas texels as the viewport, and
+        /// as @c uMVP a projection from @c vPos onto them, transposed for the
+        /// two side strips. The box rather than the field's own quad, so the
+        /// viewport alone decides which texels are baked - all of them; a quad
+        /// edge on a texel centre goes to one side by the rasteriser's fill
+        /// rule, which a transposed strip hands the other way (V24).
+        /// @pre @c mFieldBakeShader in use with every other uniform uploaded;
+        ///      the field's buffer bound and cleared.
+        void drawFieldStrips(const FieldLayout &layout, Mesh &box);
+
         // --- The passes, in the order Render runs them -----------------------
         // The order is the frame's (docs/pages/neon-shader-outputs.html), and the
         // .cpp defines them in the same order - keep the three in step. The
@@ -1587,18 +1656,19 @@ namespace EdgeLighting
         // those frames on an AMD Radeon Pro 5300M, I50) and an intensity
         // animation (I56).
 
-        /// Pass 1f: bake the field into @c mGlowField.buffer, @p texels, drawn
-        /// through @p mvp - the projection of the field's region at @p scale, a
-        /// window of the reduced buffer's grid, which pass 1c reads it over -
-        /// reading the gather through
-        /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
-        /// with segments (GetFieldFormat). Leaves the buffer bound;
-        /// @ref RenderOffscreen restores the target.
+        /// Pass 1f: bake the field into @c mGlowField.buffer, packed as
+        /// @p layout (@ref computeGlowFieldLayout - the field's region at
+        /// @p scale, a window of the reduced buffer's grid, which pass 1c reads
+        /// it over, less the quad's hole), one draw per strip
+        /// (@ref drawFieldStrips), reading the gather through @p gatherUV, as
+        /// pass 1b reads it, and recording @p layout in @c mGlowField.layout.
+        /// R16F, Fa alone - RG16F, Fa and Fs, with segments (GetFieldFormat).
+        /// Leaves the buffer bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
         ///         then never used.
-        bool renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV, float scale,
-                             float huePhase, const Config &config);
+        bool renderFieldPass(const FieldLayout &layout, const UVMap &gatherUV, float scale, float huePhase,
+                             const Config &config);
 
         /// Pass 1b: the neon on the tight glow quad, shaded from the gather
         /// pass's result, so it must run after it - into @c mScaled,
@@ -1635,7 +1705,7 @@ namespace EdgeLighting
         // cutoffs, which the ring applies after its tone map at full
         // resolution, and a function of the pixel's position alone - so it
         // splits like pass 1b's: pass 1r bakes Fa over the ring alone, at full
-        // resolution and packed into its four strips (@ref RingFieldLayout),
+        // resolution and packed into its four strips (@ref FieldLayout),
         // once the config has held for a frame; pass 2r composites it with the
         // gathered hue in pass 2c's place, and multiplies the mask back in.
         // 1.4-1.9x on still frames and 1.2-1.6x on hue frames on an AMD Radeon
@@ -1644,10 +1714,8 @@ namespace EdgeLighting
         /// Pass 1r: bake the ring's field into @c mRingField.buffer, laid out
         /// as @c mRingField.layout - the ring's shading uploaded exactly as
         /// @ref renderRingPass uploads it, with the hue at 1, drawn once per
-        /// strip through that strip's atlas rows as the viewport and a
-        /// projection onto them (transposed for the two side strips) - the
-        /// box quad @c mRingField.box, not the ring, so every texel of every
-        /// strip is baked. Reads
+        /// strip (@ref drawFieldStrips) - the box quad @c mRingField.box, not
+        /// the ring, so every texel of every strip is baked. Reads
         /// the gather through the full-res map @p gatherUV. Leaves the buffer
         /// bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.

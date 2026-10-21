@@ -369,10 +369,10 @@
       <rect class="fbo" x="740" y="702" width="310" height="160" rx="1"/>
       <text class="t-dim" x="754" y="722">FBO</text>
       <text x="796" y="722">mRingField.buffer</text>
-      <text class="t-file" x="754" y="740">458 &#215; 108 &#183; R16F / RG16F</text>
+      <text class="t-file" x="754" y="740">458 &#215; 81 &#183; R16F / RG16F</text>
       <text class="t-dim" x="1036" y="740" text-anchor="end">read: texelFetch</text>
-      <image href="../images/neon-onboarding/pass-p1r-ring-field.png" x="752" y="752" width="286" height="67" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="752" y="752" width="286" height="67"/>
+      <image href="../images/neon-onboarding/pass-p1r-ring-field.png" x="752" y="752" width="286" height="51" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="752" width="286" height="51"/>
       <text class="t-file" x="754" y="846">packed: sides above, bottom and top below</text>
       <text class="t-file" x="44" y="712">P1f bakes the glow&#8217;s hue-free</text>
       <text class="t-file" x="44" y="728">brightness under a rotating hue</text>
@@ -486,7 +486,7 @@
       <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
       <li class="or">or</li>
       <li><a href="#p1c"><span class="id">P1c</span><span class="grid">320&times;180, from the field</span></a></li>
-      <li><a href="#p1r"><span class="id">P1r</span><span class="grid">458&times;108, packed</span></a></li>
+      <li><a href="#p1r"><span class="id">P1r</span><span class="grid">458&times;81, packed</span></a></li>
       <li><a href="#p2b"><span class="id">P2b</span><span class="grid">640&times;360</span></a></li>
       <li><a href="#p2c"><span class="id">P2c</span><span class="grid">640&times;360, ring only</span></a></li>
       <li class="or">or</li>
@@ -594,7 +594,7 @@
         <div><dt>Program</dt><dd><code>mFieldBakeShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon-field-bake.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mGlowField.buffer</code></dd></div>
-        <div><dt>Grid</dt><dd>320 &times; 180 texels here: the glow quad&rsquo;s window of the reduced buffer&rsquo;s grid (<code>GetFieldRegion</code>)</dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 180 texels here: the glow quad&rsquo;s window of the reduced buffer&rsquo;s grid (<code>GetFieldRegion</code>), less the quad&rsquo;s hole, packed as the ring&rsquo;s field is (I94) - the whole window here, where the glow reaches the middle</dd></div>
         <div><dt>Format</dt><dd>R16F; RG16F with segments</dd></div>
         <div><dt>Runs</dt><dd>With the hue rotating or the intensity moving: a config&rsquo;s first frame, then once it has held after a change - an intensity-only change excepted</dd></div>
       </dl>
@@ -662,17 +662,17 @@
         <div><dt>Program</dt><dd><code>mFieldBakeShader</code>, the same as P1f</dd></div>
         <div><dt>Shader</dt><dd><code>neon-field-bake.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mRingField.buffer</code></dd></div>
-        <div><dt>Grid</dt><dd>458 &times; 108 texels: the ring&rsquo;s pixels, packed</dd></div>
+        <div><dt>Grid</dt><dd>458 &times; 81 texels: the ring&rsquo;s pixels, packed</dd></div>
         <div><dt>Format</dt><dd>R16F; RG16F with segments</dd></div>
         <div><dt>Runs</dt><dd>A config&rsquo;s first frame, then once it has held after a change - an intensity-only change excepted</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>P2c is a full-resolution cost the scale does not shrink, paid on every frame. Its output is <code>mask &times; tonemap(col &times; Fa + segColHue &times; Fs)</code> - the same factorisation as P1f&rsquo;s, the mask being the one-sided cut and the cutoffs, which depend on the pixel&rsquo;s position alone - so this pass bakes <code>Fa</code> (and <code>Fs</code>, with segments) over the ring once, with the ring&rsquo;s own uniforms (scale 1.0, its own fade margin and corner skip). The ring is an axis-aligned annulus, a box minus a hole, so its pixels are four strips: the bottom and the top stored as they are, the left and the right transposed above them so each runs along the buffer&rsquo;s width (<code>RingFieldLayout</code>). One draw per strip, each through its own rows as the viewport; every texel sits on one of the viewport&rsquo;s pixels. About 0.27 MB for a 960 &times; 540 rect at 1080p, against 1.06 MB as a plain box. It keeps P1f&rsquo;s schedule (<code>LazyBake</code>, its own instance) - but needs no rotating hue, since the ring is redrawn on still frames too.</p>
+      <p>P2c is a full-resolution cost the scale does not shrink, paid on every frame. Its output is <code>mask &times; tonemap(col &times; Fa + segColHue &times; Fs)</code> - the same factorisation as P1f&rsquo;s, the mask being the one-sided cut and the cutoffs, which depend on the pixel&rsquo;s position alone - so this pass bakes <code>Fa</code> (and <code>Fs</code>, with segments) over the ring once, with the ring&rsquo;s own uniforms (scale 1.0, its own fade margin and corner skip). The ring is an axis-aligned annulus, a box minus a hole, so its pixels are four strips: the bottom and the top stored as they are, the left and the right transposed above them so each runs along the buffer&rsquo;s width, in as many columns side by side as makes the smallest buffer no wider than one column&rsquo;s - two here (<code>FieldLayout</code>, which the glow&rsquo;s field shares since I94). One draw per strip piece, each through its own texels as the viewport; every texel sits on one of the viewport&rsquo;s pixels. 0.43 MB for an 1840 &times; 1000 rect at 1080p, whose ring keeps one column - its hole is nearly as tall as its box - and 0.24 MB for an 1840 &times; 260 one, against 0.43 MB stacked. It keeps P1f&rsquo;s schedule (<code>LazyBake</code>, its own instance) - but needs no rotating hue, since the ring is redrawn on still frames too.</p>
       <div class="shots">
         <figure class="wide">
-          <img src="../images/neon-onboarding/pass-p1r-ring-field.png" alt="The ring field buffer: the ring's brightness in grey, packed as four strips" width="458" height="108">
-          <figcaption><code>Fa</code> over the ring, through the tone map as for P1f: the bottom strip at the bottom, the top above it, the two sides transposed above those.</figcaption>
+          <img src="../images/neon-onboarding/pass-p1r-ring-field.png" alt="The ring field buffer: the ring's brightness in grey, packed as four strips" width="458" height="81">
+          <figcaption><code>Fa</code> over the ring, through the tone map as for P1f: the bottom strip at the bottom, the top above it, the two sides transposed above those, side by side.</figcaption>
         </figure>
       </div>
     </div>
