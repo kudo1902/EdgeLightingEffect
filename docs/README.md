@@ -16,7 +16,9 @@ The folders sort the documents by what they are for:
 
 The plans in `design/` are **historical**: each one says at its top that it has
 been built, and what it describes may have moved since. They are
-kept for the reasoning and the measurements, not as instructions.
+kept for the reasoning and the measurements, not as instructions. The one
+exception is a plan listed under "Open plans", which says at its top that it
+is a proposal and has not been built.
 
 ## Start here
 
@@ -63,6 +65,12 @@ Built plans:
 | [`neon-glow-cover-resolution-plan.md`](design/neon-glow-cover-resolution-plan.md) | The glow coverage table sized per light type, and what it measured. |
 | [`neon-shader-cleanup-plan.md`](design/neon-shader-cleanup-plan.md) | The neon's program slots and shader variants before the cleanup, and why each was kept or cut. |
 | [`spotlight-renderer-plan.md`](design/spotlight-renderer-plan.md) | The spotlight's design and the offscreen verification behind it. |
+
+Open plans (proposals, not built):
+
+| document | what it is |
+| -------- | ---------- |
+| [`spotlight-art-plan.md`](design/spotlight-art-plan.md) | Lighting framed artwork: the phase-0 art mockup's ideas (art protection, mount shadows, smoke, rays, laser edges, particles, per-lamp flare, an exported config) worked out against `SpotlightRenderer`, why the device's compositor decides protection, and a phased plan with gates and decisions. |
 
 Studies of specific mechanisms:
 
