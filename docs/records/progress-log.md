@@ -5,9 +5,48 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-21 - The flare's ray needles are no longer cut in half (V36)
+
+Not committed; on top of `4467d61`, the V32 entry below. The rest of the thirty-eighth
+pass of [`review-findings.md`](review-findings.md).
+
+- **The defect.** `lens-flare.frag` gives each of its `N` ray slots a hashed
+  length (20 slots at the default `rayDensity`). The primary rays are 0 on the
+  slot boundaries, so they never showed the jump between two slots' lengths;
+  the sub needles PEAK there, and each half took its own slot's length. Every
+  needle was a straight radial seam: up to 1.84 levels at 1080p, 0.64 at
+  1000 px from the sun where the haze moves 0.002 a pixel. With V32's dither
+  in, it was the only edge left in the haze.
+- **Two cures built and compared**, the two the finding named, each in its
+  own library, against the build before on six scenes (the default flare with
+  the sun at 0.15 and 0.0, the band's rect, `rayDensity` 1.0 and 0.05, and the
+  rays turning), rendered undithered into a float target (the probe zeroes
+  `uDither` at the upload) on an AMD Radeon Pro 5300M at 1080p:
+  - *mean*: the needle on boundary `k` takes the mean of the two slots it
+    straddles - constant across it, changing at the slot centres, where it is
+    exactly 0;
+  - *blend*: the length interpolates linearly between slot centres.
+
+  | | before | mean | blend |
+  | --- | --- | --- | --- |
+  | boundaries stepping over 2x the steps beside them (top / corner / dense / sparse) | 27 / 21 / 18 / 6 | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+  | angle-0 boundary at 1000 px from the sun | 0.636 | 0.000 | 0.002 |
+  | largest change against before | - | 1.09 levels | 1.08 levels |
+  | pixels changed by over half a level | - | 0.32-0.85% | 0.24-0.66% |
+  | the flare at 1.0, still (8 interleaved rounds) | 0.813 ms | 0.837 (1.032x) | 0.842 (1.039x) |
+
+  The two differ by at most 0.1 level anywhere - at the needle's peak they are
+  the same value. **Kept: mean**, the simpler and symmetric of two
+  lookalikes. Both pay one more hash (`sin`) per fragment; the frame at 0.5
+  with the rays turning is 1.026x. The primary rays and their hash are
+  untouched, so the pattern - which rays are long - is the same.
+- **Verified.** The tree's build renders byte-identically to the measured
+  *mean* library on all six scenes; `neon-scale-check flare-reuse` (75 frames,
+  0 mismatched) and `clock` pass.
+
 ## 2026-10-21 - The lens flare is dithered (V32), and its rays have seams (V36)
 
-Not committed; on top of `main` at `54a7479`. The thirty-eighth pass of
+Commit `4467d61`, on top of `main` at `54a7479`. The thirty-eighth pass of
 [`review-findings.md`](review-findings.md): V32 measured and fixed, V36 found.
 
 - **Measured first.** A probe rendered the flare alone over black at
@@ -65,7 +104,7 @@ Not committed; on top of `main` at `54a7479`. The thirty-eighth pass of
   lengths jump where the sub needle peaks, up to 1.84 levels at 1080p and 0.64
   at 1000 px from the sun where the field moves 0.002 a pixel. A dither does
   not hide it, and with the bands gone it is the only edge left in the haze.
-  Open: the fix changes the needles' look.
+  Fixed the same day - see the entry above.
 
 ## 2026-10-21 - A plan for lighting framed artwork (proposal)
 

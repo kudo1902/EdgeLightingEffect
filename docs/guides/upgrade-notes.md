@@ -280,6 +280,10 @@ marked **source break** stop a host compiling until it follows them.
     bit with one from before; two dithered builds still are. Below
     `resolutionScale` 1.0 its buffer is half float, twice the memory (4.1 MB
     at 1080p and 0.5), with an RGBA8 fallback that is logged once.
+  - The flare's thin sparkle needles, between its rays, are no longer cut down
+    the middle (V36, fixed 2026-10-21): each takes the mean length of the two
+    rays beside it. At most about a level, on under 1% of the frame; the main
+    rays do not move.
 - **Known, still open** (see `review-findings.md`): calling `el_effect_init*`
   a second time drops the attached animations and resets the clock (I91); an
   animation attached to two effects runs at their combined speed (I92); and a
