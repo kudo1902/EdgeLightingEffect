@@ -106,10 +106,6 @@ namespace EdgeLighting
 @NEON_RING_FIELD_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@BLIT_FRAG_CONTENT@
-)shadersrc";
-
                 static const char *const BLACK_RECT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_SDF@
 @BLACK_RECT_FRAG_CONTENT@
@@ -138,7 +134,14 @@ namespace EdgeLighting
 
                 static const char *const LENS_FLARE_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @LENS_FLARE_TUNING@
+@LENS_FLARE_DITHER@
 @LENS_FLARE_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const LENS_FLARE_BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@LENS_FLARE_TUNING@
+@LENS_FLARE_DITHER@
+@LENS_FLARE_BLIT_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const SPOTLIGHT_VERT_SRC = R"shadersrc(@GLSL_VERSION@

@@ -23,6 +23,55 @@ namespace EdgeLighting
         /// be enabled alongside it.
         constexpr GLuint GHOST_BLOCK_BINDING = 3;
 
+        /// One candidate format for @c mScaledBuffer.
+        typedef struct ScaledFormat
+        {
+            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
+            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
+            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
+            /// Whether this format holds the haze unrounded, so the flare draws
+            /// into it undithered and the blit alone dithers. False for RGBA8,
+            /// where lens-flare.frag has to dither into the buffer too.
+            bool holdsSubLevels;
+            const char *name; ///< For the fallback log line.
+        } ScaledFormat;
+
+        /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
+        /// pair the neon and the spotlight use, for the same reason (V32 in
+        /// review-findings.md).
+        ///
+        /// The haze has almost no distance falloff, so the flare lights the
+        /// whole frame in gradients that cross one 8-bit level every 20 to
+        /// 600 px. In RGBA8 the buffer rounds them to one-level plateaus before
+        /// the blit reads them, and no noise downstream recovers what was
+        /// rounded away: a blit dither over this buffer, simulated, left 35.7%
+        /// of lit pixels in plateaus 32 px or wider against 37.2% without. In
+        /// half float the buffer keeps the haze to a fraction of a level, and
+        /// lens-flare-blit.frag dithers once per destination pixel.
+        ///
+        /// Measured against the undithered 1.0 render (AMD Radeon Pro 5300M,
+        /// 1920 x 1080, five scenes at 0.5): lit pixels in plateaus of 32 px
+        /// or more 35.6-63.4% -> 0.1-2.6%, and pixels whose 9 x 9 box mean
+        /// (which removes the dither and keeps the contours) is more than a
+        /// quarter level off it 30-48% -> 0.02-0.43%. The RGBA8 row below,
+        /// dithered in the pass AND in the blit, reaches 1.8-7.4% and
+        /// 0.16-1.65%: no bands, but diagonal streaks one texel wide where
+        /// the filter joins the per-texel noise. Alpha, which is not
+        /// dithered, moves by at most 1 level from the RGBA8 buffer's, and
+        /// colour by under 1 level, the dither included, so the saturated core
+        /// is no wider (lens-flare.frag clamps for that). 1.06-1.07x the scaled
+        /// frame, still or with the rays turning, wall clock.
+        ///
+        /// Half float is renderable and blendable on GL 3.3 core, and on GLES
+        /// 3.x with EXT_color_buffer_half_float or EXT_color_buffer_float.
+        /// Twice the memory: 960 x 540 texels at 1080p and 0.5 is 4.1 MB
+        /// instead of 2.1.
+        constexpr ScaledFormat SCALED_FORMATS[] = {
+            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, true, "RGBA16F"},
+            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false, "RGBA8"},
+        };
+        constexpr size_t SCALED_FORMAT_COUNT = sizeof(SCALED_FORMATS) / sizeof(SCALED_FORMATS[0]);
+
         /// CPU mirror of the shader's GhostBlock. std140 gives a vec4 array a
         /// 16-byte stride, which is glm::vec4's own size, so the array maps
         /// one-to-one with no padding member needed.
@@ -251,7 +300,7 @@ namespace EdgeLighting
         // nothing else writes it. The common case is a still sun with the
         // rays not spinning (rotationRate 0, the default). No capture, no
         // bind, no draw: the caller's target is never left.
-        const FlareInputs inputs = getFlareInputs(target, scale, viewportWidth, viewportHeight, time, config);
+        FlareInputs inputs = getFlareInputs(target, scale, viewportWidth, viewportHeight, time, config);
         if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid())
         {
             mFrame.scaledReady = true;
@@ -294,10 +343,13 @@ namespace EdgeLighting
         // the only state touched so far is the scissor enable, which noScissor
         // puts back as this return unwinds - so returning leaves the frame
         // exactly as it was found, and Render composites nothing.
-        if (!mScaledBuffer.Resize(target.x, target.y))
+        if (!resizeScaledBuffer(target.x, target.y))
         {
             return;
         }
+        // The format the buffer now has, which a fallback above may have just
+        // changed: the draw and the key it is recorded under read the same.
+        inputs.dither = scaledPassDithers();
         // Bind, then clear to transparent black. Keep the two adjacent:
         // ClearBuffer acts on whatever is BOUND, so the bind is its
         // precondition rather than a nicety - see Framebuffer::ClearBuffer,
@@ -309,9 +361,11 @@ namespace EdgeLighting
         mScaledBuffer.ClearBuffer();
 
         // Premultiplied "over", as the blit composites it back - see Render.
+        // Undithered into half float: the blit dithers once per destination
+        // pixel (lens-flare-blit.frag).
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        drawFlare(target, scale, viewportWidth, viewportHeight, time, config);
+        drawFlare(target, scale, viewportWidth, viewportHeight, time, inputs.dither, config);
 
         // Back to the caller's target and viewport, both at once.
         prevTarget.Restore();
@@ -370,22 +424,26 @@ namespace EdgeLighting
         if (scaled)
         {
             // Composite. Bilinear upscaling of premultiplied alpha is
-            // fringe-free; the blit shader is a plain texture read over
+            // fringe-free; the blit reads the buffer and dithers its colour
+            // once per destination pixel (lens-flare-blit.frag), over
             // whatever is on the target already. The host's scissor applies:
             // this is the one draw in the caller's coordinates.
             mBlitShader.Use();
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
             mScaledBuffer.BindTexture(0);
             mBlitShader.SetUniform("uSource", 0);
+            mBlitShader.SetUniform("uViewportSize",
+                                   glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }
         else
         {
             // The direct path: straight onto the caller's framebuffer, at the
-            // viewport's own size, under the host's clip.
+            // viewport's own size, under the host's clip - dithered, since
+            // this is the write to the 8-bit target.
             drawFlare(GetFlareTargetSize(viewportWidth, viewportHeight, scale), scale, viewportWidth,
-                      viewportHeight, time, config);
+                      viewportHeight, time, true, config);
         }
 
         // Restore the default alpha blend state for any following renderers -
@@ -429,7 +487,8 @@ namespace EdgeLighting
         // Give the scaled buffer back the moment this config stops wanting it -
         // the layer switched off, or the scale returned to 1.0. It is by far
         // the largest thing this renderer owns: at 1920x1080 and scale 0.5 it
-        // is 2.1 MB of colour attachment, against a 160-byte ghost block and
+        // is 4.1 MB of half-float colour attachment (2.1 MB in the RGBA8
+        // fallback), against a 160-byte ghost block and
         // one fullscreen quad for everything else. Nothing freed it before, so
         // a host that ran the flare at a reduced scale and then turned it off
         // held that for the life of the effect.
@@ -455,10 +514,10 @@ namespace EdgeLighting
 
     bool LensFlareRenderer::setupShaders()
     {
-        // blit.frag, not the neon's blit: this layer wants a plain composite
-        // and has no rect to apply the neon's cuts against. See blit.frag.
+        // Its own blit, not the neon's, which has a rect's cuts to apply: this
+        // one composites and dithers. See lens-flare-blit.frag.
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::BLIT_FRAG_SRC,
+                                    ShaderSource::LENS_FLARE_BLIT_FRAG_SRC,
                                     "LensFlareRenderer.Blit");
         mFlareShader = ShaderProgram(ShaderSource::LENS_FLARE_VERT_SRC,
                                      ShaderSource::LENS_FLARE_FRAG_SRC,
@@ -486,6 +545,38 @@ namespace EdgeLighting
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
+    bool LensFlareRenderer::resizeScaledBuffer(int width, int height)
+    {
+        // Walk SCALED_FORMATS from the last tier that allocated. A refused
+        // format is never asked for again: Resize treats a format change as a
+        // reallocation, and its failure path destroys what was there, so
+        // re-asking every frame would churn the attachment - and the buffer is
+        // released between uses, so it cannot remember the refusal itself.
+        for (; mScaledFormat < SCALED_FORMAT_COUNT; ++mScaledFormat)
+        {
+            const ScaledFormat &f = SCALED_FORMATS[mScaledFormat];
+            if (mScaledBuffer.Resize(width, height, f.internalFormat, f.format, f.type))
+            {
+                return true;
+            }
+            if (mScaledFormat + 1 < SCALED_FORMAT_COUNT)
+            {
+                LOG_E("LensFlareRenderer: %s reduced-scale target unavailable, falling back to %s. "
+                      "The haze is rounded to 8 bits before the blit reads it.",
+                      f.name, SCALED_FORMATS[mScaledFormat + 1].name);
+            }
+        }
+        // Every candidate refused: stay on the last, the one most likely to
+        // allocate on a later frame, rather than off the end of the list.
+        mScaledFormat = SCALED_FORMAT_COUNT - 1;
+        return false;
+    }
+
+    bool LensFlareRenderer::scaledPassDithers() const
+    {
+        return !SCALED_FORMATS[mScaledFormat].holdsSubLevels;
+    }
+
     void LensFlareRenderer::bakeGhostBlock(const LensFlareConfig &flare)
     {
         GhostBlockData ghostBlock = {};
@@ -495,7 +586,7 @@ namespace EdgeLighting
     }
 
     void LensFlareRenderer::drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight,
-                                      double time, const Config &config)
+                                      double time, bool dither, const Config &config)
     {
         mFlareShader.Use();
 
@@ -510,6 +601,9 @@ namespace EdgeLighting
 
         mFlareShader.SetUniform("uResolution", resolution);
         mFlareShader.SetUniform("uSunPos", getSunPosition(scale, viewportWidth, viewportHeight, config));
+        // The third uniform the paths differ in, and not one that shapes the
+        // light: whether this pass writes an 8-bit target and dithers it.
+        mFlareShader.SetUniform("uDither", dither ? 1.0f : 0.0f);
         mFlareShader.SetUniform("uSunColor", config.lensFlare.color);
         mFlareShader.SetUniform("uIntensity", config.lensFlare.intensity);
         mFlareShader.SetUniform("uSpread", config.lensFlare.spread);
@@ -591,6 +685,7 @@ namespace EdgeLighting
         inputs.sunPos = getSunPosition(scale, viewportWidth, viewportHeight, config);
         inputs.rotationTurns = getRotationTurns(time, config);
         inputs.ghostUploads = mGhostBlock.GetUploadCount();
+        inputs.dither = scaledPassDithers();
         return inputs;
     }
 
