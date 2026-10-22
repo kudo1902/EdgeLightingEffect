@@ -51,7 +51,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring-field.frag"
-    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag"
@@ -59,6 +58,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare-blit.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare-dither.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-blit.frag"
@@ -81,7 +82,6 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag" NEON_G
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag" NEON_FIELD_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-ring-field.frag" NEON_RING_FIELD_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
@@ -89,6 +89,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shared-buffer-debug.frag" SHARED_
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag" DROPLETS_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert" LENS_FLARE_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare-blit.frag" LENS_FLARE_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-blit.frag" SPOTLIGHT_BLIT_FRAG_CONTENT)
@@ -138,10 +139,16 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field-common.glsl" NEON_FIEL
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
 
-# Shared ghost-term #defines, injected into lens-flare.frag via
-# @LENS_FLARE_TUNING@ in shaders.h.in (also #included by the C++ renderer,
-# which derives the ghost support bounds from them).
+# Shared ghost-term #defines, injected into lens-flare.frag and
+# lens-flare-blit.frag via @LENS_FLARE_TUNING@ in shaders.h.in (also #included
+# by the C++ renderer, which derives the ghost support bounds from them).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LENS_FLARE_TUNING)
+
+# The lens flare's output dither, injected via @LENS_FLARE_DITHER@ into
+# lens-flare.frag and lens-flare-blit.frag, after @LENS_FLARE_TUNING@ - the two
+# programs that write the layer to the caller's framebuffer (at scale 1.0 and
+# below it) and have to draw the same noise. Not a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare-dither.glsl" LENS_FLARE_DITHER)
 
 # Shared spotlight falloff #defines, injected into spotlight.frag via
 # @SPOTLIGHT_TUNING@ in shaders.h.in (also #included by the C++ renderer,

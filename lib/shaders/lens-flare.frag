@@ -58,6 +58,7 @@ uniform float uRingRadiusSq;  // Squared radius outside which a ghost's ring ter
 uniform float uRingFloor;     // Lower bound sin(l * 30) must clear before a ghost's ring term can be non-zero. Same derivation.
 uniform float uHexRadiusSq;   // Squared radius, in the hex sprite's own units, outside which its coverage is exactly zero. Same derivation.
 uniform float uHexPx;         // How far the hex sprite's argument steps per pixel: FLARE_HEX_SCALE / uResolution.y. Its closed-form edge width.
+uniform float uDither;        // 1 where this pass writes an 8-bit target (the caller's at 1.0, the RGBA8 fallback buffer), 0 into the half-float buffer, whose blit dithers.
 
 // Per-ghost table as a std140 uniform block, baked by the renderer: xyz is a
 // ghost's final colour, w its distance along the sun axis.
@@ -211,6 +212,13 @@ vec3 circle(vec2 p, float size, float dist, vec2 sunUV, vec3 color)
     return (c + c1 + s) * color - 0.01;
 }
 
+// A ray slot's hashed length scale, in [0.15, 1.0]: see the ray recipe in
+// main. @p slot is a whole number in [0, N).
+float rayLength(float slot)
+{
+    return 0.15 + 0.85 * fract(sin(slot * 43.7583) * 12345.67);
+}
+
 void main()
 {
     vec2  uv     = gl_FragCoord.xy / uResolution - 0.5;
@@ -266,12 +274,19 @@ void main()
     //   primary  = pow(|sin(a * N/2)|, 8)  -> N very thin countable spikes.
     //   sub      = pow(|cos(a * N/2)|, 20) -> even thinner "sparkle" needles
     //              at the half-angles between primaries. Fainter (0.15 weight).
-    //   lenMod   = per-ray hash-based length scale in [0.15, 1.0]. Slots are
-    //              indexed off @c mod(a, 2 PI) so the hash is stable across
-    //              rotation, and slot boundaries land at primary valleys
-    //              (primary = 0) so hash discontinuities are invisible.
-    //              Applied to both primary and sub, so short rays are short
-    //              in ALL their layers - avoids "flower" uniformity.
+    //   lenMod   = per-slot hash-based length scale in [0.15, 1.0]
+    //              (rayLength). Slots are indexed off @c mod(a, 2 PI) so the
+    //              hash is stable across rotation, and slot boundaries land
+    //              at primary valleys (primary = 0), so the primary never
+    //              shows the jump from one slot's length to the next.
+    //   subLen   = the sub needles' length. They PEAK on the boundaries, so
+    //              a needle scaled by its slot's lenMod was cut down its
+    //              middle by the two slots' lengths - a straight radial
+    //              seam, 0.64 levels at 1000 px from the sun where the haze
+    //              moves 0.002 a pixel (V36). Each needle takes the mean of
+    //              the two slots it straddles instead, so short rays still
+    //              shorten the needles beside them - avoids "flower"
+    //              uniformity - and nothing is discontinuous.
     const float TWO_PI = 6.28318530717958647692;
     float a       = atan(uv.y - sunUV.y, uv.x - sunUV.x) + uRotation;
     float sunDist = length(uv - sunUV);
@@ -281,10 +296,20 @@ void main()
     float N        = float(uRayDensity);
     float aWrapped = mod(a, TWO_PI);
     float slot     = floor(aWrapped * N / TWO_PI);
-    float rand     = fract(sin(slot * 43.7583) * 12345.67);
-    float lenMod   = 0.15 + 0.85 * rand;
+    float lenMod   = rayLength(slot);
+    // The sub needle centred on boundary k straddles the slots below and
+    // above it, so it takes the mean of their two lengths (V36): constant
+    // across the needle, and changing only at the slot centres, where the
+    // needle is exactly 0. `slot` is always one of the two, so this costs one
+    // more hash, not two. The wrap is spelled out rather than taken with
+    // mod(), whose division need not return a whole number on a GPU - a
+    // needle reading slot N instead of 0 would be the seam again.
+    float k        = floor(aWrapped * N / TWO_PI + 0.5);
+    float below    = (k < 1.0) ? N - 1.0 : k - 1.0;
+    float above    = (k >= N) ? 0.0 : k;
+    float subLen   = 0.5 * (lenMod + rayLength((slot == below) ? above : below));
     float primary  = pow(abs(sin(a * N * 0.5)), 8.0)  * lenMod;
-    float sub      = pow(abs(cos(a * N * 0.5)), 20.0) * lenMod * 0.15;
+    float sub      = pow(abs(cos(a * N * 0.5)), 20.0) * subLen * 0.15;
     float ray      = primary + sub;
 
     // Softening floors give each falloff an intrinsic scale, so its peak is
@@ -315,5 +340,23 @@ void main()
     // Premultiplied "over": alpha driven by the brightest channel so bright
     // cores occlude and thin ghost wings blend additively.
     float alpha = clamp(max(max(color.r, color.g), color.b), 0.0, 1.0);
+
+    // Clamped here rather than by the target: the core and the rays run past
+    // 1, which an 8-bit target - the caller's at 1.0, the old scaled buffer -
+    // clamped on the write, but the half-float buffer below 1.0 stores as
+    // they are, and the blit's bilinear read would then spread the saturated
+    // core a texel wider than it draws at 1.0. On an 8-bit target the same
+    // value either way.
+    color = min(color, vec3(1.0));
+
+    // DITHER (V32). The haze lights the whole frame in gradients that cross an
+    // 8-bit level only every 20 to 600 px, and rounding them draws wide
+    // contour rings. Half a level of noise before the rounding spreads each
+    // band edge over the band. Skipped where the flare drew nothing (an exact
+    // 0 stays 0 on any target) and, on the half-float buffer, left to the
+    // blit - see lens-flare-dither.glsl.
+    if (uDither > 0.0 && alpha > 0.0) {
+        color = max(color + flareDitherOffset(gl_FragCoord.xy), 0.0);
+    }
     fragColor = vec4(color, alpha);
 }

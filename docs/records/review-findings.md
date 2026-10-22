@@ -40,9 +40,9 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, V32, I13, I18, I82, I83, I84, I86, I88, I90, I91, I92 |
+| open | V9, V16, V18, V29, I13, I18, I82, I83, I84, I86, I88, I90, I91, I92 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
-| fixed or changed | every other V, I and R item, through the thirty-seventh pass and the 2026-10-21 / 22 memory work |
+| fixed or changed | every other V, I and R item, through the thirty-eighth pass and the 2026-10-21 / 22 memory work |
 
 The R items come from a re-read after the V and I fixes landed - see
 Second pass. V8 and V9 come from a later read of
@@ -115,6 +115,10 @@ I13, and added a measurement to it.
 V35 comes from `neon-scale-check sequence` on the shared-buffer branch, after
 a shader refactor that moved no pixel failed it on the same three frames as
 the tree before it - the thirty-seventh pass, one item, fixed.
+
+V36 comes from measuring V32 offscreen - the thirty-eighth pass, which then
+fixed V32 and V36; the measurements before and after are in the progress
+log's two entries for 2026-10-21.
 
 ## How the visual items were reproduced
 
@@ -355,21 +359,6 @@ independently, so the dependency is likely on the CPU side or in the
 segment-table path (pass 0s / 0f, `segDirect`); not pinned down. Only 1 level, but
 the split is documented exact and verified byte for byte against a full bake,
 so this is a hole in that verification, not a tolerance.
-
-### V32. The lens flare is never dithered - OPEN
-
-*From the Thirty-fourth pass.*
-
-**Found** by reading: `lens-flare.frag` writes its colour straight out at both
-resolution paths, and below 1.0 into `mScaledBuffer`, which is RGBA8 (the
-`Framebuffer::Resize` default). The flare is the smoothest light the library
-draws - a soft glow, ghosts and rays - so it is the layer most exposed to the
-mechanism R7 fixed for the neon and V27 for the spotlight: slow gradients
-crossing an 8-bit level only every few px draw contour rings, and below 1.0 an
-RGBA8 buffer rounds the tail to plateaus that the blit's bilinear read joins
-into diamond-shaped bands. **Not measured.** The cure, if it shows, is the
-other two layers': a half-float buffer read undithered, and the noise added
-once per destination pixel on the write to the caller's target.
 
 ### I13. `pow()` takes a negative base in the ghost ring term - OPEN
 
@@ -667,7 +656,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. The thirty-seventh fixed V35, found by `sequence`. A measurement of the effect's memory on 2026-10-21 found and fixed I93, and measured I84; I94, the glow's field packed as the ring's is, followed on 2026-10-22. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third opened V28, V29 and I76, all found by `neon-scale-check sequence`; V28 and I76 are fixed since, V29 open. The thirty-fourth, a full-tree review, fixed V30, V31, I77, I78 and I79 and opened V32 and I80 to I84. The thirty-fifth, a second read the same day, opened V33, V34 and I85 to I89; V33, V34, I85, I87 and I89 are fixed since, as are the thirty-fourth's I80 and I81. The thirty-sixth, a third read, opened I90 to I92 and added a measurement to I13. The thirty-seventh fixed V35, found by `sequence`. The thirty-eighth measured and fixed V32, and found and fixed V36. A measurement of the effect's memory on 2026-10-21 found and fixed I93, and measured I84; I94, the glow's field packed as the ring's is, followed on 2026-10-22. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -739,7 +728,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I77 | fixed | an animation callback that attached or detached changed the vector the manager (and `AnimationGroup`) was walking - heap-use-after-free or container-overflow under ASan in 8 of 9 cases, and a callback clearing itself destroyed its own `std::function`; both now walk an allocation-free snapshot and invoke a copy of the callback - all 9 clean under ASan and UBSan |
 | I78 | fixed | a zero-duration animation's elapsed time was a float - 9.375 s per 10 s after a day, frozen past 6.07 days, the clock's old bug one layer up; elapsed, `ApplyAt` and `Modulator::Evaluate` are doubles, exact over 365 days |
 | I79 | fixed | eleven C ABI entry points dereferenced the null effect a created, uninitialised handle holds (SIGSEGV); they return `EL_ERROR_INVALID_HANDLE` - or an empty answer for the two queries - before init |
-| [V32](#v32-the-lens-flare-is-never-dithered---open) | open | the lens flare writes undithered, into RGBA8 below 1.0 - the mechanism R7 and V27 fixed elsewhere, on the smoothest layer; not measured |
+| V32 | fixed | the lens flare wrote undithered, into RGBA8 below 1.0: 35-63% of lit pixels in plateaus 32 px or wider at both scales (widest 585 px; AMD 5300M, 1080p) - contour rings with coloured fringes, and at 0.5 the same bands snapped to its 2 px grid. `lens-flare.frag` now dithers its own write at 1.0, and below it draws undithered into a half-float buffer (RGBA8 fallback dithered in both passes) that its own `lens-flare-blit.frag` dithers per destination pixel, colour only - 0.1-2.6% at both scales, the 9 x 9-box contour residual 28-48% -> under 0.5%, alpha byte-identical at 1.0; a blit dither over the RGBA8 buffer, simulated first, did nothing (35.7%). 1.03x the frame at 1.0, 1.06-1.07x at 0.5, the buffer 2.1 -> 4.1 MB at 1080p and 0.5 |
 | I80 | fixed | the C ABI refuses non-finite float arguments and non-positive preset durations |
 | I81 | fixed | uniform lookups key on a string_view into names stored once; no allocation per call |
 | [I82](#i82-the-output-dither-is-added-where-the-glow-is-0---open) | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
@@ -755,6 +744,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | [I90](#i90-a-modulator-sequence-that-contains-itself-hangs-every-evaluation---open) | open | `Sequence::Append` (and `el_modulator_sequence_append`) accepts a stage that reaches the sequence; self and mutual cycles both return success and then `el_modulator_evaluate` never returns (killed after 5 s), and the cycle leaks |
 | [I91](#i91-a-second-eleffectinit-replaces-the-effect-and-drops-its-animations-and-clock---open) | open | a second `el_effect_init*` builds a new effect and returns success, silently dropping the attached animations and the clock state (attached 1 -> 0, paused -> playing); undocumented |
 | [I92](#i92-an-animation-attached-to-two-effects-advances-twice-a-frame---open) | open | an animation attached to two effects is advanced by both (60 frames at 1/60 on each read 2.000 s elapsed); undocumented and unguarded |
+| V36 | fixed | each ray slot's hashed length jumped at the slot boundary, which is where the sub needle peaks, so every needle was cut down its middle - up to 1.84 levels at 1080p, 0.64 at 1000 px from the sun where the haze moves 0.002 a pixel; a straight radial line the V32 dither did not hide (AMD 5300M). Each needle now takes the mean of the two slots it straddles, constant across it and changing only at the slot centres, where it is exactly 0 - boundaries stepping over twice the local gradient 27 / 21 / 18 / 6 per scene -> 0, the far step 0.64 -> 0.000; the flare moves by at most 1.1 levels, by more than half a level on under 0.85% of pixels; the primary rays untouched. A linear blend between slot centres was built too: within 0.1 level of the mean, slightly dearer. 1.03x the flare at 1.0 for the second hash |
 | V35 | fixed | the glow field's bake (pass 1f) made pass 1b's culls itself, through its own region's projection, so its `vPos` differed from pass 1b's in the last bits: on a texel right on a cull's boundary it culled where pass 1b kept, and pass 1c - which repeats the culls from pass 1b's own `vPos` (I76) - composited its 0, a shared-buffer texel 200 levels under pass 1b's guard band on a rounded corner's outside cutoff, the frame within 1 (`sequence` seed 1, sequence 13, frames 69-71); the bake now culls nothing and the composites make every cull on the frame's own grid - `sequence` 3 failing frames -> 0 (on 100 x 150, `normal`'s only failures in 15,000 frames -> none), the `cover` set and the 210 page images byte-identical |
 | I93 | fixed | `ShaderProgram` deleted its shaders after linking but never detached them, and a deleted shader still attached is only flagged, so the driver kept every shader object - source and compiled form - alive with its program: 486 KB of heap per `neon.frag` program against 177 KB detached (Apple M2 Pro); it now detaches both after the link status query - 1.6 MB less heap per effect with the neon alone (3.9 -> 2.2 MB), 2.0 MB with every layer (4.9 -> 2.9 MB), every frame byte-identical across 14 scenes of all five layers at 1080p and 4K |
 | I94 | fixed | the glow's hue-invariant field (`mGlowField.buffer`) held the glow quad's whole box, though on a screen-sized rect the glow cannot reach the middle - 3.96 MB of R16F at 4K at 0.5, half of it never written; it is now packed as the ring's field is (`FieldLayout`: the box less a conservative hole, four strips, the side strips transposed) and both fields share the packing (`packFieldStrips`), the bake (`drawFieldStrips`, the box drawn through each strip's viewport, V24's rule) and the lookup (`fieldStripTexel`); the side rows go in as many columns as makes the smallest atlas no wider than one column's (a wider one can pass `GL_MAX_TEXTURE_SIZE` where the viewport does not - found in review), a layout no smaller than the box keeps the box (stacked in one column, a short hole's side strips made the atlas BIGGER than the box), and the glow's buffer keeps rows to spare (sized exactly, an intensity pulse reallocated it on 8-9 of 120 frames - found in review; now 2, against 1 for the box). An 1840 x 1000 rect, default glow, hue rotating (Apple M2 Pro): field 0.99 -> 0.90 MB at 1080p, 3.96 -> 2.20 MB at 4K, 76-88% less with an inside cutoff or a one-sided glow, 7.91 -> 7.14 MB at 4K with segments; that rect's ring keeps one column, a short rect's packs into more (0.43 -> 0.24 MB at 1080p for 1840 x 260); `FIELD_MIN_FILL` still measured on the box, so the same configs take the field; every frame of 26 within 1 level of the build before (still frames byte-identical), `check`, `partition`, `shared-buffer` and `sequence` pass; Release at 4K, hue frames 1.4-1.7% slower and intensity frames 1.3-2.2% (the composite's lookup - an int division there cost 3.9% and became a float one), 1080p hue and 4K still frames unchanged within noise |
