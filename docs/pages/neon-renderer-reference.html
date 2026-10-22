@@ -1172,6 +1172,8 @@ fragColor = vec4(result, alpha);</code></pre>
       <p><code>GAMMA_EXPONENT</code> at 0.85 lifts the mid-tones so the falloff reads the way the eye expects. Coverage is the brightest channel: the hot filament core reaches alpha near 1 and occludes the background like a real glass tube, the dim halo and bloom stay near 0 and remain additive, and the dark surround at alpha 0 leaves the background untouched. Pairs with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</p>
 
       <p>Premultiplication is also what makes the reduced-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit needs no more than that read, before its masks, to composite with no dark fringing.</p>
+
+      <p>The reduced buffer keeps the colour and not that alpha: it is RGB10_A2, whose two alpha bits cannot hold the coverage, and the blit rebuilds it as the brightest channel of the colour it filtered (I96) - the same quantity wherever the four texels it blends share their brightest channel, since every pass that writes the buffer stores <code>alpha = max(r, g, b)</code>, and a little under it where the hue turns between them.</p>
     </section>
 
     <!-- ============================================================ -->

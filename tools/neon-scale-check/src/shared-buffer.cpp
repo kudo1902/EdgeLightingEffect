@@ -116,9 +116,11 @@ namespace NeonScaleCheck
         }
 
         /// The buffer as the neon's blit reads it - bilinear, clamped to its
-        /// edge, at each pixel centre's uv over the viewport - composited over
-        /// the clear, with no cut, cutoffs or dither: FRAME_WIDTH x
-        /// FRAME_HEIGHT RGB, top row first, like Render's frames.
+        /// edge, at each pixel centre's uv over the viewport, the coverage
+        /// alpha rebuilt from the filtered colour as max(r, g, b) since the
+        /// buffer does not keep it (RGB10_A2, I96) - composited over the
+        /// clear, with no cut, cutoffs or dither: FRAME_WIDTH x FRAME_HEIGHT
+        /// RGB, top row first, like Render's frames.
         RGB BlitBack(const Seen &seen, const std::vector<float> &texels)
         {
             RGB out(size_t(FRAME_WIDTH) * FRAME_HEIGHT * 3);
@@ -146,12 +148,13 @@ namespace NeonScaleCheck
                         const int y0 = int(std::floor(fy));
                         const float ax = fx - static_cast<float>(x0);
                         const float ay = fy - static_cast<float>(y0);
-                        for (int k = 0; k < 4; ++k)
+                        for (int k = 0; k < 3; ++k)
                         {
                             const float bottom = texel(x0, y0, k) * (1.0f - ax) + texel(x0 + 1, y0, k) * ax;
                             const float top = texel(x0, y0 + 1, k) * (1.0f - ax) + texel(x0 + 1, y0 + 1, k) * ax;
                             rgba[k] = bottom * (1.0f - ay) + top * ay;
                         }
+                        rgba[3] = std::max(rgba[0], std::max(rgba[1], rgba[2]));
                     }
                     for (int k = 0; k < 3; ++k)
                     {

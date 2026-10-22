@@ -22,7 +22,10 @@ namespace EdgeLighting
         /// @ref NeonRenderer's reduced buffer: the neon - filament, halo and
         /// bloom - at @c NeonConfig::resolutionScale over the whole viewport,
         /// with no opaque fill and before the one-sided cut and the cutoffs.
-        /// See the shared buffer section of @ref NeonRenderer.
+        /// Premultiplied colour, RGB10_A2: its alpha is NOT the coverage - two
+        /// bits cannot hold it - so a reader rebuilds it after the fetch, as
+        /// a = max(r, g, b), which is what the neon writes. See the shared
+        /// buffer section of @ref NeonRenderer.
         NEON = 0,
         COUNT ///< Not a buffer: how many there are.
     } SharedBufferId;

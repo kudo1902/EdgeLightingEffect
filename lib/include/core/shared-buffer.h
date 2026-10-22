@@ -23,7 +23,10 @@ namespace EdgeLighting
     ///   - It covers the WHOLE viewport it was drawn for (@ref GetViewport): a
     ///     fragment of a pass drawn at that viewport finds its own pixel at
     ///     <tt>uv = gl_FragCoord.xy / viewport</tt>.
-    ///   - Colour attachment 0, filtered GL_LINEAR, clamped to its edge.
+    ///   - Colour attachment 0, filtered GL_LINEAR, clamped to its edge, in
+    ///     the format its producer chose - which says nothing about what its
+    ///     channels mean. That is the producer's: the NEON buffer, for one,
+    ///     keeps no alpha (see @ref SharedBufferId).
     ///   - @ref IsReady holds this frame's image from the end of the
     ///     producer's offscreen phase (BaseRenderer::RenderOffscreen), which
     ///     the effect runs for every layer before any layer composites - so a
@@ -45,9 +48,9 @@ namespace EdgeLighting
         /// A format the buffer may be allocated in.
         typedef struct Format
         {
-            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
+            GLint internalFormat; ///< The sized internal format, e.g. GL_RGB10_A2.
             GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
-            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
+            GLenum type;          ///< Its component type, e.g. GL_UNSIGNED_INT_2_10_10_10_REV.
             const char *name;     ///< For the fallback log line.
         } Format;
 

@@ -485,12 +485,13 @@ extern "C"
      *
      *           Each path compiles its own shaders the first frame it renders,
      *           so the first frame after switching to or from 1.0 pays a
-     *           one-time compile. Below 1.0 the layer holds an RGBA8 buffer
-     *           at the reduced scale, never larger than the viewport at that
-     *           scale, plus a small RGBA16F gather buffer (two attachments
-     *           with segments), both covering only what the glow reaches:
-     *           2.15 MB at 1920 x 1080 and 0.5 for a full-screen rect, 0.6 MB
-     *           at 0.25, less for a smaller rect.
+     *           one-time compile. The layer holds a buffer at the reduced
+     *           scale over the whole viewport, RGB10_A2 - 2.0 MB at
+     *           1920 x 1080 and 0.5, 0.5 MB at 0.25, 7.9 MB at 3840 x 2160
+     *           and 0.5, whatever the rect - plus smaller ones: for a
+     *           full-screen rect at 1920 x 1080 and 0.5, a 0.08 MB gather
+     *           buffer, a 0.4 MB edge-ring field and, while the hue rotates,
+     *           a 0.9 MB glow field.
      *
      *           Clamped to (0, 1] at draw time: values above 1.0 do not
      *           supersample, they are refused, because the point of the knob

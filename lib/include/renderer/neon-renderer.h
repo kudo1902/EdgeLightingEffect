@@ -334,9 +334,11 @@ namespace EdgeLighting
     ///     edge ring re-shades every pixel it lights), so that the buffer
     ///     holds the line; that moves no pixel of the frame, by the ring's
     ///     guard (I62, reverted for this buffer);
-    ///   - premultiplied colour and coverage alpha (the brightest channel),
-    ///     tone-mapped as the frame is, NOT dithered - RGBA16F where the driver
-    ///     renders it, RGBA8 where not (SCALED_FORMATS);
+    ///   - premultiplied colour, tone-mapped as the frame is, NOT dithered,
+    ///     in RGB10_A2 (SCALED_FORMATS) - and NOT its coverage alpha, which two
+    ///     bits cannot hold: a reader rebuilds it as the brightest channel,
+    ///     a = max(r, g, b), what every pass writing the buffer stores and
+    ///     what neon-blit.frag rebuilds after its filtered fetch (I96);
     ///   - NO opaque fill, which is drawn on the caller's framebuffer only;
     ///   - NOT the one-sided cut or the cutoffs, which the blit applies at full
     ///     resolution (neon-blit.frag): the buffer keeps the glow
@@ -1924,10 +1926,10 @@ namespace EdgeLighting
         /// Pass 1b's target and the neon's shared buffer (@ref SharedBuffer,
         /// claimed as SharedBufferId::NEON): the composited colour, one
         /// attachment at the reduced scale - full size at 1.0 - covering the
-        /// WHOLE viewport (GetViewportRegion): 4.1 MB at 1080p and 0.5.
-        /// RGBA16F where the driver renders to it, RGBA8 where not
-        /// (SCALED_FORMATS). Shared with the effect's registry, so a reader
-        /// never outlives it; released when the layer is disabled.
+        /// WHOLE viewport (GetViewportRegion): 2.0 MB at 1080p and 0.5, 7.9 MB
+        /// at 4K. RGB10_A2, its alpha not read (SCALED_FORMATS). Shared with
+        /// the effect's registry, so a reader never outlives it; released when
+        /// the layer is disabled.
         std::shared_ptr<SharedBuffer> mScaled;
 
         /// The effect's registry accepted @c mScaled as SharedBufferId::NEON,

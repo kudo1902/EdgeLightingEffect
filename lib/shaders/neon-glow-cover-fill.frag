@@ -35,7 +35,10 @@ precision highp float;
 
 out vec4 fragColor;
 
-uniform sampler2D uSegCover;       ///< The segment table, encoded segment (halo, bloom) on .r / .g.
+// HIGHP, as neon.frag's uGlowCover (I97): read at GLSL ES's lowp default,
+// 2^-8, the half-float segment table comes back at its RG8 fallback's
+// precision.
+uniform highp sampler2D uSegCover; ///< The segment table, encoded segment (halo, bloom) on .r / .g.
 uniform vec4  uGlowCoverLayout;    ///< The MAIN table's layout - the texel being written.
 uniform vec2  uGlowCoverSplit;     ///< The main table's split.
 uniform vec4  uSegCoverLayout;     ///< The segment table's layout - where the value is read.

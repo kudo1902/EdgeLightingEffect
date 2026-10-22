@@ -220,20 +220,20 @@ namespace EdgeLighting
         /// Adding a candidate is adding a row; ResizeInBestFormat walks whatever
         /// is here.
         ///
-        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS, GATHER_FORMATS AND
-        /// SCALED_FORMATS HAVE A LIST. They are the only ones that ask for a
-        /// format a conforming driver may refuse. RGBA8 - what
-        /// LensFlareRenderer's scaled buffer and OffscreenCapture take - is
-        /// mandatory colour-renderable in both GL 3.3 core and GLES 3.0, so
-        /// there is nothing for those to fall back FROM, and nothing to fall
-        /// back TO either: an RGBA8 failure is out-of-memory or a broken
-        /// driver, which no other format fixes. They bail instead, and should.
+        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS AND GATHER_FORMATS HAVE A
+        /// LIST. They are the only ones that ask for a format a conforming
+        /// driver may refuse. RGBA8 - what OffscreenCapture takes - and
+        /// RGB10_A2 - what the reduced buffer (SCALED_FORMATS) and
+        /// LensFlareRenderer's scaled buffer take - are mandatory
+        /// colour-renderable in both GL 3.3 core and GLES 3.0, so there is
+        /// nothing for those to fall back FROM, and nothing to fall back TO
+        /// either: such a failure is out-of-memory or a broken driver, which no
+        /// other format fixes. They bail instead, and should.
         ///
         /// This one stores arc intensity and stacked segment boosts, which
         /// routinely exceed 1.0; the gather buffer stores data that a shading
-        /// pass re-amplifies; the reduced buffer stores output, in [0, 1], but
-        /// output the blit dithers on its way out (R7), which 8 bits of storage
-        /// would already have rounded - see SCALED_FORMATS.
+        /// pass re-amplifies. The reduced buffer stores output, in [0, 1], which
+        /// needs only a quarter level of precision - see SCALED_FORMATS.
         constexpr TargetFormat EMISSION_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
@@ -289,32 +289,43 @@ namespace EdgeLighting
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
 
-        /// The reduced buffer's formats in PREFERENCE ORDER, best first - walked
-        /// by SharedBuffer::BeginWrite (@c mScaled).
+        /// The reduced buffer's format (@c mScaled) - one, so the walk
+        /// SharedBuffer::BeginWrite makes has nothing to fall back to:
+        /// RGB10_A2 is colour-renderable and texture-filterable in GL 3.3 core
+        /// and GLES 3.0 alike (see EMISSION_FORMATS).
         ///
-        /// Half float leads because every pixel the blit draws comes from this
-        /// buffer, at every scale (1.0 included), and the output dither (R7,
-        /// neonDither) can only break up gradients that reach it unrounded. In
-        /// RGBA8 the halo's and bloom's slow tails are already plateaus of one
-        /// level, tens of px wide in the dark, before the blit reads them -
-        /// bilinear filtering joins the plateaus with ramps one texel long, and
-        /// a dither on an exact level does nothing, so the contour rings stay.
-        /// RGBA8 follows for drivers that will not render to half float: the
-        /// ring is still dithered there, the blit's area bands as before.
-        /// Half float is texture-filterable in GLES 3.0 core. Twice the memory:
-        /// 1.6 -> 3.2 MB for an 800 x 500 rect at 1080p at 0.5 (752 x 540
-        /// texels) - 4.1 MB at 1080p and 0.5 now that the buffer is the whole
-        /// viewport.
+        /// TEN BITS OF COLOUR because every pixel the blit draws comes from
+        /// this buffer, at every scale (1.0 included), and the output dither
+        /// (R7, neonDither) can only break up gradients that reach it finer
+        /// than a level. In RGBA8 the halo's and bloom's slow tails are already
+        /// plateaus of one level, tens of px wide in the dark, before the blit
+        /// reads them - bilinear filtering joins the plateaus with ramps one
+        /// texel long, and a dither on an exact level does nothing, so the
+        /// contour rings stay. Ten bits hold a quarter of a level.
+        ///
+        /// NO ALPHA: two bits cannot hold the coverage, and nothing needs them
+        /// to. Every pass that writes this buffer writes alpha = max(r, g, b)
+        /// (neon.frag, neon-field.frag), so the alpha says nothing the colour
+        /// does not, and neon-blit.frag - like any reader of the shared buffer
+        /// - rebuilds it from the colour it fetched. That is why this is not
+        /// RGBA16F, as it was from R7 to I96: half float stored the same colour
+        /// and that alpha in twice the memory - 4.0 -> 2.0 MB at 1080p and
+        /// 15.8 -> 7.9 MB at 4K, at 0.5, the largest buffer the neon has.
+        /// Measured against it (I96, Apple M2 Pro): every frame of
+        /// `neon-scale-check`'s cover set and page within 1 level, alpha
+        /// within 2; the faintest tail, under an eighth of a level, now rounds
+        /// to 0, and runs of one value 32 px or wider rose from 0.00-0.01% to
+        /// 0.03-0.08% of lit pixels, all at levels 1-3; 4K frames 1.11-1.13x
+        /// faster, 1080p unchanged.
         constexpr SharedBuffer::Format SCALED_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
+            {GL_RGB10_A2, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, "RGB10_A2"},
         };
 
         /// Allocate @p buffer at @p width x @p height in the best of the
         /// @p count @p formats the driver will give: walk the list from
         /// @p tier, resizing to each candidate until one allocates. The walk
         /// of every buffer above that has a format list - the emission table,
-        /// the glow coverage table, the gather buffer and the reduced buffer.
+        /// the glow coverage table and the gather buffer.
         ///
         /// @p tier is where the walk resumes, and is left on the format that
         /// allocated. Keep it beside the buffer and pass it back on every call:
@@ -2126,7 +2137,7 @@ namespace EdgeLighting
     NeonRenderer::NeonRenderer()
         : mScaled(std::make_shared<SharedBuffer>(
               "NeonRenderer.Scaled", std::vector<SharedBuffer::Format>(std::begin(SCALED_FORMATS), std::end(SCALED_FORMATS)),
-              "The glow's slow gradients are rounded to 8 bits before the blit dithers them."))
+              nullptr)) // one format: no fallback to describe
     {
     }
 

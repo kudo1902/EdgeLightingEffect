@@ -40,7 +40,14 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uSource;
+// HIGHP, not the default. GLSL ES 3.00 predeclares `precision lowp
+// sampler2D`, and a texture lookup returns its sampler's precision: lowp
+// guarantees only 2^-8, so a driver that honours it rounds this buffer's half
+// float back to eight bits on the read - the one-level plateaus V27's dither
+// exists to break up, which no noise added after the read can recover.
+// Desktop GL gives precision qualifiers no meaning, so nothing on a Mac shows
+// it (I97).
+uniform highp sampler2D uSource;
 
 /// The caller's viewport in pixels - what the blit's NDC quad covers - so
 /// `uv * uViewportSize` is the destination pixel the dither is keyed on.

@@ -68,8 +68,9 @@ void main() { fragColor = uColor; }
                 // Offscreen, one shading twice over: pass 1b, into the RGBA
                 // reduced buffer, or the field bake, into its R16F / RG16F
                 // field - at either scale, so told apart by the target. By its
-                // ALPHA, not by float: the reduced buffer is half float too
-                // wherever the driver renders to it (SCALED_FORMATS, R7).
+                // ALPHA: the field has none, the reduced buffer two bits
+                // (RGB10_A2, SCALED_FORMATS) - which are not read, but are
+                // there.
                 GLint alphaBits = 0;
                 glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                                       GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alphaBits);

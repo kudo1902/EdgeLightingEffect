@@ -677,7 +677,9 @@ namespace NeonScaleCheck
             std::vector<float> mData;
         };
 
-        /// The buffer as 8-bit RGBA, top row first - for --dump.
+        /// The buffer as 8-bit RGBA, top row first - for --dump. Its alpha
+        /// rebuilt as max(r, g, b), as a reader rebuilds it: the buffer's own
+        /// is two bits that hold nothing (RGB10_A2, I96).
         RGBA BufferPixels(const BufferProbe &probe)
         {
             RGBA out(probe.GetData().size());
@@ -687,11 +689,13 @@ namespace NeonScaleCheck
             {
                 for (int x = 0; x < w; ++x)
                 {
+                    const float *texel = &probe.GetData()[(size_t(h - 1 - row) * w + x) * 4];
+                    const float rgba[4] = {texel[0], texel[1], texel[2],
+                                           std::max(texel[0], std::max(texel[1], texel[2]))};
                     for (int k = 0; k < 4; ++k)
                     {
-                        const float c = probe.GetData()[(size_t(h - 1 - row) * w + x) * 4 + k];
                         out[(size_t(row) * w + x) * 4 + k] =
-                            static_cast<unsigned char>(std::lround(std::min(std::max(c, 0.0f), 1.0f) * 255.0f));
+                            static_cast<unsigned char>(std::lround(std::min(std::max(rgba[k], 0.0f), 1.0f) * 255.0f));
                     }
                 }
             }
@@ -756,7 +760,9 @@ namespace NeonScaleCheck
 
         /// The shared buffers against each other, in 8-bit levels rounded
         /// up, so any texel that differs at all reads at least 1. -1 when one
-        /// is ready and the other not, or their sizes differ.
+        /// is ready and the other not, or their sizes differ. Colour only:
+        /// the buffer's alpha is two bits a reader never reads (RGB10_A2,
+        /// I96), and a colour one level brighter can move them by a third.
         int BufferDifference(const BufferProbe &a, const BufferProbe &b, long &differing)
         {
             differing = 0;
@@ -768,7 +774,7 @@ namespace NeonScaleCheck
             for (size_t i = 0; i < a.GetData().size(); i += 4)
             {
                 float d = 0.0f;
-                for (size_t k = 0; k < 4; ++k)
+                for (size_t k = 0; k < 3; ++k)
                 {
                     d = std::max(d, std::fabs(a.GetData()[i + k] - b.GetData()[i + k]));
                 }

@@ -127,14 +127,16 @@ c.size = std::max(c.size - 0.5f * c.softness, 0.0f);
   perimeter at 0.5) gains nothing from the split. See
   [`neon-resolution-scale-plan.md`](../design/neon-resolution-scale-plan.md) section 13
   and `neon-resolution-scale-perf-comparison.md`.
-- **Memory.** One RGBA8 buffer at the reduced scale, as on `main`, but covering
-  only the part of the frame the glow reaches (never more than the viewport at
-  that scale), plus a small RGBA16F gather buffer over the same area at the
-  gather's scale (two attachments with segments). At 1920 x 1080 and 0.5: 2.15
-  MB for a full-screen rect (`main`: 2.1 MB), 1.8 MB for a 900 x 540 one. At
-  0.25: 0.6 MB and 0.54 MB. A driver that cannot render to RGBA16F (GLES 3.0
-  without `EXT_color_buffer_half_float`) gets RGBA8 instead, logged once, and
-  reads up to 3/255 off 1.0 rather than 2.
+- **Memory.** One buffer at the reduced scale, as on `main`, but over the whole
+  viewport whatever the rect (it is the neon's shared buffer - see section 8),
+  in RGB10_A2: 2.0 MB at 1920 x 1080 and 0.5, the same as `main`'s RGBA8 buffer
+  for a full-screen rect (2.1 MB), and 0.5 MB at 0.25. Plus a small RGBA16F
+  gather buffer over the part of the frame the glow reaches, at the gather's
+  own scale (two attachments with segments), an edge-ring field and, while the
+  hue rotates, the glow's field - 0.08, 0.4 and 0.9 MB for a full-screen rect
+  at 1920 x 1080 and 0.5. A driver that cannot render to RGBA16F (GLES 3.0
+  without `EXT_color_buffer_half_float`) gets an RGBA8 gather buffer instead,
+  logged once, and reads up to 3/255 off 1.0 rather than 2.
 
 ## 4. Neon shaders are compiled on first draw
 
@@ -278,8 +280,9 @@ marked **source break** stop a host compiling until it follows them.
   - The lens flare is dithered (V32, fixed 2026-10-21): every pixel it lights
     moves by up to a level, so a flare frame is no longer comparable bit for
     bit with one from before; two dithered builds still are. Below
-    `resolutionScale` 1.0 its buffer is half float, twice the memory (4.1 MB
-    at 1080p and 0.5), with an RGBA8 fallback that is logged once.
+    `resolutionScale` 1.0 its buffer was half float, twice the memory (4.1 MB
+    at 1080p and 0.5), with an RGBA8 fallback; since I96 it is RGB10_A2, back
+    to 2.0 MB (section 8).
   - The flare's thin sparkle needles, between its rays, are no longer cut down
     the middle (V36, fixed 2026-10-21): each takes the mean length of the two
     rays beside it. At most about a level, on under 1% of the frame; the main
@@ -289,7 +292,48 @@ marked **source break** stop a host compiling until it follows them.
   animation attached to two effects runs at their combined speed (I92); and a
   modulator sequence must not contain itself (I90).
 
-## 8. Nothing else a host can see moved
+## 8. The neon's shared buffer keeps no alpha, and the reduced buffers take half the memory
+
+On 2026-10-22 (I96 in `docs/records/review-findings.md`) the neon's reduced
+buffer - the shared buffer `SharedBufferId::NEON` - and the lens flare's
+reduced buffer moved from RGBA16F to RGB10_A2: ten bits of colour, which the
+output dither needs, and two bits of alpha, which hold nothing.
+
+- **A reader of the neon's shared buffer rebuilds its alpha.** The buffer's
+  `.a` is no longer the coverage. Every pass that writes it stores
+  `alpha = max(r, g, b)`, so a renderer that composites it takes the colour
+  and computes `a = max(r, g, b)` after its fetch, as `neon-blit.frag` does.
+  One that reads only the colour, like `DebugRenderer`'s inset, changes
+  nothing. The C ABI does not expose the buffer, so only a C++ renderer of a
+  host's own is affected.
+- **Memory.** Half, wherever these buffers exist: the neon's at 0.5 is 2.0 MB
+  at 1920 x 1080 and 7.9 MB at 3840 x 2160 (4.0 and 15.8 before), the flare's
+  the same below its scale 1.0. On an Apple M2 Pro the neon's band config went
+  from 16.96 to 9.05 MB of textures at 4K, and every layer with the flare at
+  0.5 from 35.2 to 19.4 MB. Large frames got faster with it - 1.11-1.13x for
+  the neon at 4K, a still flare at 0.5 1.10x at 1080p and 1.23x at 4K - and
+  the neon's 1080p frames stayed where they were.
+- **Pixels.** Frames move by at most 1 level (alpha by 2), so a frame is not
+  comparable bit for bit with one from before; two builds of this one still
+  are. The faintest tail, under an eighth of a level, now rounds to 0. Scale
+  1.0 of the flare does not use the buffer and is unchanged.
+- **No fallback.** RGB10_A2 is renderable on every GL 3.3 core and GLES 3.0
+  driver, so neither buffer has an RGBA8 row any more, and neither needs
+  half-float rendering (the neon's gather buffer, tables and fields still
+  do). The spotlight's buffer stays RGBA16F: it screens lamps
+  into it, alpha included, so its alpha is not the brightest channel and has
+  to be kept.
+- **On a GLES device every float or ten-bit buffer is read in full** (I97):
+  the blits, the emission table, the gather buffer, the coverage tables and
+  the fields declare `highp` samplers, where GLSL ES would otherwise read
+  through lowp ones - 8 bits, clamped past 2. Where a driver honoured lowp,
+  the blits' areas lose the contour rings the 8-bit read brought back, the
+  emission table's stacked segment boosts no longer clamp at 2, and the
+  shading reads the gather and the coverage tables at half float's precision
+  rather than their 8-bit fallbacks'; desktop GL ignores the qualifier and
+  draws the same bits as before.
+
+## 9. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

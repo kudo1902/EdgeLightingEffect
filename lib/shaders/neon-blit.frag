@@ -1,7 +1,8 @@
 precision highp float;
 
 // Pass 2b of the scaled neon path: bilinear composite of the reduced-resolution
-// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer, over
+// neon FBO (premultiplied colour, its coverage alpha rebuilt from it - see
+// main) onto the backbuffer, over
 // the part of the frame outside the thin edge ring that pass 2c re-shades at
 // full resolution - and only where the glow can still be non-zero there: past
 // the cut, the cutoffs and the glow's own fade margin this shader would write
@@ -74,7 +75,13 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uSource;
+// HIGHP, not the default. GLSL ES 3.00 predeclares `precision lowp
+// sampler2D`, and a texture lookup returns its sampler's precision: lowp
+// guarantees only 2^-8, so a driver that honours it rounds this buffer's ten
+// bits back to eight on the read - the one-level plateaus R7's dither exists
+// to break up, which no noise added after the read can recover. Desktop GL
+// gives precision qualifiers no meaning, so nothing on a Mac shows it (I97).
+uniform highp sampler2D uSource;
 
 // vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
 // NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
@@ -108,7 +115,16 @@ uniform float uOutsideCutoffSoftness;
 
 void main() {
     vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
-    vec4 src = texture(uSource, uv); // premultiplied colour + coverage alpha
+    // Premultiplied colour, and the coverage alpha REBUILT from it rather
+    // than read: the reduced buffer is RGB10_A2, whose two alpha bits cannot
+    // hold the coverage, and every pass that writes it stores
+    // alpha = max(r, g, b). The brightest channel of the filtered colour is
+    // that coverage filtered wherever the four texels share their brightest
+    // channel, and a little under it where the hue turns between them (2
+    // levels at most on neon-scale-check's scenes - a measurement, not a
+    // bound; I96).
+    vec4 src = texture(uSource, uv);
+    src.a = max(src.r, max(src.g, src.b));
 
     // GlowSide::BOTH pays nothing, and the branch that arranges that is safe
     // BECAUSE uGlowSide IS A UNIFORM: every invocation in the draw takes the
@@ -183,7 +199,7 @@ void main() {
     fragColor = src * cut;
 
     // The output dither (neon-grade.glsl): this is the write to the caller's
-    // framebuffer, so the place the reduced buffer's half-float precision
-    // finally meets 8 bits.
+    // framebuffer, so the place the reduced buffer's ten bits finally meet
+    // 8.
     fragColor.rgb = neonDither(fragColor.rgb);
 }

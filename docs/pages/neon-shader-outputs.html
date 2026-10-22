@@ -409,7 +409,7 @@
       <rect class="fbo" x="740" y="900" width="310" height="222" rx="1"/>
       <text class="t-dim" x="754" y="920">FBO</text>
       <text x="796" y="920">mScaled &#183; shared buffer</text>
-      <text class="t-file" x="754" y="938">whole viewport &#183; RGBA16F</text>
+      <text class="t-file" x="754" y="938">whole viewport &#183; RGB10_A2</text>
       <text class="t-dim" x="1036" y="938" text-anchor="end">read: bilinear</text>
       <image href="../images/neon-onboarding/pass-p1b-reduced.png" x="752" y="950" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
       <rect class="frame" x="752" y="950" width="286" height="161"/>
@@ -618,7 +618,7 @@
         <div><dt>Shader</dt><dd><code>neon.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mScaled</code>, the neon&rsquo;s shared buffer</dd></div>
         <div><dt>Grid</dt><dd>320 &times; 180 texels: the whole 640 &times; 360 viewport at scale 0.5</dd></div>
-        <div><dt>Format</dt><dd>RGBA16F (RGBA8 where the driver will not render to it), so the blit&rsquo;s dither has unrounded gradients to work on (R7)</dd></div>
+        <div><dt>Format</dt><dd>RGB10_A2: ten bits, so the blit&rsquo;s dither has gradients finer than a level to work on (R7), and no coverage alpha - the blit and any other reader rebuild it as the brightest channel (I96)</dd></div>
         <div><dt>Runs</dt><dd>On a frame whose config changed - P1c in its place while the glow&rsquo;s field holds</dd></div>
       </dl>
     </div>

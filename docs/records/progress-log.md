@@ -5,6 +5,121 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-23 - Every float-buffer sampler highp (I97 closed)
+
+On `optimize_memory2`, on top of I96 and the blits' half of I97; I97 in
+[`review-findings.md`](review-findings.md).
+
+- **What changed.** The rest of I97: `uEmission` (`neon-gather.frag`),
+  `uGather` / `uGatherSeg` and `uGlowCover` (`neon-shade.glsl`), `uField` and
+  its `uGather` / `uGatherSeg` (`neon-field-common.glsl`) and `uSegCover`
+  (`neon-glow-cover-fill.frag`) are `uniform highp sampler2D`, each with what a
+  lowp read would cost that buffer - the emission table's stacked boosts
+  clamped at 2, the gather buffer and the coverage tables back at their 8-bit
+  fallbacks' precision, the field's brightness clamped. CLAUDE.md's rule now
+  covers every sampler of a float or ten-bit buffer and names the two kinds
+  that keep the default on purpose: the RGBA8 LUTs, and the debug inset's
+  `uBuffer`, which writes what it reads straight to an 8-bit target. The
+  onboarding guide's texture primer and upgrade-notes section 8 say the same.
+- **Verified.** Byte-identical on the M2, as desktop GL gives the qualifier
+  no meaning: the cover set's 306 frames, the page's 210 images and the guide's
+  66 figures match the build before. `check`, `partition`, `shared-buffer`,
+  `sequence`, `clock` and `flare-reuse` pass; Debug and Release build clean.
+- **Open.** Untested on a GLES device, the only place any of I97 shows, and
+  what highp costs a GLES fragment program is unmeasured.
+
+## 2026-10-22 - highp samplers in the three blits (I97)
+
+On `optimize_memory2`, on top of I96, committed with it and the rest of I97;
+I97 in [`review-findings.md`](review-findings.md).
+
+- **Found** reading I96's blits: no shader in the library declares a
+  sampler's precision, and GLSL ES 3.00 predeclares `lowp sampler2D` - 2^-8
+  over (-2, 2) for whatever a lookup returns. Desktop GL ignores precision
+  qualifiers, so the Macs read every buffer in full; a GLES driver that
+  honours lowp would read the reduced buffers as 8 bits and undo the blits'
+  dither (R7, V32, V27).
+- **What changed.** `uSource` is `uniform highp sampler2D` in
+  `neon-blit.frag`, `lens-flare-blit.frag` and `spotlight-blit.frag`, with the
+  reason beside each; CLAUDE.md's shader section has the rule, and the
+  onboarding guide's texture primer the fact.
+- **Verified.** On the M2 the generated shaders carry the qualifier and draw
+  the same bits: the cover set's 306 frames and the page's 210 images
+  byte-identical to I96's, and 22 flare and spotlight frames at 1.0, 0.5 and
+  0.25 too; `check`,
+  `partition`, `shared-buffer`, `sequence`, `clock` and `flare-reuse` pass.
+  Debug and Release build clean.
+- **Open.** The neon's other float buffers - the emission table (past 2 with
+  stacked boosts), the gather buffer, the coverage tables, the fields - are
+  still read through default samplers (I97). Untested on a GLES device, which
+  is the only place any of this shows.
+
+## 2026-10-22 - The reduced buffers in RGB10_A2, alpha rebuilt (I96)
+
+On `optimize_memory2`, on top of `c01cc38`, committed with I97. Apple M2 Pro,
+Release; I96 in [`review-findings.md`](review-findings.md).
+
+- **Found first.** A memory review of the whole effect: a probe hooking
+  GLAD's texture and buffer calls named every texture by its `Framebuffer`,
+  read the reduced buffers back, and counted heap allocations per frame and
+  across create / destroy cycles, on 42 scenes (1080p and 4K, every layer,
+  still / hue / intensity / moving-light / resize frames) and on config
+  transitions. The neon's shared buffer, viewport-sized RGBA16F, was 61-94% of
+  the neon's texture memory in every scene, the flare's reduced buffer as much
+  again below its scale 1.0, and in both every written texel's alpha equalled
+  max(r, g, b) exactly.
+- **What changed.** Both buffers are RGB10_A2, their one format (renderable on
+  every GL 3.3 core and GLES 3.0 driver, so no fallback row; the flare's
+  RGBA8-only in-pass dither, `holdsSubLevels`, `scaledPassDithers`,
+  `mScaledFormat` and `FlareInputs::dither` went with its row).
+  `neon-blit.frag` and `lens-flare-blit.frag` rebuild the coverage alpha as
+  max(r, g, b) after their filtered fetch. The shared buffer's contract says
+  its alpha is not the coverage and a reader rebuilds it (`SharedBufferId::NEON`,
+  `SharedBuffer`, `NeonRenderer`'s shared buffer section); the readers in the
+  tools do (`shared-buffer`'s blit-back, `sequence`'s buffer comparison and
+  dump, the guide figures' composite). The spotlight keeps RGBA16F - it
+  screens lamps in, alpha included - and its comment says why.
+- **Measured.** Textures, against `c01cc38`: band 4.47 -> 2.49 MB still and
+  5.37 -> 3.39 hue at 1080p, 16.96 -> 9.05 and 19.38 -> 11.47 at 4K; with
+  three arcs and three segments 25.76 -> 17.85 at 4K; the flare alone at 0.5
+  3.97 -> 1.99 / 15.83 -> 7.92; every layer with the flare at 0.5,
+  9.32 -> 5.37 / 35.2 -> 19.4. Wall clock (glFinish loops of 100 frames,
+  best of 7 rounds, best of four interleaved runs): 4K neon 1.13x still,
+  1.12x hue, 1.11x intensity; one-sided cut band 1.02x, moving lights 1.03x;
+  a still flare at 0.5 1.10x at 1080p and 1.23x at 4K, moving 1.04x; every
+  layer at 4K 1.05x; 1080p neon 1.00-1.01x.
+- **Verified.** Against `c01cc38`: the cover set's 306 frames and the page's
+  78 frames and 72 crops within 1 level (alpha 2; 15-22% of lit pixels move by
+  1); the flare within 1 at 0.5 and 0.25, byte-identical at 1.0, every layer
+  at once within 2 (99.9% within 1); the guide figures within 1. Runs of one
+  value 32 px or wider: neon 0.00-0.01% -> 0.03-0.08% of lit pixels, at
+  levels 1-3; flare haze 0.01% -> 0.1-0.2%, at levels 4-12 (V32 was accepted
+  at 0.1-2.6%); the flare's 9 x 9 box mean moves by more than a quarter level
+  on at most 0.03% of lit pixels. The faintest tail, under an eighth of a
+  level, rounds to 0. `check`, `partition`, `shared-buffer`, `sequence` (exact
+  0; normal 2 / held 1, buffer 1), `clock` and `flare-reuse` pass. The first
+  `sequence` run failed with 85-level buffer differences: one step of the
+  2-bit alpha it was still comparing; it compares colour now.
+- **Found in the same review, not changed.** Apple's GL driver keeps about
+  0.82 MB of render pipeline state per destroyed neon effect for the life of
+  the process (40 create / destroy cycles: +33 MB, also with a fresh context
+  each cycle; 0.10 MB for the flare alone) - the library frees every object
+  and allocation of its own, so only a host that re-creates the effect pays,
+  as a second `el_effect_init` does (I91). Most of the shared buffer is never
+  written on the production-style band (OUTSIDE glow, a 20 px cutoff): 4.4% of
+  it at 4K, 8.8% at 1080p; packed as the fields are (I94) it would be about
+  0.5 MB at 4K, at the cost of the readers' `gl_FragCoord / viewport` lookup.
+  `debug.opaqueOnly` keeps the shared buffer, the ring field and the gather
+  buffer while drawing none. The library allocates at most six times a frame,
+  all in `NeonRenderer::OnConfigChanged`, and never on still or hue frames.
+- **Open.** Untested on the Tizen device. The committed guide figures
+  already differ from `c01cc38`'s own render in six images (up to 251 levels:
+  `geometry-scaled`, `debug-overlays`, the coverage-table figure, the three
+  blend figures), before this change; this change moves every figure by at
+  most 1. The tail's precision could be raised by storing sqrt(rgb) (not
+  tried). Otherwise unchanged: V9, V16, V18, V29, I13, I18, I82, I83, I84,
+  I86, I88, I90, I91, I92.
+
 ## 2026-10-22 - The glow's field packed into strips (I94)
 
 On `optimize_memory`, on top of `b5e5156`. Apple M2 Pro; I94 in

@@ -32,9 +32,10 @@ namespace EdgeLighting
     /// the same picture at lower resolution rather than a differently-shaped
     /// one. The third, @c uDither, says where the output is DITHERED (V32): at
     /// 1.0 the flare dithers its own write to the caller's 8-bit target; below
-    /// it, it draws undithered into a half-float buffer and the blit
-    /// (lens-flare-blit.frag) dithers once per destination pixel. See
-    /// SCALED_FORMATS in the .cpp.
+    /// it, it draws undithered into a ten-bit buffer and the blit
+    /// (lens-flare-blit.frag) dithers once per destination pixel, rebuilding
+    /// the coverage alpha the buffer does not keep. See SCALED_FORMAT in the
+    /// .cpp.
     ///
     /// @see LensFlareConfig for configuration options.
     class LensFlareRenderer : public BaseRenderer
@@ -101,12 +102,11 @@ namespace EdgeLighting
             glm::vec2 sunPos{0.0f};     ///< uSunPos, scaled into the buffer.
             float rotationTurns = 0.0f; ///< The rays' phase, turns - uRotation over 2 PI.
             uint32_t ghostUploads = 0;  ///< mGhostBlock.GetUploadCount() - GhostBlock.
-            bool dither = false;        ///< uDither: the buffer is the RGBA8 fallback (@ref scaledPassDithers).
 
             bool operator==(const FlareInputs &o) const
             {
                 return flare == o.flare && target == o.target && sunPos == o.sunPos &&
-                       rotationTurns == o.rotationTurns && ghostUploads == o.ghostUploads && dither == o.dither;
+                       rotationTurns == o.rotationTurns && ghostUploads == o.ghostUploads;
             }
             bool operator!=(const FlareInputs &o) const { return !(*this == o); }
         } FlareInputs;
@@ -121,14 +121,6 @@ namespace EdgeLighting
 
         bool setupShaders();
         void setupGeometry();
-        /// Sizes @c mScaledBuffer in the best format the driver will render
-        /// to, walking SCALED_FORMATS (the .cpp) from @c mScaledFormat and
-        /// leaving it on the tier that allocated. @return false if none did.
-        bool resizeScaledBuffer(int width, int height);
-        /// Whether the scaled pass dithers its own write: only into the RGBA8
-        /// fallback, which rounds the haze before the blit could. Into half
-        /// float the blit dithers alone.
-        bool scaledPassDithers() const;
 
         /// Bake the per-ghost distance + colour table into @c mGhostBlock.
         ///
@@ -144,7 +136,8 @@ namespace EdgeLighting
         /// @p viewportWidth x @p viewportHeight viewport, whose px the sun's
         /// position is in. Sets the program, its uniforms and the ghost block's
         /// binding; the caller sets the target and the blend. @p dither adds
-        /// the output noise - for a write to an 8-bit target only.
+        /// the output noise - for the write to the caller's 8-bit target at
+        /// 1.0 only.
         void drawFlare(const glm::ivec2 &target, float scale, int viewportWidth, int viewportHeight, double time,
                        bool dither, const Config &config);
 
@@ -173,15 +166,9 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing. Drawn by @ref RenderOffscreen, read
-        /// by @ref Render. RGBA16F, with an RGBA8 fallback - see
-        /// @c mScaledFormat.
+        /// by @ref Render. RGB10_A2, its alpha unused - see SCALED_FORMAT in
+        /// the .cpp.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
-        /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
-        /// has accepted for @c mScaledBuffer. Only ever moves forward, so a
-        /// refused format is not retried on every frame although the buffer
-        /// is released between uses. Also picks the scaled pass's
-        /// @c uDither (@ref scaledPassDithers).
-        size_t mScaledFormat = 0;
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref drawFlare.

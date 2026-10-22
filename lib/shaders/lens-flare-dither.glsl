@@ -9,10 +9,10 @@ precision highp float;
 //
 // ONLY for a write to the caller's 8-bit target. Never to the reduced buffer:
 // the blit reads that back bilinearly, which averages the noise into blotches
-// one buffer texel wide - and the buffer is half float so that it holds the
-// tail unrounded and the blit has something left to dither. The neon and the
-// spotlight learned the same thing (R7, V27); see LensFlareRenderer's
-// SCALED_FORMATS.
+// one buffer texel wide - and the buffer holds ten bits so that it keeps the
+// tail to a quarter level and the blit has something left to dither. The neon
+// and the spotlight learned the same thing (R7, V27); see LensFlareRenderer's
+// SCALED_FORMAT.
 //
 // COLOUR ONLY, as the neon's - not the coverage alpha, which the spotlight's
 // dither moves too. The spotlight screens, so its alpha composites exactly as

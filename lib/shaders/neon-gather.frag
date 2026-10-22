@@ -58,8 +58,10 @@ uniform int uNumSamples;
 //   row 1: .rgb = SUM(segColour * bell), .a = SUM(bell)
 // Read with texelFetch at integer sample index - never filtered, since
 // neighbouring texels are unrelated perimeter samples. See the gather loop
-// and docs/design/emission-prepass.md.
-uniform sampler2D uEmission;
+// and docs/design/emission-prepass.md. HIGHP, not GLSL ES's lowp default
+// (I97): arc intensities and stacked segment boosts run past 2, the most a
+// lowp lookup is bound to return, and a lowp one keeps only 2^-8 of them.
+uniform highp sampler2D uEmission;
 
 // The gather's four results - its ONLY outputs, and all four smooth across
 // the screen (Lorentzian-weighted means over the whole perimeter), which is

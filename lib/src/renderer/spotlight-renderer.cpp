@@ -39,8 +39,17 @@ namespace EdgeLighting
             const char *name; ///< For the fallback log line.
         } ScaledFormat;
 
-        /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
-        /// same pair, for the same reason, as the neon's SCALED_FORMATS.
+        /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first.
+        ///
+        /// NOT RGB10_A2, which the neon's reduced buffer and the flare's take
+        /// (I96) at half this memory: they write alpha = max(r, g, b) and their
+        /// blits rebuild it, but this layer SCREENS its lamps into the buffer,
+        /// alpha included, and where two lamps of different colours cross the
+        /// screened alpha is more than the brightest channel of the screened
+        /// colour - (0.5, 0, 0) over (0, 0.5, 0) is colour (0.5, 0.5, 0) with
+        /// alpha 0.75. That alpha is what a compositor blending the surface
+        /// reads (see spotlight.frag), so it has to be stored, and two bits
+        /// cannot hold it.
         ///
         /// Half float leads because this layer's tail is the flattest gradient
         /// in the library - one 8-bit level every 13 to 50 px at default

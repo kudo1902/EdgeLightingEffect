@@ -351,10 +351,14 @@ namespace NeonGuideFigures
             return out;
         }
 
-        /// Premultiplied colour composited over the figure background.
+        /// The reduced buffer's premultiplied colour composited over the
+        /// figure background. Its coverage alpha is rebuilt from the colour as
+        /// max(r, g, b), as neon-blit.frag rebuilds it: the buffer is RGB10_A2
+        /// and does not keep it (I96).
         glm::vec3 OverClear(const glm::vec4 &premultiplied)
         {
-            return glm::vec3(premultiplied) + CLEAR * (1.0f - premultiplied.a);
+            const glm::vec3 rgb(premultiplied);
+            return rgb + CLEAR * (1.0f - std::max(rgb.r, std::max(rgb.g, rgb.b)));
         }
 
         /// The gather buffer stores coverage as e = c / (1 + c); this is the

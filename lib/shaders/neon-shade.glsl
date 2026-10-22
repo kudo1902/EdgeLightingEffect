@@ -142,7 +142,9 @@ uniform sampler2D uGradientLUT;
 // for each piece of the emitter and each fragment position round it, how lit
 // that piece is as the halo and the bloom see it, encoded c / (1 + c). Read by
 // glowCoverAt, one linear fetch per piece; laid out in neon-pieces.glsl.
-uniform sampler2D uGlowCover;
+// HIGHP, not GLSL ES's lowp default (I97): a lowp lookup returns 2^-8, which
+// takes the half-float table back to its 8-bit fallback's precision.
+uniform highp sampler2D uGlowCover;
 
 // How each band of that table shares its columns between its straight and its
 // corner - the same numbers the bake was given. See glowCoverInner.
@@ -167,9 +169,10 @@ uniform vec4 uGlowCoverLayout;
 // uGather / uGatherSeg are the gather buffer's attachments 0 and 1 (uGatherSeg
 // read only with segments). The buffer covers a region (GetBufferRegion),
 // mapped from vPos by an affine uv map set for the space this pass's vPos is
-// in.
-uniform sampler2D uGather;
-uniform sampler2D uGatherSeg;
+// in. HIGHP, as uGlowCover (I97): read at lowp's 2^-8, the half-float buffer
+// gives back its RGBA8 fallback's 3/255 off 1.0 (GATHER_FORMATS).
+uniform highp sampler2D uGather;
+uniform highp sampler2D uGatherSeg;
 uniform vec2      uGatherUVScale;
 uniform vec2      uGatherUVOffset;
 
