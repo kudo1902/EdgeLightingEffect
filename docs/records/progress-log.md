@@ -5,6 +5,133 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-21 - The flare's ray needles are no longer cut in half (V36)
+
+Not committed; on top of `4467d61`, the V32 entry below. The rest of the thirty-eighth
+pass of [`review-findings.md`](review-findings.md).
+
+- **The defect.** `lens-flare.frag` gives each of its `N` ray slots a hashed
+  length (20 slots at the default `rayDensity`). The primary rays are 0 on the
+  slot boundaries, so they never showed the jump between two slots' lengths;
+  the sub needles PEAK there, and each half took its own slot's length. Every
+  needle was a straight radial seam: up to 1.84 levels at 1080p, 0.64 at
+  1000 px from the sun where the haze moves 0.002 a pixel. With V32's dither
+  in, it was the only edge left in the haze.
+- **Two cures built and compared**, the two the finding named, each in its
+  own library, against the build before on six scenes (the default flare with
+  the sun at 0.15 and 0.0, the band's rect, `rayDensity` 1.0 and 0.05, and the
+  rays turning), rendered undithered into a float target (the probe zeroes
+  `uDither` at the upload) on an AMD Radeon Pro 5300M at 1080p:
+  - *mean*: the needle on boundary `k` takes the mean of the two slots it
+    straddles - constant across it, changing at the slot centres, where it is
+    exactly 0;
+  - *blend*: the length interpolates linearly between slot centres.
+
+  | | before | mean | blend |
+  | --- | --- | --- | --- |
+  | boundaries stepping over 2x the steps beside them (top / corner / dense / sparse) | 27 / 21 / 18 / 6 | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+  | angle-0 boundary at 1000 px from the sun | 0.636 | 0.000 | 0.002 |
+  | largest change against before | - | 1.09 levels | 1.08 levels |
+  | pixels changed by over half a level | - | 0.32-0.85% | 0.24-0.66% |
+  | the flare at 1.0, still (8 interleaved rounds) | 0.813 ms | 0.837 (1.032x) | 0.842 (1.039x) |
+
+  The two differ by at most 0.1 level anywhere - at the needle's peak they are
+  the same value. **Kept: mean**, the simpler and symmetric of two
+  lookalikes. Both pay one more hash (`sin`) per fragment; the frame at 0.5
+  with the rays turning is 1.026x. The primary rays and their hash are
+  untouched, so the pattern - which rays are long - is the same.
+- **Verified.** The tree's build renders byte-identically to the measured
+  *mean* library on all six scenes; `neon-scale-check flare-reuse` (75 frames,
+  0 mismatched) and `clock` pass.
+
+## 2026-10-21 - The lens flare is dithered (V32), and its rays have seams (V36)
+
+Commit `4467d61`, on top of `main` at `54a7479`. The thirty-eighth pass of
+[`review-findings.md`](review-findings.md): V32 measured and fixed, V36 found.
+
+- **Measured first.** A probe rendered the flare alone over black at
+  1920 x 1080 (AMD Radeon Pro 5300M) through both resolution paths into
+  RGBA8, and through 1.0 into an RGBA32F target as the unquantised reference:
+  the default flare on a 960 x 540 rect at (480, 270) with the sun at
+  `perimeterPosition` 0.15, 0.0 and 0.6, the band's 1840 x 1000 rect, and
+  `intensity` 0.4. A pixel's plateau is the shorter of the horizontal and
+  vertical runs of one 8-bit value through it - roughly the width of its band.
+  - The haze has almost no distance falloff, so the flare lights the whole
+    frame; with the sun at 0.15, 42% of it is at levels 1 to 16.
+  - 1.0 was the reference rounded, nothing else: 35-63% of lit pixels in
+    plateaus 32 px or wider, 20-44% in plateaus of 64, the widest 227-585 px.
+    Each channel stepped at its own place, so the rings had coloured fringes.
+  - 0.5 banded no wider (36-63%). It differed from 1.0 on 6-8% of the smooth
+    pixels by at most 2 levels: the RGBA8 buffer's level boundaries,
+    bilinear-read, snapped each contour to its 2 px grid - coarser stairs, not
+    the diamonds V32 guessed. Its 13-18-level errors on the sun's core and rays
+    stay into a float target: resolution, not rounding.
+  - The cure, simulated on the CPU before building it: the reference plus the
+    neon's noise, rounded, left 0.1-2.5%; the same noise on the RGBA8 buffer's
+    bilinear read left 35.7% (against 37.2%) - R7's lesson for this layer.
+- **Changed.** The spotlight's V27 split. `lens-flare.frag` dithers its own
+  write at 1.0 (`uDither`); below it `mScaledBuffer` is RGBA16F with an RGBA8
+  fallback (`SCALED_FORMATS`), drawn undithered, and the flare's own
+  `lens-flare-blit.frag` - replacing `blit.frag`, which only the flare used -
+  dithers per destination pixel after the bilinear read. Colour only, as the
+  neon's: the layer composites premultiplied over, which would cancel noise on
+  the alpha against a bright destination. No noise where the colour is an
+  exact 0. The noise is `lens-flare-dither.glsl` (`@LENS_FLARE_DITHER@`), its
+  amplitude `FLARE_DITHER_STEPS`. `lens-flare.frag` clamps its colour to 1
+  itself, since the half-float buffer would keep the core's values above 1 and
+  the bilinear read widen the saturated core. `uDither` joins `FlareInputs`.
+- **Verified** against the build before, same probe, same GPU:
+  - Plateaus of 32 px or more: 0.1-2.5% at 1.0 and 0.1-2.6% at 0.5 (exactly
+    the simulation). Pixels whose 9 x 9 box mean - which removes the dither
+    and keeps the contours - is more than a quarter level off the reference:
+    28-48% -> 0.00-0.05% at 1.0, 30-48% -> 0.02-0.43% at 0.5.
+  - 1.0 into a float target moves by the noise alone (|diff| at most 0.5,
+    mean -0.0002); its alpha is byte-identical. At 0.5 the alpha moves by at
+    most 1 level (the buffer no longer rounds it), the colour by under 1
+    level, the dither included - the saturated core no wider.
+  - The RGBA8 fallback, forced by refusing RGBA16F allocations: logged once,
+    not retried; 1.8-7.4% and 0.16-1.65% - no bands, but diagonal streaks a
+    texel wide, the spotlight's fallback trade.
+  - An intensity-0 flare writes an exact 0 everywhere on every target, float
+    included.
+  - `neon-scale-check flare-reuse` (75 frames, 0 mismatched; reuse still
+    3.2-4.0x) and `clock` pass.
+- **Cost** (wall clock, 8 interleaved rounds, flare alone at 1080p): 1.0
+  0.79 -> 0.81 ms (1.03x, still or with the rays turning); 0.5 still frames
+  0.200 -> 0.213 ms (1.07x), rays turning 0.430 -> 0.454 ms (1.06x). The
+  buffer is 4.1 MB at 1080p and 0.5, from 2.1.
+- **Found: V36.** Every ray slot boundary is a seam: the slots' hashed
+  lengths jump where the sub needle peaks, up to 1.84 levels at 1080p and 0.64
+  at 1000 px from the sun where the field moves 0.002 a pixel. A dither does
+  not hide it, and with the bands gone it is the only edge left in the haze.
+  Fixed the same day - see the entry above.
+
+## 2026-10-21 - A plan for lighting framed artwork (proposal)
+
+Docs only, not committed:
+[`spotlight-art-plan.md`](../design/spotlight-art-plan.md). Nothing in the
+library changed.
+
+- **What.** The phase-0 art spotlight mockup (a WebGL page outside this tree)
+  previews lamps, smoke and artwork protection on framed art. Its ideas are
+  worked out against `SpotlightRenderer` at `54a7479`: art protection in three
+  levels (today's `ClipArea`, then residual colour and coverage plus a shade,
+  then a cap), mount shadows from a lamp height, smoke read from an RGBA8 noise
+  texture inside the beam pass, rays, laser edges, particles, per-lamp flare,
+  and an exported config whose sweep is an `Oscillator` on the lamp angle.
+- **Found.** The device's compositor decides what protection has to do. The
+  alpha-0 bug of 2026-09-17 fits two blend models, straight alpha and
+  premultiplied with colour clamped to alpha. Worked by hand and in the plan's
+  bench: under straight alpha every part of a beam dimmer than the art darkens
+  it, and under either model coloured light strips the art's other channels
+  (tungsten at peak 0.7 leaves 83% of a bright pastel strip darker than the art
+  even premultiplied). The desktop demo, whose window is opaque, shows none of
+  it.
+- **Decided.** Nothing yet; the plan's section 8 lists D1 to D7.
+- **Open.** Phase 0: a compositor probe in `DebugRenderer` to settle the
+  device's model, and a composite view in the demos. The mockup's own source
+  is needed for the questions in section 9.
+
 ## 2026-10-21 - The glow field's bake no longer culls (V35)
 
 Commit `054811f`, on top of `add_shared_buffer_architecture` at `cdf4a12`;

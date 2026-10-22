@@ -5,8 +5,9 @@
 // Shared ghost-term constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the flare shader (lens-flare.frag), where CMake text-injects this file
-//     via @LENS_FLARE_TUNING@ in shaders.h.in, and
+//   - the flare shader (lens-flare.frag) and its blit (lens-flare-blit.frag),
+//     where CMake text-injects this file via @LENS_FLARE_TUNING@ in
+//     shaders.h.in - the blit reads only FLARE_DITHER_STEPS - and
 //   - the C++ renderer (lens-flare-renderer.cpp), which #includes it to derive
 //     the two support bounds it uploads as uniforms.
 //
@@ -138,6 +139,20 @@
 /// two must agree or the upload disagrees with the std140 layout the shader
 /// was compiled against.
 #define FLARE_GHOST_COUNT   10
+
+/// Output dither amplitude, in 8-bit levels peak to peak: lens-flare-dither.glsl
+/// adds +/- half of this to the colour of every write to the caller's target -
+/// lens-flare.frag at resolutionScale 1.0, lens-flare-blit.frag below it.
+///
+/// The flare's haze has almost no distance falloff, so it lights the whole
+/// frame in gradients that cross one 8-bit level every 20 to 600 px; rounded
+/// undithered, that is a set of wide contour rings with coloured fringes,
+/// since each channel steps at its own place (V32 in review-findings.md:
+/// 37% of lit pixels in plateaus 32 px or wider at the defaults, 1080p).
+///
+/// Shader only: no support bound reads it. 0.0 disables it and restores the
+/// undithered output.
+#define FLARE_DITHER_STEPS  1.0
 
 // clang-format on
 
