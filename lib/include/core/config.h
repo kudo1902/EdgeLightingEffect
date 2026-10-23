@@ -436,7 +436,8 @@ namespace EdgeLighting
         /// frame the glow reaches, two attachments with segments, an
         /// edge-ring field and, while the hue rotates, the glow's field - for
         /// a full-screen rect at 1920 x 1080 and 0.5, 0.08, 0.4 and 0.9 MB.
-        /// Released when the layer is disabled.
+        /// Released while the glow is not drawn: the layer disabled, or
+        /// @c DebugConfig::opaqueOnly.
         float resolutionScale = 0.5f;
 
         /// Number of perimeter gather samples per fragment. Capped at
@@ -788,9 +789,14 @@ namespace EdgeLighting
         /// light on it, and this flag is how you see its extent directly.
         ///
         /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
-        /// so nothing is drawn at all. The renderers read it at draw time and
-        /// it triggers no rebuilds, so it is safe to toggle per-frame. Not
-        /// exposed through the C API.
+        /// so nothing is drawn at all. Setting it releases every offscreen
+        /// buffer the neon holds (the shared buffer, the gather buffer, the
+        /// coverage tables, the fields - 10.9 MB at 4K for a band with lights,
+        /// I98), as disabling the layer does; clearing it reallocates them and
+        /// draws them again on the next frame, one frame's offscreen phase,
+        /// with the fields back a frame later (LazyBake). It triggers no
+        /// geometry rebuild, but it is not free to toggle every frame. The C
+        /// ABI's @c el_effect_set_debug_opaque_only sets it.
         bool opaqueOnly = false;
 
         bool operator==(const DebugConfig &o) const

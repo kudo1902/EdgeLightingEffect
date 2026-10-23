@@ -1305,6 +1305,14 @@ The one debug field the neon reads. When true, `Render` draws the opaque fill
 and nothing else, and builds no neon program. Useful for checking the fill's
 silhouette against the glow's. C ABI `el_effect_set_debug_opaque_only`.
 
+Setting it releases every offscreen buffer the glow drew, as disabling the
+layer does (I98) - so `OnConfigChanged` counts it among the changes that clear
+`mOffscreen.reusable` and both fields' schedules: without that, a still config
+coming back from it reused buffers that had just been allocated, and drew no
+glow. Clearing it costs the next two frames one offscreen phase and the
+fields' bakes (0.5-0.9 ms and 0.3-0.4 ms more on the AMD 5300M, band with
+lights, 1080p and 4K).
+
 ### 4.10 Quick reference: what a change costs
 
 | You change | The renderer does |
@@ -1386,9 +1394,10 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mRingField.buffer` | the edge ring's four strips, packed (`FieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
 
 `OnConfigChanged` releases the reduced buffer, the gather buffer and the
-coverage table when the layer is disabled, the segment table also whenever the
+coverage tables whenever the glow is not drawn (`IsGlowDrawn`: the layer
+disabled, or `debug.opaqueOnly`), the segment table also whenever the
 segments go back to the main table, and each field when the config stops being
-one it serves.
+one it serves - which a config without the glow never is.
 
 Note: `VertexArray`, `UniformBuffer` and the LUT textures create their GL
 names in their constructors, so a GL context must be current when a

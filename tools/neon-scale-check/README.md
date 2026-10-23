@@ -267,6 +267,20 @@ with it. Each frame is drawn by every effect at the same clock (`Update(1/60)`)
 over transparent black, and compared with its alpha; each effect's shared
 buffer is read by a probe renderer after the neon and compared as floats.
 
+After the random sequences come 36 scripted ones, drawn and judged the same
+way: each page scene, still, at scales 1.0, 0.5 and 0.25, on which a
+`debug.opaqueOnly` toggle is the ONLY change - 4 frames for the skips to take
+over, 3 in the mode, 5 after the toggle back (`OpaqueOnlyScripts`). The random
+sequences toggle the mode too, but among other changes and through running
+animations, each of which clears the reuse the toggle has to clear: the neon
+releases its offscreen buffers under the mode (I98), and a build that left
+`mOffscreen.reusable` set across the toggle passed the default run and 64 x 90
+while drawing no glow at all after it. The scripted sequences fail that build
+on 30 of 36 (`exact` and `normal`, 245-252 levels, the shared buffer not
+ready) - all but the `arcs` and `segments` scenes, whose reallocated coverage
+table forces a bake. They draw nothing random, so a seed names the same random
+sequences it did before them, and `--only` skips them.
+
 Each failing frame prints the run, the sequence and frame, the worst level and
 the pixel count, the frame's events and its config; the exit code is 1 if
 `exact` or `normal` failed. Sequence K is seeded `S + K`, so `--only K`

@@ -22,6 +22,11 @@ namespace NeonScaleCheck
     /// join them, one effect per bit, and every failing frame lists the ones
     /// it passes: the skips whose bypass clears it. Each sequence
     /// is seeded by S + its index, so --only K replays sequence K alone.
+    /// After them, unless --only, 36 scripted sequences go through the same
+    /// runs: each page scene, still, at three scales, with a
+    /// debug.opaqueOnly toggle as the only change, on and back (I98) - a case
+    /// the random sequences, which toggle it among other changes, never
+    /// isolate.
     /// --dump writes each failing frame of each run and of `forced` as PNG.
     /// Returns the process exit code.
     int SequenceCheck(int argc, char **argv);

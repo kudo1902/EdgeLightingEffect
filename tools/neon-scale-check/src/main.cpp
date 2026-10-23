@@ -45,7 +45,9 @@
 //       A differential gate for the neon's skips and reuses: seeded random
 //       config sequences drawn by a renderer with every skip bypassed
 //       (NeonRenderer::SetBypass) and by renderers with some or all of them
-//       active, compared frame by frame. See sequence.h and README.md.
+//       active, compared frame by frame, then 36 scripted still sequences
+//       whose only change is a debug.opaqueOnly toggle. See sequence.h and
+//       README.md.
 //
 //   neon-scale-check clock [--frames K] [--dump DIR]
 //       The effect's clock and the shader phases it feeds at a ~10-day start

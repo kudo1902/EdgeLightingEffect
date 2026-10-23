@@ -1010,8 +1010,9 @@ namespace EdgeLighting
             /// it - see neon-glow-cover.frag, laid out in neon-pieces.glsl. Written by @ref renderGlowCoverPass, read by every
             /// neon.frag program with one filtered fetch per piece. Allocated on
             /// the first frame that bakes it (@ref ensureGlowCoverBuffer), never
-            /// for a ring lit uniformly, and released when the layer is disabled
-            /// or once nothing has read it for GLOW_COVER_RELEASE_SECONDS
+            /// for a ring lit uniformly, and released while the glow is not
+            /// drawn (the layer disabled, or DebugConfig::opaqueOnly) or once
+            /// nothing has read it for GLOW_COVER_RELEASE_SECONDS
             /// (@ref Update); two channels while the config has no segments. Its
             /// lengths are ratios that scale together, so every resolution scale
             /// shares it.
@@ -1135,7 +1136,8 @@ namespace EdgeLighting
             /// to the viewport: the gathered colour and arc coverage, plus a
             /// second attachment for the segments' only when there are segments,
             /// RGBA16F where the driver renders to it and RGBA8 where not. Read by
-            /// pass 1 and the edge ring; released when the layer is disabled.
+            /// pass 1 and the edge ring; released while the glow is not drawn
+            /// (the layer disabled, or DebugConfig::opaqueOnly).
             Framebuffer buffer{"NeonRenderer.Gather"};
 
             /// Index into the gather buffer's format list (GATHER_FORMATS) of the
@@ -1331,8 +1333,9 @@ namespace EdgeLighting
         /// so a resizing rect does not reallocate it every frame. Called only
         /// on a frame that will bake the table, beside
         /// @ref ensureGlowCoverProgram - so a host whose ring is lit uniformly
-        /// never holds the table - and the buffer is released again when the
-        /// layer is disabled (@ref OnConfigChanged).
+        /// never holds the table - and the buffer is released again while the
+        /// glow is not drawn: the layer disabled, or DebugConfig::opaqueOnly
+        /// (@ref OnConfigChanged).
         ///
         /// Also the segment table (@c mGlowCover.segBuffer): moves the table
         /// to @c mGlowCover.segWantedDirect's mode, allocating the segment
@@ -1928,8 +1931,9 @@ namespace EdgeLighting
         /// attachment at the reduced scale - full size at 1.0 - covering the
         /// WHOLE viewport (GetViewportRegion): 2.0 MB at 1080p and 0.5, 7.9 MB
         /// at 4K. RGB10_A2, its alpha not read (SCALED_FORMATS). Shared with
-        /// the effect's registry, so a reader never outlives it; released when
-        /// the layer is disabled.
+        /// the effect's registry, so a reader never outlives it; released while
+        /// the glow is not drawn (the layer disabled, or
+        /// DebugConfig::opaqueOnly).
         std::shared_ptr<SharedBuffer> mScaled;
 
         /// The effect's registry accepted @c mScaled as SharedBufferId::NEON,

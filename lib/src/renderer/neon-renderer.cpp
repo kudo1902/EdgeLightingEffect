@@ -1276,6 +1276,15 @@ namespace EdgeLighting
             return true;
         }
 
+        /// Whether @p config draws the glow at all: the layer on and not
+        /// debug.opaqueOnly, which draws the fill alone. Where it does not, no
+        /// offscreen pass runs and nothing reads an offscreen buffer, so
+        /// OnConfigChanged releases every one of them (I98).
+        inline bool IsGlowDrawn(const Config &config)
+        {
+            return config.neon.enable && !config.debug.opaqueOnly;
+        }
+
         /// Whether neon.frag's pre-tone-map output on this config is
         /// col * Fa + segColHue * Fs, with only the gathered hues col and
         /// segColHue moving with time - what both fields rest on
@@ -1284,11 +1293,12 @@ namespace EdgeLighting
         /// channel (GetFieldFormat, D3). Not when time can move the
         /// colour-stop alpha neon.frag reads pointwise - the base ring's, which
         /// a stop-less segment inherits too: a rotating hue over a ring that is
-        /// not opaque at every texel (@p ringOpaque, as uploaded).
+        /// not opaque at every texel (@p ringOpaque, as uploaded). Nor, as a
+        /// config no field can serve, where the glow is not drawn.
         inline bool IsShadingFactorable(const Config &config, bool ringOpaque)
         {
             const bool rotating = config.neon.hueRotationRate != 0.0f;
-            return config.neon.enable && (!rotating || ringOpaque);
+            return IsGlowDrawn(config) && (!rotating || ringOpaque);
         }
 
         /// A field's render-target format.
@@ -2250,8 +2260,8 @@ namespace EdgeLighting
         mGradientLUT.Tick(deltaTime);
 
         // Give the glow coverage table back once nothing has read it for
-        // GLOW_COVER_RELEASE_SECONDS: a ring lit uniformly (or a disabled
-        // layer, which OnConfigChanged already releases for) never samples it,
+        // GLOW_COVER_RELEASE_SECONDS: a ring lit uniformly (or a glow not
+        // drawn, which OnConfigChanged already releases for) never samples it,
         // and I33 kept it allocated through a uniform stretch only because an
         // arc animation passes through one every loop. The delay keeps that
         // case; a ring that has settled frees its 0.5-1 MB. Here and not in
@@ -2262,7 +2272,7 @@ namespace EdgeLighting
         {
             mGlowCover.unreadSeconds = 0.0f;
         }
-        else if (!config.neon.enable || IsGlowCoverUnread(mEffectiveSegments, config))
+        else if (!IsGlowDrawn(config) || IsGlowCoverUnread(mEffectiveSegments, config))
         {
             mGlowCover.unreadSeconds += std::max(deltaTime, 0.0f);
             if (mGlowCover.unreadSeconds >= GLOW_COVER_RELEASE_SECONDS)
@@ -2746,8 +2756,12 @@ namespace EdgeLighting
         // The offscreen buffers were drawn from the config this replaces. Wide,
         // unlike the gates below - pass 1b reads most of the neon's config, and
         // re-drawing them costs one frame's offscreen phase - but no wider than
-        // what this renderer reads at all: its own sub-config and the geometry
-        // (Render reads debug.opaqueOnly too, and returns before any of this).
+        // what this renderer reads at all: its own sub-config, the geometry and
+        // debug.opaqueOnly. Not that the passes read the flag - they never run
+        // under it - but this call releases every offscreen buffer while it is
+        // set (IsGlowDrawn, below), so when it clears, what the buffers held is
+        // gone, and a reuse flag still set from before would draw the glow from
+        // freshly allocated buffers (I98).
         // This call comes whenever the COMPOSITED config changed, another
         // layer's fields included, and an animation of one - the lens flare's
         // sun riding the perimeter, an AnimatableField - changes it every
@@ -2755,7 +2769,8 @@ namespace EdgeLighting
         // pass 1 directly every frame: 4.9x with the hue rotating and 15x
         // still at 1.0, ~4x still at 0.5 (AMD Radeon Pro 5300M, 1920 x 1080),
         // for an image the field draws byte-identically.
-        if (config.neon != mCurrentConfig.neon || config.geometry != mCurrentConfig.geometry)
+        if (config.neon != mCurrentConfig.neon || config.geometry != mCurrentConfig.geometry ||
+            config.debug.opaqueOnly != mCurrentConfig.debug.opaqueOnly)
         {
             mOffscreen.reusable = false;
             // And both fields, for the same reason, and one more frame before
@@ -2966,21 +2981,30 @@ namespace EdgeLighting
 
         mCurrentConfig = config;
 
-        // Give the reduced buffer back the moment the layer is switched off.
+        // Give the reduced buffer back the moment the glow stops being drawn
+        // (IsGlowDrawn): the layer switched off, or debug.opaqueOnly.
         // With the glow coverage table below it is one of the only allocations in this
         // renderer that are not a handful of KB: at 1920x1080 and scale 0.5
-        // the reduced buffer is 2.1 MB of colour attachment, and nothing else
+        // the reduced buffer is 2.0 MB of colour attachment, and nothing else
         // here freed it, so a host that enabled the neon at a reduced scale
         // during setup and then turned it off held that for the life of the
         // effect. Everything else the renderer owns - the three atlases, the
         // emission table, the UBOs, the quads - is fixed-size and small enough
         // that reclaiming it would cost more in reallocation than it saves.
+        // debug.opaqueOnly was the same case, and missed: it draws the fill
+        // alone, and kept every offscreen buffer the glow had drawn - 10.9 MB
+        // at 4K for a band with lights, 3.6 MB at 1080p (I98).
         //
         // Cheap to get wrong in only one direction, and this is the safe one:
         // @ref renderShadePass re-Resizes before it binds, so a release of a
         // buffer that turns out to be wanted again costs one allocation on the
         // next drawn frame and nothing else. Resize's own early-out then keeps
-        // it allocated for as long as the size and format hold.
+        // it allocated for as long as the size and format hold. Nothing else
+        // only because nothing reuses what a released buffer held: the gather
+        // tests its buffer's validity, a released shared buffer is cleared
+        // whole on its next write, and the reuse flag and the fields' schedules
+        // are cleared at the top of this call on any change to the neon, the
+        // geometry or debug.opaqueOnly - the three ways in here.
         //
         // Here rather than in Render because Render must not be the thing that
         // deletes a framebuffer - see Framebuffer::Release on why the deletion
@@ -2991,20 +3015,22 @@ namespace EdgeLighting
         // release is not one, and this path is also reachable pre-Initialize
         // (AddRenderer calls OnConfigChanged), where Release no-ops on the
         // buffer it finds unallocated.
-        if (!config.neon.enable)
+        const bool glowDrawn = IsGlowDrawn(config);
+        if (!glowDrawn)
         {
             // The shared buffer: a reader finds it not ready from here on.
             mScaled->Release();
         }
-        // The glow coverage table, 1 MB at RGBA16F, is given back only when the
-        // layer is switched off - not when the ring turns uniform and stops
+        // The glow coverage table, 1 MB at RGBA16F, is given back here only
+        // when the glow is not drawn - not when the ring turns uniform and stops
         // reading it, which an arc animation reaching length 1 does once per
-        // loop, and which would then reallocate it on the way back. Released
+        // loop, and which would then reallocate it on the way back (Update
+        // gives it back after GLOW_COVER_RELEASE_SECONDS of that). Released
         // or never allocated, ensureGlowCoverBuffer reallocates it, and marks
         // it for a bake, on the next frame that reads it. The gather buffer
-        // likewise: every frame gathers into it at every scale, so only a
-        // disabled layer has no use for it.
-        if (!config.neon.enable)
+        // likewise: every frame that draws the glow gathers into it at every
+        // scale, so only a frame without the glow has no use for it.
+        if (!glowDrawn)
         {
             mGlowCover.buffer.Release();
             mGather.buffer.Release();
@@ -3013,8 +3039,9 @@ namespace EdgeLighting
         // are baked into the main table directly. Here, as the main table's
         // release is, because Render must not delete a framebuffer; a table
         // released and wanted again is reallocated (and baked whole) by
-        // ensureGlowCoverBuffer.
-        if (!config.neon.enable || mGlowCover.segWantedDirect)
+        // ensureGlowCoverBuffer. The two fields go below, with every config
+        // no field can serve - IsShadingFactorable is false without the glow.
+        if (!glowDrawn || mGlowCover.segWantedDirect)
         {
             mGlowCover.segBuffer.Release();
         }

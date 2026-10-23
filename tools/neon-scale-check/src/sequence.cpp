@@ -629,6 +629,72 @@ namespace NeonScaleCheck
             Anim mArc, mSegment, mIntensity, mMove, mSize, mBloom, mGlow;
         };
 
+        /// A scripted sequence: a fixed list of steps, drawn and compared as
+        /// the random ones are.
+        typedef struct ScriptedSequence
+        {
+            std::string name;
+            std::vector<Step> steps;
+        } ScriptedSequence;
+
+        /// Frames a scripted config is drawn for before its toggle, so every
+        /// skip that can take over has (the offscreen reuse from the second).
+        const int SCRIPT_SETTLE_FRAMES = 4;
+        /// Frames in debug.opaqueOnly, the toggle's own included.
+        const int SCRIPT_MODE_FRAMES = 3;
+        /// Frames after the toggle back, its own included.
+        const int SCRIPT_BACK_FRAMES = 5;
+
+        /// The page's scenes, still, at three scales, on each of which a
+        /// debug.opaqueOnly toggle is the ONLY change - on, held, off, held.
+        /// The random sequences toggle the mode among other changes and
+        /// through running animations, each of which clears the reuse a
+        /// toggle has to clear too: the neon releases its offscreen buffers
+        /// under the mode (I98), and a build that left mOffscreen.reusable
+        /// set across it drew no glow at all after the toggle back on a still
+        /// config, while passing 16 and 64 random sequences.
+        std::vector<ScriptedSequence> OpaqueOnlyScripts()
+        {
+            static const float SCRIPT_SCALES[] = {1.0f, 0.5f, 0.25f};
+            std::vector<ScriptedSequence> scripts;
+            for (const Scene &scene : SCENES)
+            {
+                for (float scale : SCRIPT_SCALES)
+                {
+                    Config config = BaseConfig(); // hue still, no colour fade
+                    scene.apply(config);
+                    config.neon.resolutionScale = scale;
+                    char name[96];
+                    std::snprintf(name, sizeof(name), "opaque-only %s s%.2f", scene.id, scale);
+                    ScriptedSequence script;
+                    script.name = name;
+                    auto push = [&](const char *events, bool opaqueOnly)
+                    {
+                        Step step;
+                        step.config = config;
+                        step.config.debug.opaqueOnly = opaqueOnly;
+                        step.viewport = glm::ivec2(FRAME_WIDTH, FRAME_HEIGHT);
+                        step.events = events;
+                        script.steps.push_back(step);
+                    };
+                    for (int f = 0; f < SCRIPT_SETTLE_FRAMES; ++f)
+                    {
+                        push(f == 0 ? "-" : "hold", false);
+                    }
+                    for (int f = 0; f < SCRIPT_MODE_FRAMES; ++f)
+                    {
+                        push(f == 0 ? "opaque-only" : "hold", true);
+                    }
+                    for (int f = 0; f < SCRIPT_BACK_FRAMES; ++f)
+                    {
+                        push(f == 0 ? "opaque-only" : "hold", false);
+                    }
+                    scripts.push_back(std::move(script));
+                }
+            }
+            return scripts;
+        }
+
         /// The neon's shared buffer as a reader's Render is handed it - as
         /// `shared-buffer`'s probe takes it - read back as floats.
         class BufferProbe : public BaseRenderer
@@ -916,7 +982,9 @@ namespace NeonScaleCheck
             }
         }
 
-        std::printf("%d sequence(s) of %d frames, seed %u; runs:", only >= 0 ? 1 : sequences, frames, seed);
+        const std::vector<ScriptedSequence> scripts = OpaqueOnlyScripts();
+        std::printf("%d sequence(s) of %d frames, seed %u, and %zu scripted; runs:", only >= 0 ? 1 : sequences, frames,
+                    seed, only >= 0 ? size_t(0) : scripts.size());
         for (const Run &run : runs)
         {
             std::printf(" %s (bypass 0x%02x)", run.name.c_str(), run.bypass);
@@ -925,6 +993,94 @@ namespace NeonScaleCheck
 
         long framesDrawn = 0;
         long intensityFrames = 0;
+        // One frame of a sequence through every run, compared with `forced`.
+        // @p where names the sequence in a failure line, @p dumpTag its files.
+        auto drawStep = [&](const Step &step, const std::string &where, const std::string &dumpTag, int f)
+        {
+            ++framesDrawn;
+            intensityFrames += step.intensityMoved;
+            for (Run &run : runs)
+            {
+                run.effect->SetConfig(step.config);
+                run.effect->Update(DT);
+                run.frame = RenderOnce(*run.effect, step.viewport.x, step.viewport.y);
+            }
+
+            const Run &reference = runs[0];
+            // Which runs are out of bounds on this frame.
+            std::vector<bool> failed(runs.size(), false);
+            for (size_t r = 1; r < runs.size(); ++r)
+            {
+                Run &run = runs[r];
+                long framePixels = 0;
+                long bufferTexels = 0;
+                const int frameDiff = FrameDifference(run.frame, reference.frame, framePixels);
+                const int bufferDiff = BufferDifference(*run.probe, *reference.probe, bufferTexels);
+                run.worstFrame = std::max(run.worstFrame, frameDiff);
+                run.worstBuffer = std::max(run.worstBuffer, bufferDiff);
+                if (!step.intensityMoved)
+                {
+                    run.worstStillFrame = std::max(run.worstStillFrame, frameDiff);
+                }
+                int tolerance = 0;
+                if (run.bound == Bound::NORMAL)
+                {
+                    tolerance = step.intensityMoved ? INTENSITY_TOLERANCE : NORMAL_TOLERANCE;
+                }
+                const bool bad = frameDiff > tolerance || bufferDiff > tolerance || bufferDiff < 0;
+                if (!bad)
+                {
+                    continue;
+                }
+                failed[r] = true;
+                ++run.failures;
+                if (run.failures <= REPORT_LIMIT)
+                {
+                    std::printf("  %-18s %s frame %3d: frame max %d (%ld px), buffer %s%d (%ld texels), "
+                                "bound %d\n      events: %s\n      config: %s\n",
+                                run.name.c_str(), where.c_str(), f, frameDiff, framePixels,
+                                bufferDiff < 0 ? "READY/SIZE MISMATCH " : "", bufferDiff, bufferTexels,
+                                tolerance, step.events.c_str(), Describe(step).c_str());
+                }
+                if (!dumpDir.empty() && run.failures <= REPORT_LIMIT)
+                {
+                    char name[256];
+                    std::snprintf(name, sizeof(name), "%s/%s_f%03d_", dumpDir.c_str(), dumpTag.c_str(), f);
+                    WritePNG4(std::string(name) + run.name + ".png", run.frame, step.viewport.x,
+                              step.viewport.y);
+                    WritePNG4(std::string(name) + "forced.png", reference.frame, step.viewport.x,
+                              step.viewport.y);
+                    // And both shared buffers, over transparent black.
+                    if (run.probe->IsReady())
+                    {
+                        WritePNG4(std::string(name) + run.name + "_buffer.png", BufferPixels(*run.probe),
+                                  run.probe->GetTexels().x, run.probe->GetTexels().y);
+                    }
+                    if (reference.probe->IsReady())
+                    {
+                        WritePNG4(std::string(name) + "forced_buffer.png", BufferPixels(*reference.probe),
+                                  reference.probe->GetTexels().x, reference.probe->GetTexels().y);
+                    }
+                }
+            }
+            // Attribution: the isolating runs of a failed main run's class
+            // that this frame passes - bypassing that skip cleared it.
+            if (isolate && ((failed[1] && runs[1].failures <= REPORT_LIMIT) ||
+                            (failed[2] && runs[2].failures <= REPORT_LIMIT)))
+            {
+                std::string cleared;
+                for (size_t r = firstIsolating; r < runs.size(); ++r)
+                {
+                    const bool exactClass = runs[r].bound == Bound::EXACT;
+                    if (!failed[r] && ((exactClass && failed[1]) || (!exactClass && failed[2])))
+                    {
+                        cleared += " " + runs[r].name;
+                    }
+                }
+                std::printf("      cleared by:%s\n", cleared.empty() ? " (none - more than one skip)" : cleared.c_str());
+            }
+        };
+
         for (int k = 0; k < sequences; ++k)
         {
             if (only >= 0 && k != only)
@@ -938,93 +1094,37 @@ namespace NeonScaleCheck
                 CreateRun(run);
             }
             SequenceGenerator generator(seed + uint32_t(k));
+            char where[32];
+            std::snprintf(where, sizeof(where), "seq %d", k);
+            char dumpTag[32];
+            std::snprintf(dumpTag, sizeof(dumpTag), "seq%02d", k);
             for (int f = 0; f < frames; ++f)
             {
-                const Step step = generator.Next();
-                ++framesDrawn;
-                intensityFrames += step.intensityMoved;
-                for (Run &run : runs)
-                {
-                    run.effect->SetConfig(step.config);
-                    run.effect->Update(DT);
-                    run.frame = RenderOnce(*run.effect, step.viewport.x, step.viewport.y);
-                }
-
-                const Run &reference = runs[0];
-                // Which runs are out of bounds on this frame.
-                std::vector<bool> failed(runs.size(), false);
-                for (size_t r = 1; r < runs.size(); ++r)
-                {
-                    Run &run = runs[r];
-                    long framePixels = 0;
-                    long bufferTexels = 0;
-                    const int frameDiff = FrameDifference(run.frame, reference.frame, framePixels);
-                    const int bufferDiff = BufferDifference(*run.probe, *reference.probe, bufferTexels);
-                    run.worstFrame = std::max(run.worstFrame, frameDiff);
-                    run.worstBuffer = std::max(run.worstBuffer, bufferDiff);
-                    if (!step.intensityMoved)
-                    {
-                        run.worstStillFrame = std::max(run.worstStillFrame, frameDiff);
-                    }
-                    int tolerance = 0;
-                    if (run.bound == Bound::NORMAL)
-                    {
-                        tolerance = step.intensityMoved ? INTENSITY_TOLERANCE : NORMAL_TOLERANCE;
-                    }
-                    const bool bad = frameDiff > tolerance || bufferDiff > tolerance || bufferDiff < 0;
-                    if (!bad)
-                    {
-                        continue;
-                    }
-                    failed[r] = true;
-                    ++run.failures;
-                    if (run.failures <= REPORT_LIMIT)
-                    {
-                        std::printf("  %-18s seq %d frame %3d: frame max %d (%ld px), buffer %s%d (%ld texels), "
-                                    "bound %d\n      events: %s\n      config: %s\n",
-                                    run.name.c_str(), k, f, frameDiff, framePixels,
-                                    bufferDiff < 0 ? "READY/SIZE MISMATCH " : "", bufferDiff, bufferTexels,
-                                    tolerance, step.events.c_str(), Describe(step).c_str());
-                    }
-                    if (!dumpDir.empty() && run.failures <= REPORT_LIMIT)
-                    {
-                        char name[256];
-                        std::snprintf(name, sizeof(name), "%s/seq%02d_f%03d_", dumpDir.c_str(), k, f);
-                        WritePNG4(std::string(name) + run.name + ".png", run.frame, step.viewport.x,
-                                  step.viewport.y);
-                        WritePNG4(std::string(name) + "forced.png", reference.frame, step.viewport.x,
-                                  step.viewport.y);
-                        // And both shared buffers, over transparent black.
-                        if (run.probe->IsReady())
-                        {
-                            WritePNG4(std::string(name) + run.name + "_buffer.png", BufferPixels(*run.probe),
-                                      run.probe->GetTexels().x, run.probe->GetTexels().y);
-                        }
-                        if (reference.probe->IsReady())
-                        {
-                            WritePNG4(std::string(name) + "forced_buffer.png", BufferPixels(*reference.probe),
-                                      reference.probe->GetTexels().x, reference.probe->GetTexels().y);
-                        }
-                    }
-                }
-                // Attribution: the isolating runs of a failed main run's class
-                // that this frame passes - bypassing that skip cleared it.
-                if (isolate && ((failed[1] && runs[1].failures <= REPORT_LIMIT) ||
-                                (failed[2] && runs[2].failures <= REPORT_LIMIT)))
-                {
-                    std::string cleared;
-                    for (size_t r = firstIsolating; r < runs.size(); ++r)
-                    {
-                        const bool exactClass = runs[r].bound == Bound::EXACT;
-                        if (!failed[r] && ((exactClass && failed[1]) || (!exactClass && failed[2])))
-                        {
-                            cleared += " " + runs[r].name;
-                        }
-                    }
-                    std::printf("      cleared by:%s\n", cleared.empty() ? " (none - more than one skip)" : cleared.c_str());
-                }
+                drawStep(generator.Next(), where, dumpTag, f);
             }
             std::printf("sequence %2d done\n", k);
+            std::fflush(stdout);
+        }
+
+        // The scripted sequences, after the random ones and seeded by nothing,
+        // so a seed names the same random sequences it always did. Skipped by
+        // --only, which replays one random sequence.
+        if (only < 0)
+        {
+            for (const ScriptedSequence &script : scripts)
+            {
+                for (Run &run : runs)
+                {
+                    CreateRun(run);
+                }
+                std::string dumpTag = "script_" + script.name;
+                std::replace(dumpTag.begin(), dumpTag.end(), ' ', '_');
+                for (size_t f = 0; f < script.steps.size(); ++f)
+                {
+                    drawStep(script.steps[f], "script " + script.name, dumpTag, int(f));
+                }
+            }
+            std::printf("%zu scripted sequence(s) done\n", scripts.size());
             std::fflush(stdout);
         }
 

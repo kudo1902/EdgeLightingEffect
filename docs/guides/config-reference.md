@@ -313,7 +313,7 @@ the four coverage terms:
 | `showColorStops` | bool | `false` | Disc per stop at perimeter pos (`neon-stop-marker.frag`) |
 | `showWireframe` | bool | `true` | 1 px `GL_LINE_LOOP` sharp box (`wireframe.frag`). Extent, not rounded outline, so it compares against the neon trace. Draws over glow (layer is last) |
 | `wireframeColor` | linear `vec4` | `(0,1,0,1)` | Box color |
-| `opaqueOnly` | bool | `false` | Neon debug mode (read by `NeonRenderer`, not the overlay): fill only, skip filament/halo/bloom. Suppresses strip + markers (no glow to annotate), box survives. No-op when `opaqueMode == NONE`. Not in C API. Safe to toggle per-frame (no rebuild) |
+| `opaqueOnly` | bool | `false` | Neon debug mode (read by `NeonRenderer`, not the overlay): fill only, skip filament/halo/bloom. Suppresses strip + markers (no glow to annotate), box survives. No-op when `opaqueMode == NONE`. C ABI `el_effect_set_debug_opaque_only`. Releases the neon's offscreen buffers while set (I98); clearing it redraws them on the next frame - no rebuild, but do not toggle it every frame |
 
 Strip + markers annotate the glow: suppressed when neon off or `opaqueOnly`.
 Box annotates geometry: survives both. Always full-res.

@@ -5,6 +5,77 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-23 - `debug.opaqueOnly` releases the neon's offscreen buffers (I98)
+
+On `optimize_memory2`, on top of `16ffa7c`; uncommitted. AMD Radeon Pro
+5300M, Release; I98 in [`review-findings.md`](review-findings.md).
+
+- **Found** in a second memory review of the effect (a probe hooking GLAD's
+  texture, buffer and program calls, naming every texture by its
+  `Framebuffer`, counting its non-zero texels, and reading heap and
+  allocations per frame): `debug.opaqueOnly` draws the fill alone and kept
+  every offscreen buffer the glow had drawn - 10.92 MB at 4K for the band
+  with two arcs and two segments (shared buffer 7.9, ring field 1.4, coverage
+  tables 1.06, gather 0.53), 3.6 MB at 1080p, still held 6 s later. The
+  releases in `OnConfigChanged` tested `!neon.enable` alone, the fields'
+  eligibility did not see the mode, and neither did `Update`'s 5 s
+  coverage-table release.
+- **What changed.** `IsGlowDrawn` (the layer on and not `opaqueOnly`) gates
+  all of them, and `IsShadingFactorable` with it, so the fields go too; under
+  the mode the neon keeps the 2 KB emission table alone. `OnConfigChanged`
+  also clears `mOffscreen.reusable` and both fields' `LazyBake` schedules on an
+  `opaqueOnly` change: they were keyed on the neon's config and the geometry,
+  and built without that, a still 640 x 360 rect came back from the mode with
+  no glow at all (245 levels off on every later frame) - passes 1a and 1b
+  skipped over freshly allocated buffers. The band scenes escaped only because
+  their reallocated coverage table forced a bake. The headers, `config.h`'s
+  field doc (it also claimed the field had no C ABI setter) and the guides say
+  so.
+- **Verified.** Two effects in lockstep at one clock, one spending frames
+  20-29 in the mode: from the second frame back, every frame of eight scenes
+  (band with lights and a 640 x 360 rect, still and hue, 1080p and 4K) is
+  byte-identical to the effect that never toggled; the first frame back is
+  within 1 level (it shades directly while the fields re-bake, as any config
+  change does). All 640 frames but those eight are byte-identical to
+  `16ffa7c`, the mode's own frames included. The first frame back costs
+  0.5-0.9 ms more than a steady one, the second 0.3-0.4 ms (the fields'
+  bake); frames that never toggle are unchanged. `shared-buffer` passes, and
+  `sequence` at its defaults (16 sequences, seed 1: exact 0, normal 2, held
+  1). Neither sees the toggle-back defect: the build without the reuse
+  clearing passes both too, since `sequence`'s toggles of the mode land among
+  other changes, so the lockstep check above is the only test of that half.
+  At 64 sequences (seed 98) `sequence` fails 11 held frames at 3-4 levels
+  against a bound of 2, in sequences 34, 51 and 60 - identically on
+  `16ffa7c` and on the build without the reuse clearing, so not this change;
+  sequence 60's frames clear with the ring field bypassed alone, 51's need
+  more than one skip.
+- **Then a gate for it.** `sequence` now ends with 36 scripted sequences
+  (`OpaqueOnlyScripts`): each page scene, still, at 1.0, 0.5 and 0.25, with a
+  `debug.opaqueOnly` toggle as the only change - 4 frames to settle, 3 in the
+  mode, 5 back - drawn through the same runs and bounds, drawing nothing
+  random, so every seed still names the same random sequences (the default
+  run's figures are unchanged: exact 0, normal 2, held 1). Built against the
+  library without the reuse clearing it fails 300 frames, 150 each in
+  `exact` and `normal`: every frame back on 30 of the 36, at 245-252 levels
+  with the shared buffer not ready - all but the `arcs` and `segments`
+  scenes, whose reallocated coverage table forces a bake. Against the fix and
+  against `16ffa7c` (which keeps the buffers) it passes.
+- **Found in the same review, not changed.** On the production band the
+  shared buffer is 74-91% of the neon's texture memory and 4.4% (4K) / 8.8%
+  (1080p) of its texels are ever non-zero - packed as the fields are, about
+  7.9 -> 0.5 MB at 4K (an estimate from the written texels). The gather buffer
+  is 76-86% empty there (0.46 MB at 4K with segments). The four other layers
+  compile their nine programs in `Initialize` whether enabled or not - about
+  390 KB of heap and 17 ms of a warm start on this GPU for a neon-only host on
+  `EL_RENDERER_ALL` - and no program is released when its layer is (the neon's
+  ten, about 1.2 MB, stay after it is disabled). `setupRingGeometry` builds
+  three vectors per geometry rebuild, so resize and intensity frames allocate
+  3-5 times. Per effect the heap is 1.2-1.5 MB, almost all driver program
+  state (about 300 KB per `neon.frag`-sized program); render targets carry no
+  driver heap copy here, and textures never reallocate under animation.
+- **Open.** The 64-sequence failures above, which predate this change and
+  are not investigated. The M2 and the Tizen device are unmeasured.
+
 ## 2026-10-23 - Every float-buffer sampler highp (I97 closed)
 
 On `optimize_memory2`, on top of I96 and the blits' half of I97; I97 in

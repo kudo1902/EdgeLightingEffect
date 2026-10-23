@@ -885,7 +885,7 @@
 
       <div class="warn">
         <span class="tag">Wide where it must be, narrow where it pays</span>
-        The neon clears its offscreen reuse (<code>mOffscreen.reusable</code>) on <em>any</em> change to <code>config.neon</code> or <code>config.geometry</code> - deliberately wide, since pass 1b reads most of the neon's config. But <em>not</em> on another layer's change: the call comes for any change to the composite, and an animation of the flare's sun changes it every frame. Gated on "anything", the neon drew pass 1 directly every frame - 4.9x with the hue rotating and 15x still at scale 1.0 on the AMD 5300M (I47).
+        The neon clears its offscreen reuse (<code>mOffscreen.reusable</code>) on <em>any</em> change to <code>config.neon</code> or <code>config.geometry</code> - deliberately wide, since pass 1b reads most of the neon's config - and on <code>debug.opaqueOnly</code>, which releases the buffers it would reuse (I98). But <em>not</em> on another layer's change: the call comes for any change to the composite, and an animation of the flare's sun changes it every frame. Gated on "anything", the neon drew pass 1 directly every frame - 4.9x with the hue rotating and 15x still at scale 1.0 on the AMD 5300M (I47).
       </div>
     </section>
 
@@ -1064,7 +1064,7 @@
           <tbody>
             <tr><td class="mono nw">isEmissionTableStale</td><td><span class="pid">P0</span></td><td><code>EmissionInputs</code>: the sample count, and the upload counts of the three LUTs and two light blocks the pass binds; plus the hue phase</td><td>nothing - each bake records itself, and the table lives for the renderer's life</td><td class="mono">EMISSION</td></tr>
             <tr><td class="mono nw">dirty piece masks</td><td><span class="pid">P0b</span> per piece</td><td>one bit per piece of the outline, separately for the arcs' channels and the segments'</td><td>set by <code>OnConfigChanged</code> (the shape: every piece; a light: the pieces its old and new supports reach) and by a fresh allocation; cleared by the bake</td><td class="mono">GLOW_COVER</td></tr>
-            <tr><td class="mono nw">mOffscreen.reusable</td><td><span class="pid">P1a P1b</span>, and the target capture</td><td>a flag and the viewport; honoured only with both tables current</td><td>any change to <code>neon</code> or <code>geometry</code>; a frame whose reduced buffer holds the field's composite</td><td class="mono">OFFSCREEN</td></tr>
+            <tr><td class="mono nw">mOffscreen.reusable</td><td><span class="pid">P1a P1b</span>, and the target capture</td><td>a flag and the viewport; honoured only with both tables current</td><td>any change to <code>neon</code>, <code>geometry</code> or <code>debug.opaqueOnly</code>; a frame whose reduced buffer holds the field's composite</td><td class="mono">OFFSCREEN</td></tr>
             <tr><td class="mono nw">SharedBuffer windowed clear</td><td>clearing the whole reduced buffer</td><td>the last write's window</td><td>a reallocation or release (the next clear is whole)</td><td class="mono">CLEAR</td></tr>
             <tr><td class="mono nw">OnConfigChanged gates</td><td>CPU rebuilds and uploads</td><td>field lists (section 6)</td><td>-</td><td class="mono">REBUILD</td></tr>
             <tr><td class="mono nw">GatherCache</td><td><span class="pid">P1a</span></td><td><code>GatherInputs</code> (the table's version, sample uploads, shape, viewport, centre) and a quad inside the one drawn (<code>AnnulusCovers</code>)</td><td>replaced whole by each gather; within 1 level (I55)</td><td class="mono">GATHER</td></tr>
@@ -1087,9 +1087,9 @@
             <tr><td class="mono nw">fillDirty</td><td>geometry, opaque mode, the fill's own cutoffs</td><td><code>setupFillGeometry</code></td><td><span class="pid">P2a</span></td></tr>
             <tr><td class="mono nw">segmentsDirty, arcsDirty</td><td>either segment pool; the arcs</td><td>refill the merged segment list; OR the reached pieces into the dirty masks</td><td><code>glowCoverStale</code> (<span class="pid">P0b</span>)</td></tr>
             <tr><td class="mono nw">glowCoverShapeDirty</td><td>width, height, corner radius, winding, glow radius - not position</td><td>every piece dirty, both masks</td><td><code>glowCoverStale</code></td></tr>
-            <tr><td>any <code>neon</code> or <code>geometry</code> change</td><td>-</td><td><code>mOffscreen.reusable = false</code>; both <code>LazyBake::Invalidate</code> unless only the intensity moved; OR <code>mIntensityMoving</code></td><td><code>reuseOffscreen</code>; <code>Decide</code></td></tr>
+            <tr><td>any <code>neon</code>, <code>geometry</code> or <code>debug.opaqueOnly</code> change</td><td>-</td><td><code>mOffscreen.reusable = false</code>; both <code>LazyBake::Invalidate</code> unless only the intensity moved; OR <code>mIntensityMoving</code></td><td><code>reuseOffscreen</code>; <code>Decide</code></td></tr>
             <tr><td>always</td><td>-</td><td><code>bakeLUTs</code> - each LUT re-bakes only if its own inputs moved</td><td><code>EmissionInputs</code> (<span class="pid">P0</span>)</td></tr>
-            <tr><td><code>enable</code> off</td><td>-</td><td>release the reduced buffer, the gather buffer and the coverage tables</td><td>the next frame reallocates on demand</td></tr>
+            <tr><td><code>enable</code> off, or <code>debug.opaqueOnly</code> (<code>IsGlowDrawn</code>)</td><td>-</td><td>release the reduced buffer, the gather buffer and the coverage tables; both fields go with the configs they cannot serve</td><td>the next frame reallocates on demand</td></tr>
           </tbody>
         </table>
       </div>
@@ -1295,7 +1295,7 @@ if (neon &amp;&amp; neon-&gt;IsReady())
         <li>Add a <code>SharedBufferId</code> value before <code>COUNT</code>.</li>
         <li>Own a <code>std::shared_ptr&lt;SharedBuffer&gt;</code> with its format list; <code>Register</code> it in <code>Initialize</code> and remember whether the registry accepted it.</li>
         <li>In <code>RenderOffscreen</code>: <code>BeginWrite</code>, draw, <code>MarkReady(viewport)</code> - or <code>MarkNotReady()</code> on a frame with nothing to share. Keep the version on a frame that reuses the image.</li>
-        <li><code>Release()</code> when the layer is disabled (from <code>OnConfigChanged</code>); in the destructor, <code>Unregister</code> then <code>Release</code>, while the context is still current.</li>
+        <li><code>Release()</code> when the layer stops drawing the image - disabled, or for the neon <code>debug.opaqueOnly</code> too - from <code>OnConfigChanged</code>, clearing whatever reuse the producer keys on the buffer's contents; in the destructor, <code>Unregister</code> then <code>Release</code>, while the context is still current.</li>
       </ol>
       <p><code>neon-scale-check shared-buffer</code> is the gate for the neon's: probe renderers before and after the neon must be handed the same ready buffer on every scene and scale, still frames must not move its version, and the buffer's light on the line must not fall short of the frame's.</p>
     </section>

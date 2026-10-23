@@ -975,7 +975,11 @@ extern "C"
      *           there is no glow to annotate. The bounding box does NOT, so a
      *           fill-only frame still carries it unless you clear
      *           @ref el_effect_set_debug_show_wireframe or mute the layer with
-     *           @ref el_effect_set_debug_enabled. */
+     *           @ref el_effect_set_debug_enabled.
+     *
+     *           While it is set the neon holds none of its offscreen buffers,
+     *           as with the layer disabled; clearing it allocates and draws
+     *           them again on the next frame. */
     EL_API el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly);
     EL_API el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly);
 
