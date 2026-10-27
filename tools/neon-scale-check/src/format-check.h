@@ -37,6 +37,9 @@ namespace NeonScaleCheck
     ///   - D4: on the main cells, RGBA16F incomplete with two attachments
     ///     (a ForcedFailure reporting GL_FRAMEBUFFER_UNSUPPORTED) - the
     ///     gather's segment attachment;
+    ///   - D7: D4's failure, then out of memory instead, on 12 `segments`
+    ///     cells whose rect grows - so the gather buffer shrinks below the
+    ///     last failure every cell;
     ///   - D5: on the retry cells, the fields bypassed in it and its own A,
     ///     textures up to one px less than the viewport at 0.5
     ///     (SetMaxTextureSize);
@@ -47,8 +50,9 @@ namespace NeonScaleCheck
     ///     each with its own RenderTargetFormats.
     /// It fails if:
     ///   - a run probes other than the report's five formats less the ones a
-    ///     hook answers (5, 2, 2, 0, 5, 2, 5, 5, 5, 5, 3, 5 for A, B, B
-    ///     bypassed, C, D, E, D2, D3, D4, D5, D6 refused, D6 failing), or a
+    ///     hook answers (5, 2, 2, 0, 5, 2, 5, 5, 5, 5, 5, 5, 3, 5 for A, B, B
+    ///     bypassed, C, D, E, D2, D3, D4, both D7 runs, D5, D6 refused, D6
+    ///     failing), or a
     ///     renderer outside an effect probes other than five by the end of
     ///     its Initialize, or any after;
     ///   - in B, any offscreen draw writes a refused format, or any texture
@@ -90,6 +94,10 @@ namespace NeonScaleCheck
     ///     is ever not RGBA16F - kept by size alone, the gather's
     ///     two-attachment failure put every larger one-attachment buffer on
     ///     RGBA8;
+    ///   - in D7, the incomplete framebuffer fails other than once - kept by
+    ///     size, it was tried again at every smaller gather size - or out of
+    ///     memory fails only once, so the gather never shrank and the check
+    ///     above proved nothing;
     ///   - in D5, the flare's or the spotlight's 0.5 frame is not A's 1.0
     ///     frame, a 0.25 frame is not A's, the refusal is not logged once for
     ///     each of the three scaled buffers, any allocation is tried and

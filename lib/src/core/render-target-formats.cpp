@@ -154,10 +154,11 @@ namespace EdgeLighting
                 return "an allocation of it that large already ran out of memory here";
             }
             // Anything else said something about this format at that many
-            // attachments: as many or more, at least that large each.
-            if (!failed.outOfMemory && attachments >= failed.attachments && perAttachment >= failed.texels)
+            // attachments, whatever the size: as many or more fail too.
+            if (!failed.outOfMemory && attachments >= failed.attachments)
             {
-                return "an allocation of it that large, with that many attachments, already failed here";
+                return "an allocation of it with that many attachments already failed here, for a reason other than "
+                       "memory - at any size";
             }
         }
         return nullptr;
@@ -166,16 +167,18 @@ namespace EdgeLighting
     void RenderTargetFormats::recordFailedAllocation(GLint internalFormat, int width, int height, int attachments,
                                                      GLenum failure)
     {
+        // Memory by its total size; anything else by its attachment count
+        // alone - size is not what failed it, the texture size limit being
+        // checked before any row is tried.
         const bool outOfMemory = failure == GL_OUT_OF_MEMORY;
-        const int64_t perAttachment = static_cast<int64_t>(width) * height;
         const int keyAttachments = outOfMemory ? 0 : attachments;
-        const int64_t texels = outOfMemory ? perAttachment * attachments : perAttachment;
+        const int64_t texels = outOfMemory ? static_cast<int64_t>(width) * height * attachments : 0;
         for (FailedAllocation &failed : mFailedSizes)
         {
-            if (failed.internalFormat == internalFormat && failed.outOfMemory == outOfMemory &&
-                failed.attachments == keyAttachments)
+            if (failed.internalFormat == internalFormat && failed.outOfMemory == outOfMemory)
             {
                 failed.texels = std::min(failed.texels, texels);
+                failed.attachments = std::min(failed.attachments, keyAttachments);
                 return;
             }
         }

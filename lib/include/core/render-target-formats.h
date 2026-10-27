@@ -42,16 +42,19 @@ namespace EdgeLighting
     /// what failed it, so a failure blocks only what it says something about.
     /// Out of memory is kept as the smallest total size (texels x attachments)
     /// that failed per format - memory runs out by bytes, whatever the
-    /// buffer's shape or attachment count. Anything else - an incomplete
-    /// framebuffer, an error that is not memory - is kept per format AND
-    /// attachment count, as the smallest size per attachment that failed: a
-    /// driver that will not take two RGBA16F attachments says nothing about
-    /// one. A walk skips a format at a kept size or larger and tries it again
-    /// below it, so a buffer keeps no memory of its own and one failure at 4K
-    /// does not cost a smaller buffer its format for the effect's life. And a
-    /// buffer wider or taller than GL_MAX_TEXTURE_SIZE is refused before any
-    /// row is tried, recording nothing: that limit is the context's, the same
-    /// for every format, and says nothing about a buffer within it.
+    /// buffer's shape or attachment count - and a walk skips that format at
+    /// that size or larger and tries it again below it, so one failure at 4K
+    /// does not cost a smaller buffer its format for the effect's life.
+    /// Anything else - an incomplete framebuffer, an error that is not memory
+    /// - is kept per format AND attachment count, at every size: a driver
+    /// that will not take two RGBA16F attachments says nothing about one, and
+    /// says the same at any size, so trying again smaller would only fail
+    /// again (measured: 7 failed allocations over 12 frames of a growing
+    /// rect, whose gather buffer shrinks, when it was kept by size). Size is
+    /// not what failed it: a buffer wider or taller than GL_MAX_TEXTURE_SIZE
+    /// is refused before any row is tried, recording nothing - that limit is
+    /// the context's, the same for every format. Either way a buffer keeps no
+    /// memory of its own.
     ///
     /// GL thread only. Creates no GL object until asked, so it can be made
     /// before a context exists. See
@@ -114,8 +117,8 @@ namespace EdgeLighting
         /// format renders here or its probe gave no answer - then the
         /// allocation decides - and no allocation it would repeat has failed
         /// (see the class comment: out of memory at this total size or
-        /// smaller, anything else at this many attachments or fewer and this
-        /// size per attachment or smaller). What a buffer asks before it
+        /// smaller, anything else at this many attachments or fewer, at any
+        /// size). What a buffer asks before it
         /// commits to a format - the neon's fields ask it before they build
         /// their programs, the segment coverage table before it changes mode;
         /// ResizeInBestFormat's walk asks the same of each row.
@@ -292,9 +295,8 @@ namespace EdgeLighting
             /// GL_OUT_OF_MEMORY failures are memory: @c texels is the smallest
             /// total (texels x attachments) that ran out, for any attachment
             /// count, and @c attachments is 0. Any other failure is this format
-            /// at this many attachments: @c attachments is the count it failed
-            /// with (more fail too) and @c texels the smallest size per
-            /// attachment that failed.
+            /// at this many attachments, at every size: @c attachments is the
+            /// fewest it failed with (more fail too) and @c texels is 0.
             bool outOfMemory;
             int attachments;
             int64_t texels;
@@ -307,10 +309,12 @@ namespace EdgeLighting
 
         /// Keep that an allocation of @p internalFormat at @p width x
         /// @p height x @p attachments failed with @p failure (what Resize
-        /// reported): GL_OUT_OF_MEMORY by its total size, anything else by its
-        /// attachment count and size per attachment. No walk repeats it at
-        /// that size or larger, and one smaller still may: each record keeps
-        /// the smallest size that failed.
+        /// reported). GL_OUT_OF_MEMORY by its total size: no walk repeats it
+        /// at that size or larger, one smaller still may, and the record keeps
+        /// the smallest size that failed. Anything else by its attachment
+        /// count alone: no walk tries the format again with that many
+        /// attachments or more, at any size, and the record keeps the fewest
+        /// that failed.
         void recordFailedAllocation(GLint internalFormat, int width, int height, int attachments, GLenum failure);
 
         /// Whether @ref SetFailedAllocations fails an allocation of

@@ -134,6 +134,18 @@ steps 1-5 and 7; step 6, on the device, is open.
   path nothing ran before). The harness split into `format-check-run.{h,cpp}`
   and `format-check-causes.cpp` (it had reached 954 lines). `formats` passes
   in ~8 s on the M2 Pro.
+- **Then a non-memory failure holds at every size** (a third review). The
+  first cut kept a non-memory failure per format and attachment count BY
+  SIZE, so a buffer shrinking below it was asked again: a growing rect
+  (whose gather buffer shrinks, a longer perimeter gathering coarser) failed
+  the two-attachment RGBA16F gather 7 times in 12 frames, each a full
+  allocation and an ERROR line, though such a failure says nothing about
+  size - the texture size limit is checked before any row. It is now kept at
+  every size for its format and attachment count; out of memory stays by
+  size and is still tried again below. `formats` case D7 runs both on those
+  12 growing-rect cells: the incomplete gather must fail once (7 with the
+  first cut's rule, which fails it), out of memory more than once (7) - the
+  proof the gather shrank. Every gate passes on the M2 Pro.
 
 ### Open
 

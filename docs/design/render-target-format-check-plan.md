@@ -759,7 +759,11 @@ tool's README gained its `formats` section in step 5.
      by format and attachment count; a buffer past `GL_MAX_TEXTURE_SIZE`
      refused before any row, keeping nothing). D4: RGBA16F incomplete with
      two attachments - no one-attachment buffer may lose half float (a build
-     keeping every failure by size alone fails it). D5: a size limit under
+     keeping every failure by size alone fails it). D7: the same failure
+     under a growing rect, whose gather buffer shrinks every cell - an
+     incomplete framebuffer is kept at every size and fails once, out of
+     memory is kept by size and is tried again below (a build keeping the
+     first by size fails it 7 times, which was this design's first cut). D5: a size limit under
      the viewport at 0.5 (`SetMaxTextureSize`) - refused before tried, then
      allocated at 0.25. D6: the segment coverage table refused, then failing
      - its gate and its fill program. S: the neon, the flare and the

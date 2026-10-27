@@ -155,6 +155,56 @@ namespace NeonScaleCheck
                 return failures + (fallbacks == 0) + (differing != 0) + !shared;
             }
 
+            /// D7: D4's failure under a growing rect - the `segments` scene at
+            /// 0.5, 12 cells each 90 x 45 px larger than the last. A longer
+            /// perimeter gathers on a coarser grid, so the gather buffer
+            /// SHRINKS as the rect grows (192 x 160 down to 96 x 64): every
+            /// cell lands below the size the last failure had. An incomplete
+            /// framebuffer is kept for its format and attachment count at
+            /// every size, so it fails once and is never tried again; kept by
+            /// size, as it first was, it was tried and failed at every new
+            /// size (7 times). Out of memory on the same cells is the
+            /// contrast, and the proof the gather did shrink: memory is kept
+            /// by size, so it is tried again below each failure - more than
+            /// once.
+            int CheckGrowingRect(bool verbose)
+            {
+                std::vector<Cell> cells;
+                if (const Scene *segments = FindScene("segments"))
+                {
+                    for (int i = 0; i < 12; ++i)
+                    {
+                        Cell cell = NeonCell(*segments, Variant::STILL, SCALE_500);
+                        cell.config.geometry.position = glm::vec2(40.0f, 30.0f);
+                        cell.config.geometry.width = 210.0f + 90.0f * float(i);
+                        cell.config.geometry.height = 165.0f + 45.0f * float(i);
+                        cell.name += " w" + std::to_string(int(cell.config.geometry.width));
+                        cells.push_back(cell);
+                    }
+                }
+                std::printf("D7 - D4's failure under a growing rect, on %zu `segments` cells%s\n", cells.size(),
+                            cells.empty() ? " - no `segments` scene!" : "");
+                int failures = cells.empty();
+
+                Hooks incomplete;
+                incomplete.failed.formats = {GL_RGBA16F};
+                incomplete.failed.fromAttachments = 2;
+                incomplete.failed.error = GL_FRAMEBUFFER_UNSUPPORTED;
+                Hooks outOfMemory = incomplete;
+                outOfMemory.failed.error = GL_OUT_OF_MEMORY;
+                const RunResult kept = Run(incomplete, false, cells);
+                const RunResult memory = Run(outOfMemory, false, cells);
+                failures += Summarise("  incomplete", kept, Unprobed(incomplete), verbose);
+                failures += Summarise("  out of memory", memory, Unprobed(outOfMemory), verbose);
+
+                const int keptTries = CountLines(kept.errors, "gather target unavailable");
+                const int memoryTries = CountLines(memory.errors, "gather target unavailable");
+                std::printf("  gather allocations that failed: incomplete %d (expected 1: kept at every size)%s, out "
+                            "of memory %d (expected more than 1: kept by size, tried again below)%s\n",
+                            keptTries, keptTries == 1 ? "" : "!", memoryTries, memoryTries > 1 ? "" : "!");
+                return failures + (keptTries != 1) + (memoryTries <= 1);
+            }
+
             /// D5: a texture size limit between the viewport at 0.25 and at
             /// 0.5 (SetMaxTextureSize). Every viewport-sized scaled buffer at
             /// 0.5 is refused before any format is tried - no allocation, no
@@ -325,6 +375,7 @@ namespace NeonScaleCheck
         int CheckFailureCauses(const std::vector<Cell> &cells, const RunResult &a, bool verbose)
         {
             int failures = CheckAttachmentFailure(cells, a, verbose);
+            failures += CheckGrowingRect(verbose);
             failures += CheckSizeLimit(verbose);
             failures += CheckSegmentTable(cells, verbose);
             failures += CheckStandalone(cells, a);

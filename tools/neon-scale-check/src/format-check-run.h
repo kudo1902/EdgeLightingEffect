@@ -160,7 +160,7 @@ namespace NeonScaleCheck
         /// FORMAT_QUALITY_BOUNDS, printed. Returns the failures.
         int CheckQualityBounds(const RunResult &a, const RunResult &b, const std::vector<Cell> &cells, bool verbose);
 
-        /// Cases D4, D5, D6 and S (format-check-causes.cpp): what each cause
+        /// Cases D4, D7, D5, D6 and S (format-check-causes.cpp): what each cause
         /// of a failed allocation may block, and a renderer outside an effect.
         /// @p a is case A's run on @p cells, the reference. Returns the
         /// failures.
