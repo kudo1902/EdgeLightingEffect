@@ -960,7 +960,7 @@
             <tr><td class="mono nw">LazyBake</td><td>When a field is baked and when it is used - one schedule type, two instances, so the glow's field and the ring's cannot drift apart.</td></tr>
             <tr><td class="mono nw">RingFieldLayout</td><td>How the ring's pixels pack into four strips of one atlas. The C++ that computes it, the bake that writes it and the shader that reads it change together.</td></tr>
             <tr><td class="mono nw">ShadeLimits</td><td>The quad's fade margin and the corner-skip distance, one pair for pass 1b (scaled px) and one for the ring (full-res px).</td></tr>
-            <tr><td class="mono nw">EmissionTable, GlowCoverTable, GatherTarget, GlowField, RingField</td><td>One struct per offscreen buffer: the <code>Framebuffer</code> plus everything that says what it holds - format tier, layout, dirty masks, cache, schedule.</td></tr>
+            <tr><td class="mono nw">EmissionTable, GlowCoverTable, GatherTarget, GlowField, RingField</td><td>One struct per offscreen buffer: the <code>Framebuffer</code> plus everything that says what it holds - layout, dirty masks, cache, schedule. No format: the walk keeps none in the buffer, and what it learns is the effect's <code>RenderTargetFormats</code>'.</td></tr>
             <tr><td class="mono nw">OffscreenState, FrameState</td><td>Whether passes 1a and 1b can be skipped this frame; what <code>RenderOffscreen</code> leaves for <code>Render</code>.</td></tr>
           </tbody>
         </table>
@@ -1139,7 +1139,7 @@
           <text x="1040" y="196" class="dg-t2" text-anchor="end">Decide: use, x I/I0 while dimming</text>
           <text x="1040" y="210" class="dg-t2" text-anchor="end">rises or stops: bake + use</text>
         </svg>
-        <figcaption><b>Figure 4</b> <code>LazyBake</code>, one instance per field. Not drawn: <code>unavailable</code>, set for good when a field program fails to build or a bake's allocation fails although <code>RenderTargetFormats</code> said its format renders - the field is then never used on that driver, and the frame shades directly. A driver that cannot render the field's half-float format never reaches the schedule at all: both gates ask <code>RenderTargetFormats</code> before building the programs or calling <code>Decide</code>.</figcaption>
+        <figcaption><b>Figure 4</b> <code>LazyBake</code>, one instance per field. Not drawn: <code>unavailable</code>, set for good only when a field program fails to build - the field is then never used on that driver, and the frame shades directly. A failed bake does not set it: its allocation's failure is <code>RenderTargetFormats</code>' to remember, with its size, and both gates ask it (<code>MayAllocate</code>, with the field's size) before building the programs or calling <code>Decide</code>. So a driver that cannot render the field's half-float format never reaches the schedule at all, and a field whose allocation failed shades directly at that size or larger and is tried again below it.</figcaption>
       </figure>
 
       <div class="tbl-wrap">
@@ -1172,7 +1172,7 @@
       <ul class="body">
         <li><strong><code>SharedBufferId</code></strong> - one value per shared image; <code>NEON</code> today, then <code>COUNT</code>.</li>
         <li><strong><code>SharedBufferRegistry</code></strong> (<code>core/shared-buffer-registry.h</code>) - a directory: one slot per id, holding its producer's buffer. It allocates, draws and schedules nothing. <code>Register</code> lets one producer claim a slot (a second is refused and logged), <code>Unregister</code> gives it back if the caller is the holder, <code>Find</code> hands a reader a <code>shared_ptr&lt;const SharedBuffer&gt;</code>. This header only <em>declares</em> <code>SharedBuffer</code>: it reaches every host through <code>base-renderer.h</code> and <code>edge-lighting.h</code>, and the full type would drag in the GL loader, which collides with a host's own GL headers.</li>
-        <li><strong><code>SharedBuffer</code></strong> (<code>core/shared-buffer.h</code>) - the GL buffer and the state that says what it holds: format tier, last write window, viewport, version, ready. <code>BeginWrite</code> takes the producer's <code>RenderTargetFormats</code> and starts its format walk where the driver renders; <code>GetInternalFormat</code> tells a reader whether it holds gradients finer than an 8-bit level. Producers and readers include it themselves.</li>
+        <li><strong><code>SharedBuffer</code></strong> (<code>core/shared-buffer.h</code>) - the GL buffer and the state that says what it holds: last write window, viewport, version, ready. <code>BeginWrite</code> takes the producer's <code>RenderTargetFormats</code> and starts its format walk where the driver renders; <code>GetInternalFormat</code> tells a reader whether it holds gradients finer than an 8-bit level. Producers and readers include it themselves.</li>
       </ul>
 
       <figure>
