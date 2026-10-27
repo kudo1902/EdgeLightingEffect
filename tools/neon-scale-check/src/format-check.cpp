@@ -100,10 +100,11 @@ namespace NeonScaleCheck
         /// 0.5 points. Two levels because the Apple M2 Pro and the AMD render
         /// the same scene up to 2 levels apart (scenes.h), so a bound one level
         /// over the AMD's own figure could fail on the M2 with nothing changed.
-        /// Not yet run on the M2: recalibrate from `formats --verbose` there if
-        /// it fails. A regression gate on the 8-bit rows: a change that makes
-        /// them worse fails it; it says nothing about whether they are good
-        /// enough (step 6 of the plan, on the device).
+        /// Run on the M2 Pro too (2026-10-27): every group inside its bound,
+        /// with room - see the M2 figures below - so the bounds stand for both
+        /// GPUs. A regression gate on the 8-bit rows: a change that makes them
+        /// worse fails it; it says nothing about whether they are good enough
+        /// (step 6 of the plan, on the device).
         typedef struct QualityBound
         {
             const char *group;
@@ -116,7 +117,11 @@ namespace NeonScaleCheck
         /// intensity 3 / 0.458, 2 / 0.303, 2 / 0.338 (card_outside,
         /// overdrive, sharp_corners - the moving intensity is the field's gain
         /// path); segments 53 / 8.919 (the clamp); flare 1 / 0 at 0.5, 0 / 0
-        /// at 1.0 (no buffer); spotlight 2 / 0.003 at 0.5, 0 / 0 at 1.0.
+        /// at 1.0 (no buffer); spotlight 2 / 0.003 at 0.5, 0 / 0 at 1.0. On
+        /// the M2 Pro: still 2 / 0.242, 0.055, 0.030 (soft_wash); hue 2 /
+        /// 0.129, 0.229, 0.010 (bounded_band); intensity 2 / 0.260, 0.187,
+        /// 0.184 (sharp_corners); segments 53 / 9.448; flare 1 / 0 at 0.5;
+        /// spotlight 2 / 0.004 at 0.5; both 0 / 0 at 1.0.
         const QualityBound FORMAT_QUALITY_BOUNDS[] = {
             {"neon still s1000", 4, 0.54},     {"neon still s500", 4, 0.51},      {"neon still s250", 4, 0.51},
             {"neon hue s1000", 4, 0.64},       {"neon hue s500", 4, 0.67},        {"neon hue s250", 4, 0.51},
@@ -137,6 +142,76 @@ namespace NeonScaleCheck
             return nullptr;
         }
 
+        /// The neon on @p scene, drawn @p variant, at CELL_SCALES[@p s].
+        Cell NeonCell(const Scene &scene, Variant variant, size_t s)
+        {
+            Cell cell;
+            cell.config = BaseConfig();
+            scene.apply(cell.config);
+            cell.config.neon.resolutionScale = CELL_SCALES[s];
+            cell.config.neon.hueRotationRate = variant == Variant::HUE ? 0.5f : 0.0f;
+            cell.variant = variant;
+            // The segments scene stacks boosts of 2.0, which the emission
+            // table's RGBA8 row clamps to 1.0 (its own fallback line says so):
+            // tens of levels off at every scale and variant, so a bound of its
+            // own, or it would set every group's.
+            cell.group = std::strcmp(scene.id, "segments") == 0
+                             ? std::string("neon segments")
+                             : std::string("neon ") + VariantName(variant) + " " + CELL_SCALE_TAGS[s];
+            cell.name = std::string(scene.id) + " " + VariantName(variant) + " " + CELL_SCALE_TAGS[s];
+            return cell;
+        }
+
+        /// The flare alone, at CELL_SCALES[@p s]. Below 1.0 its
+        /// fullScaleName is the 1.0 cell's, what it draws when no scaled
+        /// buffer allocates.
+        Cell FlareCell(size_t s)
+        {
+            Cell flare;
+            flare.config = BaseConfig();
+            flare.config.neon.enable = false;
+            flare.config.lensFlare.enable = true;
+            flare.config.lensFlare.resolutionScale = CELL_SCALES[s];
+            flare.variant = Variant::STILL;
+            flare.group = std::string("flare ") + CELL_SCALE_TAGS[s];
+            flare.name = std::string("flare still ") + CELL_SCALE_TAGS[s];
+            if (s != 0)
+            {
+                flare.fullScaleName = std::string("flare still ") + CELL_SCALE_TAGS[0];
+            }
+            return flare;
+        }
+
+        /// Two lamps alone, at CELL_SCALES[@p s]; fullScaleName as FlareCell's.
+        Cell SpotlightCell(size_t s)
+        {
+            Cell spot;
+            spot.config = BaseConfig();
+            spot.config.neon.enable = false;
+            spot.config.spotlight.enable = true;
+            spot.config.spotlight.resolutionScale = CELL_SCALES[s];
+            SpotLight left;
+            left.position = glm::vec2(200.0f, 80.0f);
+            left.angle = 60.0f;
+            SpotLight right;
+            right.position = glm::vec2(1080.0f, 80.0f);
+            right.angle = 120.0f;
+            spot.config.spotlight.lamps = {left, right};
+            spot.variant = Variant::STILL;
+            spot.group = std::string("spotlight ") + CELL_SCALE_TAGS[s];
+            spot.name = std::string("spotlight still ") + CELL_SCALE_TAGS[s];
+            if (s != 0)
+            {
+                spot.fullScaleName = std::string("spotlight still ") + CELL_SCALE_TAGS[0];
+            }
+            return spot;
+        }
+
+        /// CELL_SCALES' indices of 1.0, 0.5 and 0.25.
+        const size_t SCALE_1000 = 0;
+        const size_t SCALE_500 = 1;
+        const size_t SCALE_250 = 2;
+
         std::vector<Cell> MakeCells()
         {
             std::vector<Cell> cells;
@@ -147,22 +222,7 @@ namespace NeonScaleCheck
                 {
                     for (const Scene &scene : SCENES)
                     {
-                        Cell cell;
-                        cell.config = BaseConfig();
-                        scene.apply(cell.config);
-                        cell.config.neon.resolutionScale = CELL_SCALES[s];
-                        cell.config.neon.hueRotationRate = variant == Variant::HUE ? 0.5f : 0.0f;
-                        cell.variant = variant;
-                        // The segments scene stacks boosts of 2.0, which the
-                        // emission table's RGBA8 row clamps to 1.0 (its own
-                        // fallback line says so): tens of levels off at every
-                        // scale and variant, so a bound of its own, or it
-                        // would set every group's.
-                        cell.group = std::strcmp(scene.id, "segments") == 0
-                                         ? std::string("neon segments")
-                                         : std::string("neon ") + VariantName(variant) + " " + CELL_SCALE_TAGS[s];
-                        cell.name = std::string(scene.id) + " " + VariantName(variant) + " " + CELL_SCALE_TAGS[s];
-                        cells.push_back(cell);
+                        cells.push_back(NeonCell(scene, variant, s));
                     }
                 }
             }
@@ -171,44 +231,54 @@ namespace NeonScaleCheck
             // buffers are the other two walks. And each at 1.0, which needs no
             // buffer: what either must draw when no scaled buffer allocates
             // (case C).
-            Cell flare;
-            flare.config = BaseConfig();
-            flare.config.neon.enable = false;
-            flare.config.lensFlare.enable = true;
-            flare.config.lensFlare.resolutionScale = 0.5f;
-            flare.variant = Variant::STILL;
-            flare.group = "flare s500";
-            flare.name = "flare still s500";
-            flare.fullScaleName = "flare still s1000";
-            cells.push_back(flare);
-            flare.config.lensFlare.resolutionScale = 1.0f;
-            flare.group = "flare s1000";
-            flare.name = "flare still s1000";
-            flare.fullScaleName.clear();
-            cells.push_back(flare);
+            cells.push_back(FlareCell(SCALE_500));
+            cells.push_back(FlareCell(SCALE_1000));
+            cells.push_back(SpotlightCell(SCALE_500));
+            cells.push_back(SpotlightCell(SCALE_1000));
+            return cells;
+        }
 
-            Cell spot;
-            spot.config = BaseConfig();
-            spot.config.neon.enable = false;
-            spot.config.spotlight.enable = true;
-            spot.config.spotlight.resolutionScale = 0.5f;
-            SpotLight left;
-            left.position = glm::vec2(200.0f, 80.0f);
-            left.angle = 60.0f;
-            SpotLight right;
-            right.position = glm::vec2(1080.0f, 80.0f);
-            right.angle = 120.0f;
-            spot.config.spotlight.lamps = {left, right};
-            spot.variant = Variant::STILL;
-            spot.group = "spotlight s500";
-            spot.name = "spotlight still s500";
-            spot.fullScaleName = "spotlight still s1000";
-            cells.push_back(spot);
-            spot.config.spotlight.resolutionScale = 1.0f;
-            spot.group = "spotlight s1000";
-            spot.name = "spotlight still s1000";
-            spot.fullScaleName.clear();
-            cells.push_back(spot);
+        /// The size cases D2 and D3 fail allocations from, in texels: halfway
+        /// between the viewport at 0.25 and at 0.5, so a viewport-sized scaled
+        /// buffer - the neon's shared buffer, the flare's, the spotlight's -
+        /// fails at 0.5 and allocates at 0.25. Every other buffer the retry
+        /// cells allocate stays below it at either scale (the emission table,
+        /// the gather buffer, the glow coverage table, at most 1024 x 128),
+        /// which their frames matching A's at 0.25 confirms.
+        int64_t RetryThreshold()
+        {
+            const auto viewportTexels = [](size_t s)
+            {
+                return int64_t(int(float(FRAME_WIDTH) * CELL_SCALES[s])) *
+                       int64_t(int(float(FRAME_HEIGHT) * CELL_SCALES[s]));
+            };
+            return (viewportTexels(SCALE_500) + viewportTexels(SCALE_250)) / 2;
+        }
+
+        /// Cases D2 and D3's cells: every layer with a viewport-sized scaled
+        /// buffer drawn at 0.5 and then at 0.25 - large enough to fail, then
+        /// small enough to allocate again - the flare and the spotlight after
+        /// their 1.0 frames, which D3 must draw at 0.5, and the neon on `arcs`,
+        /// which reads the glow coverage table too. The flare first, so its
+        /// own walk takes the hook's failure; the walks after it find that
+        /// failure kept and skip the format without trying it.
+        std::vector<Cell> MakeRetryCells()
+        {
+            std::vector<Cell> cells;
+            cells.push_back(FlareCell(SCALE_1000));
+            cells.push_back(FlareCell(SCALE_500));
+            cells.push_back(FlareCell(SCALE_250));
+            cells.push_back(SpotlightCell(SCALE_1000));
+            cells.push_back(SpotlightCell(SCALE_500));
+            cells.push_back(SpotlightCell(SCALE_250));
+            for (const Scene &scene : SCENES)
+            {
+                if (std::strcmp(scene.id, "arcs") == 0)
+                {
+                    cells.push_back(NeonCell(scene, Variant::STILL, SCALE_500));
+                    cells.push_back(NeonCell(scene, Variant::STILL, SCALE_250));
+                }
+            }
             return cells;
         }
 
@@ -218,6 +288,7 @@ namespace NeonScaleCheck
         {
             std::vector<GLint> refused; ///< SetRefusedFormats.
             std::vector<GLint> failed;  ///< SetFailedAllocations.
+            int64_t failedFrom = 0;     ///< SetFailedAllocations' threshold, texels: 0 fails every size.
             std::vector<GLint> unknown; ///< SetUnknownFormats.
         } Hooks;
 
@@ -242,6 +313,7 @@ namespace NeonScaleCheck
             std::map<GLint, int> sharedFormats;   ///< The shared buffer's formats while ready.
             std::vector<std::string> fieldLinks;  ///< The field programs' "linked" log lines.
             std::vector<std::string> unknownRows; ///< The startup report's UNKNOWN rows.
+            std::vector<std::string> infos;
             std::vector<std::string> warnings;
             std::vector<std::string> errors;
         } RunResult;
@@ -262,7 +334,7 @@ namespace NeonScaleCheck
             {
                 EdgeLightingEffect effect;
                 effect.GetRenderTargetFormats()->SetRefusedFormats(hooks.refused);
-                effect.GetRenderTargetFormats()->SetFailedAllocations(hooks.failed);
+                effect.GetRenderTargetFormats()->SetFailedAllocations(hooks.failed, hooks.failedFrom);
                 effect.GetRenderTargetFormats()->SetUnknownFormats(hooks.unknown);
                 const std::shared_ptr<NeonRenderer> neon = std::make_shared<NeonRenderer>();
                 if (bypassFields)
@@ -354,7 +426,11 @@ namespace NeonScaleCheck
                 {
                     result.unknownRows.push_back(message);
                 }
-                if (line.find("[WARN]") != std::string::npos)
+                if (line.find("[INFO]") != std::string::npos)
+                {
+                    result.infos.push_back(message);
+                }
+                else if (line.find("[WARN]") != std::string::npos)
                 {
                     result.warnings.push_back(message);
                 }
@@ -529,6 +605,40 @@ namespace NeonScaleCheck
         {
             return run.sharedReadyFrames > 0 && run.sharedFormats.size() == 1 && run.sharedFormats.count(format);
         }
+
+        /// Whether @p run's frame of the cell named @p name is, byte for byte,
+        /// @p reference's frame of the cell named @p referenceName - and draws
+        /// something. Prints the cell when it is not, naming @p referenceLabel.
+        bool SameFrame(const RunResult &run, const std::string &name, const RunResult &reference,
+                       const std::string &referenceName, const char *referenceLabel, const std::vector<Cell> &cells)
+        {
+            const auto indexOf = [&cells](const std::string &cellName)
+            {
+                const auto it = std::find_if(cells.begin(), cells.end(),
+                                             [&cellName](const Cell &cell) { return cell.name == cellName; });
+                return size_t(it - cells.begin());
+            };
+            const size_t at = indexOf(name);
+            const size_t referenceAt = indexOf(referenceName);
+            const bool same = at < cells.size() && referenceAt < cells.size() &&
+                              run.frames[at] == reference.frames[referenceAt] && !AllZero(run.frames[at]);
+            if (!same)
+            {
+                std::printf("  %s differs from %s's %s\n", name.c_str(), referenceLabel, referenceName.c_str());
+            }
+            return same;
+        }
+
+        /// Lines of @p lines holding @p needle and, if given, @p also.
+        int CountLines(const std::vector<std::string> &lines, const char *needle, const char *also = nullptr)
+        {
+            int count = 0;
+            for (const std::string &line : lines)
+            {
+                count += line.find(needle) != std::string::npos && (!also || line.find(also) != std::string::npos);
+            }
+            return count;
+        }
     }
 
     int FormatCheck(int argc, char **argv)
@@ -581,6 +691,21 @@ namespace NeonScaleCheck
         const RunResult c = Run(refuseAll, false, cells);
         const RunResult d = Run(failHalf, false, cells);
         const RunResult e = Run(unknownHalf, false, cells);
+
+        // D2 and D3 on cells of their own, beside A and B drawn on the same
+        // cells, so every run they are compared with has their history.
+        const std::vector<Cell> retryCells = MakeRetryCells();
+        const int64_t threshold = RetryThreshold();
+        Hooks failHalfFrom;
+        failHalfFrom.failed = HALF_FLOAT;
+        failHalfFrom.failedFrom = threshold;
+        Hooks failAllFrom;
+        failAllFrom.failed = EVERYTHING;
+        failAllFrom.failedFrom = threshold;
+        const RunResult aRetry = Run(none, false, retryCells);
+        const RunResult bRetry = Run(refuseHalf, false, retryCells);
+        const RunResult d2 = Run(failHalfFrom, false, retryCells);
+        const RunResult d3 = Run(failAllFrom, false, retryCells);
 
         int failures = 0;
 
@@ -683,6 +808,57 @@ namespace NeonScaleCheck
                         fallbacks, fallbacks == 0 ? "!" : "", drawnFailed, drawnFailed ? "!" : "", aliveFailed,
                         aliveFailed ? "!" : "", shared ? "yes" : "NO!", differing, differing ? "!" : "");
             failures += (fallbacks == 0) + (drawnFailed != 0) + (aliveFailed != 0) + !shared + (differing != 0);
+        }
+
+        // D2: D from a size (RetryThreshold) - half float fails at 0.5 and
+        // must be tried, and allocate, again at 0.25: the walks' failure
+        // memory holds a format off at the size that failed and above, never
+        // below. At 0.5 each scaled buffer lands on RGBA8, as B's probe lands
+        // it; at 0.25 back in half float, as A draws it. On the retry cells,
+        // against A and B drawn on them.
+        std::printf("%zu retry cells a run: the flare and the spotlight at 1.0, 0.5 and 0.25, the neon on `arcs` at "
+                    "0.5 and 0.25; allocations fail from %lld texels\n",
+                    retryCells.size(), static_cast<long long>(threshold));
+        failures += Summarise("D2 - half float fails from that size", d2, Unprobed(failHalfFrom), verbose);
+        {
+            const bool large = SameFrame(d2, "flare still s500", bRetry, "flare still s500", "B", retryCells) &&
+                               SameFrame(d2, "spotlight still s500", bRetry, "spotlight still s500", "B", retryCells);
+            const bool small = SameFrame(d2, "flare still s250", aRetry, "flare still s250", "A", retryCells) &&
+                               SameFrame(d2, "spotlight still s250", aRetry, "spotlight still s250", "A",
+                                         retryCells) &&
+                               SameFrame(d2, "arcs still s250", aRetry, "arcs still s250", "A", retryCells);
+            const int fallbacks = CountLines(d2.errors, "falling back to", "SetFailedAllocations");
+            const bool sharedBoth = d2.sharedFormats.count(GL_RGBA8) && d2.sharedFormats.count(GL_RGBA16F);
+            std::printf("  at 0.5 as B %s, at 0.25 as A %s, fallbacks logged %d%s, shared buffer RGBA8 then RGBA16F "
+                        "%s\n",
+                        large ? "yes" : "NO!", small ? "yes" : "NO!", fallbacks, fallbacks == 0 ? "!" : "",
+                        sharedBoth ? "yes" : "NO!");
+            failures += !large + !small + (fallbacks == 0) + !sharedBoth;
+        }
+
+        // D3: every format fails from that size. At 0.5 the flare and the
+        // spotlight have no scaled buffer in any format and draw at 1.0 - the
+        // flare's own walk takes the hook's failure, the spotlight's and the
+        // neon's find it kept and try nothing - and the neon's shared buffer
+        // is never ready; at 0.25 all three allocate again, in half float, and
+        // say so once each.
+        failures += Summarise("D3 - every format fails from that size", d3, Unprobed(failAllFrom), verbose);
+        {
+            const bool large =
+                SameFrame(d3, "flare still s500", aRetry, "flare still s1000", "A", retryCells) &&
+                SameFrame(d3, "spotlight still s500", aRetry, "spotlight still s1000", "A", retryCells);
+            const bool small = SameFrame(d3, "flare still s250", aRetry, "flare still s250", "A", retryCells) &&
+                               SameFrame(d3, "spotlight still s250", aRetry, "spotlight still s250", "A",
+                                         retryCells) &&
+                               SameFrame(d3, "arcs still s250", aRetry, "arcs still s250", "A", retryCells);
+            const int fellBack = CountLines(d3.warnings, "no reduced-scale target could be allocated");
+            const int back = CountLines(d3.infos, "a reduced-scale target allocated again");
+            const bool shared = SharedOnlyIn(d3, GL_RGBA16F);
+            std::printf("  at 0.5 as A at 1.0 %s, at 0.25 as A %s, falls back to 1.0 logged %d (expected 2)%s, back "
+                        "to scale logged %d (expected 2)%s, shared buffer ready only at 0.25, RGBA16F %s\n",
+                        large ? "yes" : "NO!", small ? "yes" : "NO!", fellBack, fellBack == 2 ? "" : "!", back,
+                        back == 2 ? "" : "!", shared ? "yes" : "NO!");
+            failures += !large + !small + (fellBack != 2) + (back != 2) + !shared;
         }
 
         // E: the probe gives no answer for half float (SetUnknownFormats) - an

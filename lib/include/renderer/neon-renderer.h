@@ -1291,7 +1291,11 @@ namespace EdgeLighting
         /// table at @c mGlowCover.segWantedWidth with the same hysteresis
         /// when the segments get one, and marks every segment piece dirty when
         /// the mode or that table changes. A segment table that cannot be
-        /// allocated sends the segments back into the main table's bake.
+        /// allocated at its size - asked of the effect's RenderTargetFormats
+        /// before the mode moves - sends the segments back into the main
+        /// table's bake, and is tried again once its size drops below the
+        /// allocation that failed; only a fill program that will not build
+        /// keeps them there for good (@c mGlowCover.fillUnavailable).
         ///
         /// The format walk is ResizeInBestFormat's, which keeps nothing in the
         /// renderer: the verdicts and any failed allocation are the effect's

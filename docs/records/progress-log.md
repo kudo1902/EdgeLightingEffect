@@ -90,6 +90,26 @@ steps 1-5 and 7; step 6, on the device, is open.
   and the spotlight draw at 1.0 when no scaled buffer allocates, where they
   used to draw nothing - `formats` case C now checks they match the 1.0
   frames byte for byte.
+- **Then a review of the stateless walk** (on the M2 Pro). Two contract
+  defects fixed: a walk that could try no row at its size (every row refused,
+  or failed that large) returned false with the buffer still holding an
+  earlier, smaller allocation - it now releases it, as its contract said; and
+  a segment coverage table that could not be allocated still switched the
+  segment table off for the renderer's life (`fillUnavailable`, which means a
+  fill program that will not build) - the mode is now decided against
+  `RenderTargetFormats` before it moves, so the table is tried again below
+  the size that failed, and a frame never flips into the table's mode only to
+  flip back. `SetFailedAllocations` takes a size to fail from, and `formats`
+  cases D2 and D3 use it: each viewport-sized scaled buffer fails at 0.5 and
+  must allocate again, in half float, at 0.25 - the failure memory's
+  retry-below path and the flare's and spotlight's return from 1.0, which
+  nothing ran before; a build whose failure memory ignores size fails both
+  (D2 twice, D3 three times). With RG16F and RG8 refused (by hand, not a
+  case), the `segments` scene keeps its segments in the main table, within 1
+  level of the unrefused frame, with no ERROR line. `formats` passes on the
+  M2 Pro with every group inside its bound (still 2 levels / 0.24%, hue 2 /
+  0.23%, intensity 2 / 0.26%, `segments` 53 / 9.4%), and `sequence`,
+  `partition`, `check` and `shared-buffer` pass.
 
 ### Open
 
@@ -98,7 +118,6 @@ steps 1-5 and 7; step 6, on the device, is open.
   targets" part of the 2026-10-08 entry's open "Measure on the target" item; if
   half float is refused there, look at a segment config and the banding the
   dither cannot break on the device itself.
-- Not run on the M2.
 - The plan's open decisions (section 9): a C ABI mirror of the answers, a
   blend check, a read-back check, the read binding the library moves, and
   forcing a full-size failure now that the hook is off `Resize`.

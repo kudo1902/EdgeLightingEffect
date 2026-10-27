@@ -162,10 +162,11 @@ namespace EdgeLighting
         mFailedSizes.push_back(FailedAllocation{internalFormat, texels});
     }
 
-    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat) const
+    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat, int64_t texels) const
     {
-        return std::find(mFailedAllocations.begin(), mFailedAllocations.end(), internalFormat) !=
-               mFailedAllocations.end();
+        return texels >= mFailedAllocationTexels &&
+               std::find(mFailedAllocations.begin(), mFailedAllocations.end(), internalFormat) !=
+                   mFailedAllocations.end();
     }
 
     bool RenderTargetFormats::isNewSkip(const char *owner, const char *what, const char *row)

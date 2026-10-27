@@ -167,13 +167,21 @@ namespace EdgeLighting
 
         /// Verification only - a host never calls this. Every full-size
         /// allocation @ref ResizeInBestFormat makes in a format @p formats
-        /// names fails from now on, though the probe passed it: the case the
-        /// walks' own fallback exists for (memory, a size limit), which no
-        /// driver the project runs on produces. The buffer is released as a
-        /// failed Resize leaves it, the failure is recorded as a real one is,
-        /// and the fallback is logged naming this hook. Per effect, set before
-        /// the allocations it should reach, like @ref SetRefusedFormats.
-        void SetFailedAllocations(std::vector<GLint> formats) { mFailedAllocations = std::move(formats); }
+        /// names, of @p fromTexels or more (width x height x attachments, as
+        /// the walk counts them; 0, the default, is every size), fails from
+        /// now on, though the probe passed it: the case the walks' own
+        /// fallback exists for (memory, a size limit), which no driver the
+        /// project runs on produces. The buffer is released as a failed
+        /// Resize leaves it, the failure is recorded as a real one is, and the
+        /// fallback is logged naming this hook. A threshold lets a run drive
+        /// the walk back up: a format that failed large is tried again, and
+        /// allocates, below @p fromTexels. Per effect, set before the
+        /// allocations it should reach, like @ref SetRefusedFormats.
+        void SetFailedAllocations(std::vector<GLint> formats, int64_t fromTexels = 0)
+        {
+            mFailedAllocations = std::move(formats);
+            mFailedAllocationTexels = fromTexels;
+        }
 
         /// Verification only - a host never calls this. Every internal format
         /// in @p formats comes back from @ref Ask as UNKNOWN (status 0, no
@@ -251,8 +259,10 @@ namespace EdgeLighting
         /// the smallest size that failed.
         void recordFailedAllocation(GLint internalFormat, int64_t texels);
 
-        /// Whether @ref SetFailedAllocations names @p internalFormat.
-        bool isAllocationForcedToFail(GLint internalFormat) const;
+        /// Whether @ref SetFailedAllocations fails an allocation of
+        /// @p internalFormat at @p texels: it names the format, and @p texels
+        /// reaches its threshold.
+        bool isAllocationForcedToFail(GLint internalFormat, int64_t texels) const;
 
         /// One skip @ref firstToTry has logged: the walk's names and the
         /// row's, as text - an owner may be a buffer's own name, whose storage
@@ -289,6 +299,7 @@ namespace EdgeLighting
         std::vector<FailedAllocation> mFailedSizes;   ///< One per format whose full-size allocation failed: see recordFailedAllocation.
         std::vector<GLint> mRefused;                  ///< SetRefusedFormats' list; checked before mAnswers.
         std::vector<GLint> mFailedAllocations;        ///< SetFailedAllocations' list.
+        int64_t mFailedAllocationTexels = 0;          ///< SetFailedAllocations' threshold: the smallest allocation it fails.
         std::vector<GLint> mUnknown;                  ///< SetUnknownFormats' list; checked after mRefused, before mAnswers.
         std::vector<LoggedSkip> mLoggedSkips;         ///< The skips already logged (isNewSkip), so a walk asking every frame is quiet.
     };
@@ -321,7 +332,9 @@ namespace EdgeLighting
     /// frame and builds nothing. @p allocated, if given, receives the index of
     /// the row that allocated, and is left alone on failure.
     /// @return false only if no row allocated, in which case @p buffer has no
-    ///         attachment at all.
+    ///         attachment at all - a buffer holding an earlier allocation when
+    ///         no row may be tried at this size is released, not left holding
+    ///         it.
     template <typename Row>
     bool ResizeInBestFormat(Framebuffer &buffer, RenderTargetFormats &targets, const Row *rows, size_t count,
                             int width, int height, GLint filter, int attachments, const char *owner, const char *what,
@@ -342,7 +355,7 @@ namespace EdgeLighting
             const Row &row = rows[index];
             // SetFailedAllocations: fail as Resize fails, destroying what the
             // buffer held - a verification run of this very fallback.
-            const bool forced = targets.isAllocationForcedToFail(row.internalFormat);
+            const bool forced = targets.isAllocationForcedToFail(row.internalFormat, texels);
             if (forced)
             {
                 buffer.Release();
@@ -371,6 +384,10 @@ namespace EdgeLighting
             }
             index = next;
         }
+        // Nothing allocated - and when no row could even be tried, the buffer
+        // still holds an earlier, smaller allocation nobody may draw into
+        // again at this size. Give it back, as a failed Resize would have.
+        buffer.Release();
         return false;
     }
 

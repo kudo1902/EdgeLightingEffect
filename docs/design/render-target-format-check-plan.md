@@ -263,7 +263,7 @@ public:
     /// Verification only - a host never calls these (4.7). Per effect.
     void SetRefusedFormats(std::vector<GLint> formats);    ///< Ask says REFUSED, without a probe.
     bool IsRefused(GLint internalFormat) const;
-    void SetFailedAllocations(std::vector<GLint> formats); ///< The walk's full-size allocation fails, and is recorded.
+    void SetFailedAllocations(std::vector<GLint> formats, int64_t fromTexels = 0); ///< The walk's full-size allocation of at least fromTexels fails, and is recorded.
     void SetUnknownFormats(std::vector<GLint> formats);    ///< Ask says UNKNOWN, without a probe.
 
 private:
@@ -742,11 +742,21 @@ tool's README gained its `formats` section in step 5.
    - **E** - nothing refused, but half float's answers unknown
      (`SetUnknownFormats`, added after the third review): a probe whose
      upload failed for a passing reason.
+   - **D2** and **D3** - D from a size (`SetFailedAllocations`' `fromTexels`,
+     added after the first review of the stateless walk): half float, then
+     every format, fails only from halfway between the viewport at 0.25 and
+     at 0.5, on retry cells of their own (the flare and the spotlight at 1.0,
+     0.5 and 0.25, the neon on `arcs` at 0.5 and 0.25) beside A and B drawn
+     on the same cells. Each viewport-sized scaled buffer fails at 0.5 and
+     must allocate again, in half float, at 0.25 - the failure memory held at
+     the size that failed and above, never below - and in D3 the flare and
+     the spotlight draw their 0.5 cells at 1.0 and say when they return. A
+     build whose failure memory ignores size fails both.
 3. Assert, exiting non-zero on any failure as the other modes do:
    - **Probes.** `GetAnswers().size()` after every run is the report's five
      less the refused formats (a refusal is the hook's answer, made without a
-     probe, and so is a hook's unknown): 5 for A and D, 2 for B and E, 0 for
-     C. Anything more means something probed
+     probe, and so is a hook's unknown): 5 for A, D, D2 and D3, 2 for B and
+     E, 0 for C. Anything more means something probed
      a format outside the report.
    - **B, formats.** No draw ever lands in a refused format: before every
      offscreen draw, the bound draw framebuffer's colour attachments'

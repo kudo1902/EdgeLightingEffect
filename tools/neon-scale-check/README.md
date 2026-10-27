@@ -359,8 +359,8 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
 - **B against A**, per layer, variant and scale: the worst cell's largest
   channel difference and its share of lit channels more than one level off,
   against `FORMAT_QUALITY_BOUNDS` - measured on an AMD Radeon Pro 5300M and
-  padded, so a gate on the 8-bit rows getting worse, not a judgement that they
-  are good enough. Every scene but one stays within 3 levels; `segments` is
+  padded, and inside every bound on the Apple M2 Pro too, so a gate on the
+  8-bit rows getting worse, not a judgement that they are good enough. Every scene but one stays within 3 levels; `segments` is
   ~53 off at every scale, because its boosts of 2.0 are clamped to 1.0 by the
   emission table's RGBA8 row (its own fallback line says so), and has a bound
   of its own.
@@ -382,9 +382,27 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   target and all three field programs must be reached, the shared buffer must
   be RGBA16F, and every frame must match A's byte for byte: unknown leaves the
   allocation to decide, and here it succeeds.
+- **D2** and **D3**, D from a size: `SetFailedAllocations` fails only the
+  allocations of at least a threshold - halfway between the viewport's texels
+  at 0.25 and at 0.5 (144,000 at 1280 x 720) - on retry cells of their own:
+  the flare and the spotlight at 1.0, 0.5 and 0.25, and the neon on `arcs` at
+  0.5 and 0.25, beside A and B drawn on the same cells. Every viewport-sized
+  scaled buffer fails at 0.5 and must allocate again at 0.25, which is the
+  walks' failure memory both ways: a format is held off at the size that
+  failed and above, never below. In D2 (half float fails from that size) the
+  flare's and the spotlight's 0.5 frames must match B's byte for byte, every
+  0.25 frame A's, a fallback must be logged naming the hook, and the shared
+  buffer must be seen as RGBA8 and then RGBA16F. In D3 (every format fails
+  from that size) the flare and the spotlight must draw their 0.5 cells
+  exactly as A draws 1.0, every 0.25 frame must match A's, the fall back to
+  1.0 and the return to the scale must each be logged once per layer, and the
+  shared buffer must be ready only as RGBA16F. The flare's walk goes first, so
+  it takes the hook's failure itself; the spotlight's and the neon's find that
+  failure kept and try nothing. Built with the failure memory ignoring size,
+  both fail.
 
 Every run must make exactly the report's probes less the formats a hook
-answers (5 for A and D, 2 for B and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
+answers (5 for A, D, D2 and D3, 2 for B and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

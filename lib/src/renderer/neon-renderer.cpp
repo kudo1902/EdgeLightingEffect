@@ -3316,7 +3316,30 @@ namespace EdgeLighting
         // of their own and copied in. Either way, a change of mode re-bakes
         // every segment piece: the main table's .b / .a hold the other mode's
         // values until then.
-        const bool direct = !segments || mGlowCover.segWantedDirect;
+        //
+        // A segment table this context cannot allocate at the size it needs -
+        // every row of its list refused, or already failed that large
+        // (RenderTargetFormats keeps both) - keeps the segments in the main
+        // table's bake. Asked BEFORE the mode moves, so a frame whose config
+        // wants the table does not flip into its mode only to flip straight
+        // back, re-baking every segment piece twice; and asked on every such
+        // frame, so the table is tried again once its size drops below the
+        // allocation that failed. Not mGlowCover.fillUnavailable: that is a
+        // fill program that will not build, which no size changes.
+        bool direct = !segments || mGlowCover.segWantedDirect;
+        const bool segHolds =
+            mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width);
+        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
+        if (!direct && !segHolds)
+        {
+            RenderTargetFormats &targets = GetRenderTargetFormats();
+            const auto mayAllocate = [&](const TargetFormat &row)
+            {
+                return targets.MayAllocate(row.internalFormat, row.format, row.type, segLayout.width,
+                                           GLOW_COVER_HEIGHT, 1);
+            };
+            direct = std::none_of(std::begin(GLOW_COVER_FORMATS_RG), std::end(GLOW_COVER_FORMATS_RG), mayAllocate);
+        }
         if (direct != mGlowCover.segDirect)
         {
             mGlowCover.segDirect = direct;
@@ -3324,22 +3347,25 @@ namespace EdgeLighting
         }
         if (direct)
         {
+            // Nothing reads the segment table in this mode: give it back. A
+            // no-op when OnConfigChanged already has, which it does whenever
+            // the config itself wants the segments direct.
+            mGlowCover.segBuffer.Release();
             return true;
         }
-        if (mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width))
+        if (segHolds)
         {
             return true;
         }
         // Two channels, in the best of the RG list this context may render at
-        // the segment table's own size. Should it fail, the segments go back
-        // into the main table, which needs nothing more.
-        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
+        // the segment table's own size. Should the allocation fail anyway, the
+        // segments go back into the main table for this frame; the failure is
+        // RenderTargetFormats' to remember, so the check above keeps them
+        // there at this size or larger and lets the table try again below it.
         if (!ResizeInBestFormat(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
                                 std::size(GLOW_COVER_FORMATS_RG), segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
                                 "NeonRenderer", "segment coverage", "The segments' coverage will be stored at 8 bits."))
         {
-            mGlowCover.fillUnavailable = true;
-            mGlowCover.segWantedDirect = true;
             mGlowCover.segDirect = true;
             mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
             return true;
