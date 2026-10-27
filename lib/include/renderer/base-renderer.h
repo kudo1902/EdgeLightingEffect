@@ -7,6 +7,11 @@
 
 namespace EdgeLighting
 {
+    // Declared, not included: this header reaches every host through
+    // edge-lighting.h, and render-target-formats.h brings the GL loader with
+    // it - which collides with a host's own GL headers. A renderer that asks
+    // it a question includes core/render-target-formats.h itself.
+    class RenderTargetFormats;
 
     /// Which visual layer a renderer draws - its identity in
     /// @ref EdgeLightingEffect's layer calls (@ref EdgeLightingEffect::AddRenderer
@@ -137,6 +142,17 @@ namespace EdgeLighting
             return mSharedBufferRegistry;
         }
 
+        /// What this renderer's GL context can render to: the
+        /// @ref RenderTargetFormats of the effect it is registered with, set
+        /// before @ref Initialize. Every buffer with a list of formats asks it
+        /// at its allocation, by allocating through @c ResizeInBestFormat
+        /// (core/render-target-formats.h). Never null: a renderer no effect holds makes
+        /// a private one on its first ask, and probes the library's formats
+        /// into it then - so a renderer that uses it calls this from its
+        /// Initialize, keeping that probe off the frame. Defined in
+        /// base-renderer.cpp, since this header only declares the class.
+        RenderTargetFormats &GetRenderTargetFormats();
+
     private:
         /// Only the effect hands a renderer its registry, once, as it registers
         /// it - so no renderer can be pointed at another effect's after it has
@@ -151,8 +167,19 @@ namespace EdgeLighting
             mSharedBufferRegistry = registry;
         }
 
+        /// Called by @ref EdgeLightingEffect::AddRenderer, before Initialize,
+        /// beside @ref setSharedBufferRegistry: one object per effect, so the
+        /// effect's renderers share one answer per format.
+        void setRenderTargetFormats(const std::shared_ptr<RenderTargetFormats> &formats)
+        {
+            mRenderTargetFormats = formats;
+        }
+
     private:
         std::shared_ptr<SharedBufferRegistry> mSharedBufferRegistry; ///< See @ref GetSharedBufferRegistry.
+        /// See @ref GetRenderTargetFormats. A shared_ptr to a declared-only
+        /// type is fine here: its deleter is captured where it is made.
+        std::shared_ptr<RenderTargetFormats> mRenderTargetFormats;
     };
 
 } // namespace EdgeLighting

@@ -37,7 +37,10 @@ cmake --build build/neon-scale-check-other
 
 The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 `partition` `gl/shader-program.h` plus the generated `shaders.h`), taken from
-`EL_ROOT` and `EL_ROOT/build` so they match the library.
+`EL_ROOT` and `EL_ROOT/build` so they match the library. A mode whose library
+API a checkout lacks is left out of that build: `sequence` (`NeonBypass`),
+`flare-reuse` (`LensFlareRenderer::SetBypass`) and `formats`
+(`core/render-target-formats.h`).
 
 ## `check`
 
@@ -324,6 +327,60 @@ that is not a function of `Config::lensFlare` belongs in `FlareInputs`, and the
 script should move it. Dropping the sun's position from the key fails the four
 rect-move frames and the three still frames after them, which is the check
 that the script reaches the key.
+
+## `formats`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check formats [--verbose]
+```
+
+The library on a driver that refuses render-target formats - the 8-bit
+fallback rows, which neither Mac reaches, since both render every format the
+library asks for. The refusal is forced through the effect's
+`RenderTargetFormats` (`SetRefusedFormats`, a verification hook), on a fresh
+effect per run, before `Initialize`; see
+[`docs/design/render-target-format-check-plan.md`](../../docs/design/render-target-format-check-plan.md)
+sections 4 and 6. It prints the GPU and the startup report, then draws 110
+cells five times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
+hue rotating and with the intensity moving (the frames the half-float fields
+serve), plus a flare and a spotlight at 0.5 - with the neon, the flare, the
+spotlight and a reader of the neon's shared buffer registered:
+
+- **A**, nothing refused: the reference. It must reach half-float targets,
+  link all three field programs and hand the reader an RGBA16F buffer, or the
+  checks on B could not fail.
+- **B**, RGBA16F, RG16F and R16F refused - GLES 3.0 with neither
+  `EXT_color_buffer_half_float` nor `EXT_color_buffer_float`. No offscreen draw
+  may write a refused format (a wrapper in front of `glad_glDrawArrays`,
+  `tools/common/draw-target-watch.h`, reads each draw's target format), no
+  texture alive at the end may have one, the shared buffer must be RGBA8, no
+  field program may link (counted from the library's own "linked" log lines),
+  and every frame must match B with both fields bypassed byte for byte.
+- **B against A**, per layer, variant and scale: the worst cell's largest
+  channel difference and its share of lit channels more than one level off,
+  against `FORMAT_QUALITY_BOUNDS` - measured on an AMD Radeon Pro 5300M and
+  padded, so a gate on the 8-bit rows getting worse, not a judgement that they
+  are good enough. Every scene but one stays within 3 levels; `segments` is
+  ~53 off at every scale, because its boosts of 2.0 are clamped to 1.0 by the
+  emission table's RGBA8 row (its own fallback line says so), and has a bound
+  of its own.
+- **C**, every format the library allocates refused: the neon must be dropped
+  (its emission table has no row left), nothing may be drawn, and the shared
+  buffer must never be ready.
+- **D**, nothing refused, but every full-size allocation in half float failed
+  (`SetFailedAllocations`): the walks' own fallback, for what a probe cannot
+  predict. A fallback must be logged naming the hook, no half-float format
+  drawn into or alive, and every frame must match B's byte for byte - the
+  fallback lands every buffer where B's probe did.
+
+Every run must make exactly the report's probes less the refused formats (5,
+2, 0, and 5 for D) and leave no GL error. About 10 s; exits non-zero on any failure.
+`--verbose` also prints each run's WARN and ERROR lines and every cell's
+B-against-A numbers, which is how to recalibrate the bounds on another GPU.
+Run it after adding a buffer or a format list: a buffer that allocates without
+asking `RenderTargetFormats` fails B, which is the point - built with the gather
+buffer's walk not asking, or with the half-float fields' gate removed, it
+fails.
 
 ## `generate`
 

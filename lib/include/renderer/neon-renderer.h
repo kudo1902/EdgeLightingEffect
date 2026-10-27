@@ -787,7 +787,11 @@ namespace EdgeLighting
         ///   - A failed program build sets @c unavailable
         ///     (@ref NeonRenderer::ensureFieldPrograms,
         ///     @ref NeonRenderer::ensureRingFieldPrograms), as a failed bake
-        ///     does through @ref OnBaked: no half-float target on this driver.
+        ///     does through @ref OnBaked.
+        ///   - A driver that cannot render the field's half-float format never
+        ///     gets this far: @ref NeonRenderer::RenderOffscreen asks the effect's
+        ///     RenderTargetFormats before it builds the programs or calls
+        ///     @ref Decide, every frame, since the format follows the segments.
         typedef struct LazyBake
         {
             /// What @ref Decide says a frame does with the field:
@@ -807,7 +811,7 @@ namespace EdgeLighting
 
             bool current = false;         ///< The buffer describes this frame up to its intensity: nothing else invalidated it since its bake.
             bool settled = false;         ///< Nothing invalidated it on the last frame, so a bake now would be reused.
-            bool unavailable = false;     ///< Not on this driver (a program failed, or no half-float target): shade directly.
+            bool unavailable = false;     ///< Not on this driver (a program failed, or a bake's full-size allocation did): shade directly.
             glm::ivec2 viewport{0};       ///< The viewport it was decided for.
             uint32_t gradientUploads = 0; ///< The gradient ring's upload count it was decided for.
             float intensity = 0.0f;       ///< NeonConfig::intensity it was baked at (I0).
@@ -835,7 +839,9 @@ namespace EdgeLighting
             /// A bake ran, at @p bakedIntensity: what the buffer holds is
             /// current if it @p baked, and the field is never used again on
             /// this driver if not - a bake fails only when the buffer cannot be
-            /// allocated, i.e. no half-float render target.
+            /// allocated, and a format this driver does not render is turned
+            /// away before the bake (RenderTargetFormats), so what is left is a
+            /// full-size allocation the probe did not predict.
             void OnBaked(bool baked, float bakedIntensity)
             {
                 current = baked;

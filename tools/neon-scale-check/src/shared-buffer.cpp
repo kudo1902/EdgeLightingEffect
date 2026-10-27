@@ -2,6 +2,7 @@
 
 #include "harness.h"
 #include "scenes.h"
+#include "shared-buffer-probe.h"
 
 #include "core/shared-buffer-registry.h"
 #include "core/shared-buffer.h"
@@ -41,46 +42,12 @@ namespace NeonScaleCheck
 
         const Variant VARIANTS[] = {{"still", 0.0f}, {"hue", 0.5f}};
 
-        /// What a reader saw of the shared buffer in one Render.
-        typedef struct Seen
-        {
-            bool ready = false;
-            uint32_t version = 0;
-            glm::ivec2 viewport{0};
-            glm::ivec2 texels{0};
-            GLuint texture = 0;
-        } Seen;
-
-        /// An internal reader of the neon's shared buffer, as a library
-        /// renderer would be one: it takes the buffer in every Render and
-        /// records what it was handed. Draws nothing. The check registers one
+        /// What a reader saw of the shared buffer in one Render. The reader is
+        /// SharedBufferProbe (shared-buffer-probe.h); the check registers one
         /// after the neon and one before it: the effect runs every layer's
         /// offscreen phase before any layer's Render, so both must see the
         /// same image.
-        class SharedBufferProbe : public BaseRenderer
-        {
-        public:
-            bool Initialize() override { return true; }
-            void Update(float, double, const Config &) override {}
-            void Render(int, int, double, const Config &) override
-            {
-                const std::shared_ptr<const SharedBuffer> buffer = GetSharedBufferRegistry()->Find(SharedBufferId::NEON);
-                mSeen = Seen{};
-                if (buffer)
-                {
-                    mSeen = Seen{buffer->IsReady(), buffer->GetVersion(), buffer->GetViewport(), buffer->GetTexels(),
-                                 buffer->GetTextureId()};
-                }
-            }
-            void OnConfigChanged(const Config &) override {}
-            RendererLayer GetLayer() const override { return RendererLayer::CUSTOM; }
-
-            /// What the last Render was handed.
-            const Seen &Last() const { return mSeen; }
-
-        private:
-            Seen mSeen;
-        };
+        typedef SharedBufferSeen Seen;
 
         /// Whether anything but the glow lands on the frame or masks it: the
         /// one-sided cut, a cutoff, the opaque fill. The buffer holds none of

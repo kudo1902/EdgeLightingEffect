@@ -1,5 +1,6 @@
 #include "renderer/spotlight-renderer.h"
 #include "renderer/spotlight-tuning.h"
+#include "core/render-target-formats.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
 #include "shaders.h"
@@ -79,6 +80,10 @@ namespace EdgeLighting
         ///
         /// Twice the memory: 960 x 540 texels at 1080p and 0.5 is 4.1 MB
         /// instead of 2.1; 1.0 MB at 0.25.
+        ///
+        /// resizeScaledBuffer asks the effect's RenderTargetFormats and starts
+        /// at the first row this driver renders. A format added here gets a
+        /// row in RenderTargetFormats::LogReport, the startup report.
         constexpr ScaledFormat SCALED_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, true, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false, "RGBA8"},
@@ -698,6 +703,10 @@ namespace EdgeLighting
         }
 
         setupBlitGeometry();
+        // What this context renders to, asked now rather than on the first
+        // scaled frame: outside an effect this makes the renderer's own object
+        // and probes the library's formats into it here, not mid-frame.
+        GetRenderTargetFormats();
 
         // mCurrentSpotlight is whatever the last OnConfigChanged left - the
         // effect calls it on registration, so by here it is usually the host's
@@ -912,29 +921,15 @@ namespace EdgeLighting
 
     bool SpotlightRenderer::resizeScaledBuffer(int width, int height)
     {
-        // Walk SCALED_FORMATS from the last tier that allocated. A refused
-        // format is never asked for again: Resize treats a format change as a
+        // Walk SCALED_FORMATS from the last tier that allocated, starting
+        // where this context renders (ResizeInBestFormat). A refused format is
+        // never asked for again: Resize treats a format change as a
         // reallocation, and its failure path destroys what was there, so
         // re-asking every frame would churn the attachment - and the buffer is
         // released between uses, so it cannot remember the refusal itself.
-        for (; mScaledFormat < SCALED_FORMAT_COUNT; ++mScaledFormat)
-        {
-            const ScaledFormat &f = SCALED_FORMATS[mScaledFormat];
-            if (mScaledBuffer.Resize(width, height, f.internalFormat, f.format, f.type))
-            {
-                return true;
-            }
-            if (mScaledFormat + 1 < SCALED_FORMAT_COUNT)
-            {
-                LOG_E("SpotlightRenderer: %s reduced-scale target unavailable, falling back to %s. "
-                      "The dark tail is rounded to 8 bits before the blit reads it.",
-                      f.name, SCALED_FORMATS[mScaledFormat + 1].name);
-            }
-        }
-        // Every candidate refused: stay on the last, the one most likely to
-        // allocate on a later frame, rather than off the end of the list.
-        mScaledFormat = SCALED_FORMAT_COUNT - 1;
-        return false;
+        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT,
+                                  mScaledFormat, width, height, GL_LINEAR, 1, "SpotlightRenderer", "reduced-scale",
+                                  "The dark tail is rounded to 8 bits before the blit reads it.");
     }
 
     void SpotlightRenderer::ensureBuffer()

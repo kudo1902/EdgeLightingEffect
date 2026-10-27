@@ -173,8 +173,10 @@ add_library(edge-lighting STATIC
     src/animation/easing-function.cpp
     src/animation/field-bound-animation.cpp
     src/core/edge-lighting.cpp
+    src/core/render-target-formats.cpp
     src/core/shared-buffer-registry.cpp
     src/core/shared-buffer.cpp
+    src/renderer/base-renderer.cpp
     src/renderer/neon-renderer.cpp
     src/renderer/debug-renderer.cpp
     src/renderer/droplets-renderer.cpp

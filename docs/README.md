@@ -9,14 +9,15 @@ The folders sort the documents by what they are for:
 | ------ | ----- | ------------ |
 | [`guides/`](guides/) | how the library works today, and what every field does | you use, extend or upgrade it |
 | [`pages/`](pages/) | HTML pages with diagrams and renders - open them in a browser | you want the picture before the prose |
-| [`design/`](design/) | plans that have been built, and the measured studies behind specific decisions | you are about to change the code they describe |
+| [`design/`](design/) | plans that have been built (or are proposed, and say so), and the measured studies behind specific decisions | you are about to change the code they describe |
 | [`perf/`](perf/) | the lens flare's performance review, with its measurements | you are about to change the flare for speed |
 | [`records/`](records/) | the progress log, the review findings and the naming audit | you want to know where the work stands or why something is the way it is |
 | [`images/`](images/) | every figure, shared by all of the above; written by `tools/` | - |
 
 The plans in `design/` are **historical**: each one says at its top that it has
 been built, and what it describes may have moved since. They are
-kept for the reasoning and the measurements, not as instructions.
+kept for the reasoning and the measurements, not as instructions. A plan not
+built yet, or built in part, says so at its top instead.
 
 ## Start here
 
@@ -63,6 +64,7 @@ Built plans:
 | [`neon-glow-cover-resolution-plan.md`](design/neon-glow-cover-resolution-plan.md) | The glow coverage table sized per light type, and what it measured. |
 | [`neon-shader-cleanup-plan.md`](design/neon-shader-cleanup-plan.md) | The neon's program slots and shader variants before the cleanup, and why each was kept or cut. |
 | [`spotlight-renderer-plan.md`](design/spotlight-renderer-plan.md) | The spotlight's design and the offscreen verification behind it. |
+| [`render-target-format-check-plan.md`](design/render-target-format-check-plan.md) | Asking the driver which render-target formats it can draw into before allocating: a probe, cached per effect in one `RenderTargetFormats` that the startup report, every format walk and the half-float fields ask, and `neon-scale-check formats`, which refuses formats so the 8-bit fallbacks run. Built but for step 6 (the device); section 10 is what was measured. |
 
 Studies of specific mechanisms:
 

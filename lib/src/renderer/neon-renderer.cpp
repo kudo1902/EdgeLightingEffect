@@ -1,6 +1,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-tuning.h"
 #include "animation/clock.h"
+#include "core/render-target-formats.h"
 #include "util/geometry-utils.h"
 #include "util/segment-utils.h"
 #include "shaders.h"
@@ -200,7 +201,10 @@ namespace EdgeLighting
 
         /// One candidate texture format for a buffer that walks a list - the
         /// emission table, the glow coverage table and the gather buffer (see
-        /// ResizeInBestFormat).
+        /// ResizeInBestFormat). Each walk asks the effect's RenderTargetFormats
+        /// at its allocation and starts at the first row this driver renders.
+        /// A format added to any list below gets a row in
+        /// RenderTargetFormats::LogReport, the startup report.
         typedef struct TargetFormat
         {
             GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
@@ -305,52 +309,14 @@ namespace EdgeLighting
         /// 1.6 -> 3.2 MB for an 800 x 500 rect at 1080p at 0.5 (752 x 540
         /// texels) - 4.1 MB at 1080p and 0.5 now that the buffer is the whole
         /// viewport.
+        ///
+        /// SharedBuffer::BeginWrite asks the effect's RenderTargetFormats and
+        /// starts at the first row this driver renders. A format added here
+        /// gets a row in RenderTargetFormats::LogReport, the startup report.
         constexpr SharedBuffer::Format SCALED_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
-
-        /// Allocate @p buffer at @p width x @p height in the best of the
-        /// @p count @p formats the driver will give: walk the list from
-        /// @p tier, resizing to each candidate until one allocates. The walk
-        /// of every buffer above that has a format list - the emission table,
-        /// the glow coverage table, the gather buffer and the reduced buffer.
-        ///
-        /// @p tier is where the walk resumes, and is left on the format that
-        /// allocated. Keep it beside the buffer and pass it back on every call:
-        /// re-asking for a format the driver refused would churn the
-        /// attachment - Framebuffer::Resize treats a format change as a
-        /// reallocation, and its failure path destroys what was there - and a
-        /// buffer that is released between uses cannot record the refusal in
-        /// its own attachment. So a driver that refused RGBA16F once is not
-        /// asked again, and logs the fallback once. When every candidate is
-        /// refused, @p tier is left on the last, the one most likely to
-        /// allocate on a later retry, rather than off the end of the list.
-        ///
-        /// Each fallback is logged as "@p what target unavailable, falling
-        /// back to <next>. @p consequence".
-        /// @return false only if no candidate allocated, in which case there
-        ///         is no attachment at all.
-        inline bool ResizeInBestFormat(Framebuffer &buffer, const TargetFormat *formats, size_t count, size_t &tier,
-                                       int width, int height, GLint filter, int attachments, const char *what,
-                                       const char *consequence)
-        {
-            for (; tier < count; ++tier)
-            {
-                const TargetFormat &f = formats[tier];
-                if (buffer.Resize(width, height, f.internalFormat, f.format, f.type, filter, attachments))
-                {
-                    return true;
-                }
-                if (tier + 1 < count)
-                {
-                    LOG_E("NeonRenderer: %s %s target unavailable, falling back to %s. %s", f.name, what,
-                          formats[tier + 1].name, consequence);
-                }
-            }
-            tier = count - 1;
-            return false;
-        }
 
         /// GL_NEAREST because the consumer reads the table with texelFetch:
         /// adjacent texels are unrelated perimeter samples (and the two rows
@@ -1289,10 +1255,22 @@ namespace EdgeLighting
 
         /// The fields' format: Fa alone (R16F) without segments, Fa and Fs
         /// (RG16F, twice the memory) with them - the composite's
-        /// uFieldSegments has to agree, so both read @p effectiveSegments.
+        /// uFieldSegments has to agree, so both read @p effectiveSegments. A
+        /// format added here gets a row in RenderTargetFormats::LogReport, the
+        /// startup report.
         inline FieldFormat GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
         {
             return effectiveSegments.empty() ? FieldFormat{GL_R16F, GL_RED} : FieldFormat{GL_RG16F, GL_RG};
+        }
+
+        /// The fields' format as a list of one for ResizeInBestFormat - the
+        /// walk every buffer with a format allocates through - and for the
+        /// gates' question. Half float alone: no 8-bit row (renderFieldPass).
+        inline TargetFormat GetFieldTarget(const std::vector<SegmentBoost> &effectiveSegments)
+        {
+            const FieldFormat format = GetFieldFormat(effectiveSegments);
+            return TargetFormat{format.internalFormat, format.format, GL_HALF_FLOAT,
+                                format.internalFormat == GL_R16F ? "R16F" : "RG16F"};
         }
 
         /// Whether this config's shading can be factored into the hue-invariant
@@ -2151,12 +2129,15 @@ namespace EdgeLighting
         // Allocated ONCE, here, and never touched again: the emission table's
         // dimensions are compile-time constants, so unlike every other buffer
         // in the renderer it has no reason to be revisited per frame. Its
-        // format is settled here too. The walk starts at the top: this is the
-        // only allocation the buffer ever gets, so there is no refused format
-        // to resume past and nothing to keep the tier for.
+        // format is settled here too. The walk starts at the top, and
+        // ResizeInBestFormat asks this effect's RenderTargetFormats which rows
+        // render: this is the only allocation the buffer ever gets, so there
+        // is no earlier refusal to resume past and nothing to keep the tier
+        // for.
         size_t emissionTier = 0;
-        if (!ResizeInBestFormat(mEmission.buffer, EMISSION_FORMATS, std::size(EMISSION_FORMATS), emissionTier,
-                                NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1, "emission",
+        if (!ResizeInBestFormat(mEmission.buffer, GetRenderTargetFormats(), EMISSION_FORMATS,
+                                std::size(EMISSION_FORMATS), emissionTier, NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1,
+                                "NeonRenderer", "emission",
                                 "Arc intensities and stacked segment boosts above 1.0 will clamp."))
         {
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
@@ -2426,10 +2407,22 @@ namespace EdgeLighting
         const glm::ivec4 glowWindow = GetSubWindow(scaledRegion, mGlowBounds.outer);
         const BufferRegion fieldRegion = GetWindowRegion(scaledRegion, glowWindow);
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
+        // Whether this context renders the fields' half-float format
+        // (GetFieldFormat: R16F, RG16F with segments), asked of the effect's
+        // RenderTargetFormats - a lookup, the startup report having probed
+        // both. Both gates ask it BEFORE building the field's programs, so a
+        // driver that cannot render the field never compiles them, and asks
+        // it again every frame rather than marking the field unavailable: the
+        // format follows the segments.
+        const auto fieldTargetRenderable = [this]()
+        {
+            const TargetFormat target = GetFieldTarget(mEffectiveSegments);
+            return GetRenderTargetFormats().IsRenderable(target.internalFormat, target.format, target.type);
+        };
         if (glowReady && !mGlowField.schedule.unavailable && !bypasses(NeonBypass::GLOW_FIELD) &&
             IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
-            FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && ensureFieldPrograms() &&
-            !reuseOffscreen)
+            FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && fieldTargetRenderable() &&
+            ensureFieldPrograms() && !reuseOffscreen)
         {
             field = mGlowField.schedule.Decide(viewport, mGradientLUT.GetUploadCount(), !fieldProgramsBuilt,
                                                config.neon.intensity, intensityMoving);
@@ -2441,7 +2434,8 @@ namespace EdgeLighting
         // every frame.
         LazyBake::Decision ringField;
         if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
-            !bypasses(NeonBypass::RING_FIELD) && IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
+            !bypasses(NeonBypass::RING_FIELD) && IsRingFieldEligible(config, mGradientLUT.IsOpaque()) &&
+            fieldTargetRenderable())
         {
             const RingFieldLayout layout =
                 computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
@@ -3300,9 +3294,9 @@ namespace EdgeLighting
             // record a refused format in its own attachment. One tier holds
             // for both lists: a row's index is its precision in either.
             const TargetFormat *formats = fourChannel ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG;
-            if (!ResizeInBestFormat(mGlowCover.buffer, formats, std::size(GLOW_COVER_FORMATS), mGlowCover.format,
-                                    layout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1, "glow coverage",
-                                    "The halo and bloom coverage will be stored at 8 bits."))
+            if (!ResizeInBestFormat(mGlowCover.buffer, GetRenderTargetFormats(), formats, std::size(GLOW_COVER_FORMATS),
+                                    mGlowCover.format, layout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1, "NeonRenderer",
+                                    "glow coverage", "The halo and bloom coverage will be stored at 8 bits."))
             {
                 return false;
             }
@@ -3338,9 +3332,10 @@ namespace EdgeLighting
         // Two channels, the main table's precision tier. Should it fail, the
         // segments go back into the main table, which needs nothing more.
         const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
-        if (!ResizeInBestFormat(mGlowCover.segBuffer, GLOW_COVER_FORMATS_RG, std::size(GLOW_COVER_FORMATS_RG),
-                                mGlowCover.format, segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
-                                "segment coverage", "The segments' coverage will be stored at 8 bits."))
+        if (!ResizeInBestFormat(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
+                                std::size(GLOW_COVER_FORMATS_RG), mGlowCover.format, segLayout.width,
+                                GLOW_COVER_HEIGHT, GL_LINEAR, 1, "NeonRenderer", "segment coverage",
+                                "The segments' coverage will be stored at 8 bits."))
         {
             mGlowCover.fillUnavailable = true;
             mGlowCover.segWantedDirect = true;
@@ -4410,8 +4405,8 @@ namespace EdgeLighting
         // to draw (OnConfigChanged), so its own attachment cannot record how
         // far down the list a driver forced it.
         const int attachments = mEffectiveSegments.empty() ? 1 : 2;
-        if (!ResizeInBestFormat(mGather.buffer, GATHER_FORMATS, std::size(GATHER_FORMATS), mGather.format, texels.x,
-                                texels.y, GL_LINEAR, attachments, "gather",
+        if (!ResizeInBestFormat(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS, std::size(GATHER_FORMATS),
+                                mGather.format, texels.x, texels.y, GL_LINEAR, attachments, "NeonRenderer", "gather",
                                 "Below resolutionScale 1.0 the glow reads up to ~2/255 further from 1.0."))
         {
             return false;
@@ -4448,11 +4443,13 @@ namespace EdgeLighting
         // so 8 bits would move whole levels - a driver that cannot render to
         // half float shades directly instead. NEAREST: the composite reads one
         // texel per fragment, its own.
-        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
-        if (!mGlowField.buffer.Resize(texels.x, texels.y, format.internalFormat, format.format, GL_HALF_FLOAT,
-                                      GL_NEAREST))
+        const TargetFormat target = GetFieldTarget(mEffectiveSegments);
+        size_t tier = 0;
+        if (!ResizeInBestFormat(mGlowField.buffer, GetRenderTargetFormats(), &target, 1, tier, texels.x, texels.y,
+                                GL_NEAREST, 1, "NeonRenderer", "hue-invariant field", ""))
         {
-            LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
+            LOG_E("NeonRenderer: the hue-invariant field's half-float target failed to allocate - the glow is "
+                  "shaded directly.");
             return false;
         }
         // Cleared to 0: a texel the quad does not reach composites to nothing.
@@ -4490,7 +4487,7 @@ namespace EdgeLighting
         {
             mScaled->ForgetContents();
         }
-        if (!mScaled->BeginWrite(texels, window))
+        if (!mScaled->BeginWrite(texels, window, GetRenderTargetFormats()))
         {
             return false;
         }
@@ -4521,7 +4518,7 @@ namespace EdgeLighting
         {
             mScaled->ForgetContents();
         }
-        if (!mScaled->BeginWrite(texels, window))
+        if (!mScaled->BeginWrite(texels, window, GetRenderTargetFormats()))
         {
             return false;
         }
@@ -4557,11 +4554,13 @@ namespace EdgeLighting
         // Half float, one channel or two, NEAREST - as the shading's field,
         // for its reasons (renderFieldPass).
         const RingFieldLayout &layout = mRingField.layout;
-        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
-        if (!mRingField.buffer.Resize(layout.atlas.x, layout.atlas.y, format.internalFormat, format.format,
-                                      GL_HALF_FLOAT, GL_NEAREST))
+        const TargetFormat target = GetFieldTarget(mEffectiveSegments);
+        size_t tier = 0;
+        if (!ResizeInBestFormat(mRingField.buffer, GetRenderTargetFormats(), &target, 1, tier, layout.atlas.x,
+                                layout.atlas.y, GL_NEAREST, 1, "NeonRenderer", "edge ring field", ""))
         {
-            LOG_E("NeonRenderer: no half-float target for the edge ring's field - the ring is shaded directly.");
+            LOG_E("NeonRenderer: the edge ring's field's half-float target failed to allocate - the ring is "
+                  "shaded directly.");
             return false;
         }
         // Cleared to 0 for the atlas texels no strip covers, which are never

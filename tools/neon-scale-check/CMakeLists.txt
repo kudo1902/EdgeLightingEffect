@@ -61,6 +61,7 @@ add_executable(neon-scale-check
     src/shared-buffer.cpp
     src/clock-check.cpp
     ../common/pass-recorder.cpp
+    ../common/draw-target-watch.cpp
 )
 
 # `sequence` needs NeonRenderer::SetBypass, which a checkout from before it
@@ -86,6 +87,18 @@ file(STRINGS "${_el_flare_header}" _el_flare_has_bypass REGEX "SetBypass")
 if(_el_flare_has_bypass)
     target_sources(neon-scale-check PRIVATE src/flare-reuse.cpp)
     target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_FLARE_REUSE=1)
+endif()
+
+# `formats` needs the effect's RenderTargetFormats, which a checkout from
+# before it does not have, likewise.
+if(EL_ROOT)
+    set(_el_formats_header "${EL_ROOT}/lib/include/core/render-target-formats.h")
+else()
+    set(_el_formats_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/core/render-target-formats.h")
+endif()
+if(EXISTS "${_el_formats_header}")
+    target_sources(neon-scale-check PRIVATE src/format-check.cpp)
+    target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_FORMATS=1)
 endif()
 
 # `partition` watches the renderer's draws through the pass recorder shared

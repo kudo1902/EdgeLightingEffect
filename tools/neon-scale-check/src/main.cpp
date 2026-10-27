@@ -59,11 +59,22 @@
 //       (LensFlareRenderer::SetBypass) must match byte for byte; then times
 //       still frames both ways. See flare-reuse.h.
 //
+//   neon-scale-check formats
+//       A gate for the 8-bit fallback rows: the scenes drawn with formats
+//       refused through the effect's RenderTargetFormats (half float, then
+//       everything) against nothing refused. No refused format may be drawn
+//       or alive, no field program may build, the frames must stay within
+//       their measured bounds, and refusing everything must drop the neon.
+//       See format-check.h.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
 #include "clock-check.h"
 #include "flare-reuse.h"
+#ifdef NEON_SCALE_CHECK_FORMATS
+#include "format-check.h"
+#endif
 #include "cover.h"
 #include "harness.h"
 #include "partition.h"
@@ -1027,6 +1038,12 @@ int main(int argc, char **argv)
         return FlareReuseCheck(argc, argv);
     }
 #endif
+#ifdef NEON_SCALE_CHECK_FORMATS
+    if (argc >= 2 && std::strcmp(argv[1], "formats") == 0)
+    {
+        return FormatCheck(argc, argv);
+    }
+#endif
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
@@ -1040,6 +1057,7 @@ int main(int argc, char **argv)
                  "  neon-scale-check sequence [--sequences N] [--frames F] [--seed S] [--only K] [--isolate]\n"
                  "                            [--dump DIR] [--verbose]\n"
                  "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n"
-                 "  neon-scale-check flare-reuse [--no-time] [--dump DIR] [--verbose]\n");
+                 "  neon-scale-check flare-reuse [--no-time] [--dump DIR] [--verbose]\n"
+                 "  neon-scale-check formats [--verbose]\n");
     return 2;
 }

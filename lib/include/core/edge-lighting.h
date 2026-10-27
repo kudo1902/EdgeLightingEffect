@@ -203,6 +203,21 @@ namespace EdgeLighting
 
         ///@}
 
+        /// @brief What this effect's GL context can render to: one
+        ///        @ref RenderTargetFormats, made with the effect and handed to
+        ///        every renderer @ref AddRenderer registers. Each format is
+        ///        probed once - by the startup report @ref Initialize logs -
+        ///        and every renderer's format walk asks it at allocation.
+        ///
+        /// For reading the answers (@c GetAnswers) and, in verification only,
+        /// for refusing formats before @ref Initialize
+        /// (@c SetRefusedFormats) - which only a non-const effect can reach: a
+        /// const one hands out the object const, so code given the effect to
+        /// read cannot change what every renderer allocates. Declared only
+        /// here: include core/render-target-formats.h to call into it.
+        const std::shared_ptr<RenderTargetFormats> &GetRenderTargetFormats() { return mRenderTargetFormats; }
+        std::shared_ptr<const RenderTargetFormats> GetRenderTargetFormats() const { return mRenderTargetFormats; }
+
         /// @brief Access the shared clock for play/pause/time control.
         Clock &GetClock();
         const Clock &GetClock() const;
@@ -243,6 +258,10 @@ namespace EdgeLighting
         /// effect (a host keeps its own pointer) and must not hold a dangling
         /// one.
         std::shared_ptr<SharedBufferRegistry> mSharedBufferRegistry;
+        /// What this effect's context can render to, handed to every renderer
+        /// AddRenderer registers - one answer per format for all of them.
+        /// Shared ownership for the registry's reason.
+        std::shared_ptr<RenderTargetFormats> mRenderTargetFormats;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
         /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
         /// a newly registered renderer still has an Initialize coming or has

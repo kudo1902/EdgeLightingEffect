@@ -287,6 +287,112 @@ namespace EdgeLighting
             destroy();
         }
 
+        /// Whether this driver can render to @p internalFormat: a 4 x 4 texture
+        /// allocated as @ref Resize allocates one (@p format and @p type are
+        /// its transfer format, as there), attached to a new framebuffer, and
+        /// @c glCheckFramebufferStatus. @p status, if given, receives that
+        /// status - 0 when there is none: the upload failed (then
+        /// @p uploadError, if given, receives the error @c glTexImage2D raised -
+        /// a format or pair this GL does not know, or GL_OUT_OF_MEMORY), or the
+        /// status query itself raised an error. A status of 0 is no answer
+        /// about the format: RenderTargetFormats keeps it as unknown, and the
+        /// walk lets the full-size allocation decide that format.
+        ///
+        /// The raw, uncached check: the library asks it through the effect's
+        /// @c RenderTargetFormats, which probes each format once and keeps the
+        /// answer (and holds the verification hook that refuses formats), so
+        /// call that rather than this from a renderer.
+        ///
+        /// It answers "can it be rendered to" and nothing else. Not whether the
+        /// format blends or filters linearly: for the 8-bit and half-float
+        /// formats this library allocates, both come with rendering on every
+        /// GL it targets (docs/design/render-target-format-check-plan.md,
+        /// section 2). Nor whether a full-size allocation will succeed - memory
+        /// and size limits are Resize's to find, so a format walk keeps its
+        /// fallback. It makes the calls Resize makes - not glTexStorage2D, not
+        /// a renderbuffer - because it is a prediction of Resize.
+        ///
+        /// The extension strings are no substitute: desktop GL 3.0 and GLES 3.2
+        /// render half float in core and need not list any, and the AMD Radeon
+        /// Pro 5300M (macOS GL 4.1) lists none while rendering every float
+        /// format this library uses.
+        ///
+        /// @pre A GL context is current. Not per frame: ~0.03 ms, and a texture
+        ///      and a framebuffer created and deleted (AMD 5300M) - which is
+        ///      why RenderTargetFormats calls it once per format.
+        /// @note Leaves the DRAW framebuffer binding, the active unit's 2D
+        ///       texture binding and the pixel-unpack buffer binding as it
+        ///       found them; the read binding is never touched. The unpack
+        ///       buffer is unbound for the upload: with one bound, the null data
+        ///       pointer is an offset into it, and a 4 x 4 read past the end of
+        ///       a small one is GL_INVALID_OPERATION - a false "no".
+        /// @note Leaves no GL error behind. It reads glGetError after the
+        ///       upload to tell a failed upload (status 0) from a format the
+        ///       driver cannot render, so an error pending on entry would be
+        ///       misread as its own: those are drained first, each logged as a
+        ///       warning naming the format being probed, since they are the
+        ///       caller's. GL keeps no way to raise them again - which is why
+        ///       RenderTargetFormats probes the formats the library uses at
+        ///       Initialize and keeps every answer, so none is probed
+        ///       mid-frame.
+        static bool IsColorRenderable(GLint internalFormat, GLenum format, GLenum type, GLenum *status = nullptr,
+                                      GLenum *uploadError = nullptr)
+        {
+            for (GLenum err = glGetError(); err != GL_NO_ERROR; err = glGetError())
+            {
+                LOG_W("Framebuffer::IsColorRenderable: GL error 0x%x was pending before probing format 0x%x - the "
+                      "caller's, cleared here.",
+                      err, internalFormat);
+            }
+
+            GLint prevDraw = 0;
+            GLint prevTexture = 0;
+            GLint prevUnpack = 0;
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDraw);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexture);
+            glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevUnpack);
+
+            constexpr GLsizei PROBE_TEXELS = 4;
+            GLuint texture = 0;
+            glGenTextures(1, &texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, PROBE_TEXELS, PROBE_TEXELS, 0, format, type, nullptr);
+            const GLenum upload = glGetError();
+            const bool allocated = upload == GL_NO_ERROR;
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpack));
+            if (uploadError)
+            {
+                *uploadError = upload;
+            }
+
+            GLenum result = 0;
+            if (allocated)
+            {
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                GLuint fbo = 0;
+                glGenFramebuffers(1, &fbo);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+                result = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDraw));
+                glDeleteFramebuffers(1, &fbo);
+            }
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTexture));
+            glDeleteTextures(1, &texture);
+
+            // Whatever is left was raised here, by a refused upload.
+            while (glGetError() != GL_NO_ERROR)
+            {
+            }
+            if (status)
+            {
+                *status = result;
+            }
+            return result == GL_FRAMEBUFFER_COMPLETE;
+        }
+
         /// Activates this framebuffer for rendering and sets the GL viewport
         /// to match its dimensions. Caller is expected to clear if desired.
         ///

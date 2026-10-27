@@ -2,6 +2,7 @@
 
 #include "harness.h"
 #include "scenes.h"
+#include "shared-buffer-probe.h"
 
 #include "core/shared-buffer-registry.h"
 #include "core/shared-buffer.h"
@@ -629,51 +630,41 @@ namespace NeonScaleCheck
             Anim mArc, mSegment, mIntensity, mMove, mSize, mBloom, mGlow;
         };
 
-        /// The neon's shared buffer as a reader's Render is handed it - as
-        /// `shared-buffer`'s probe takes it - read back as floats.
-        class BufferProbe : public BaseRenderer
+        /// The neon's shared buffer as a reader's Render is handed it - the
+        /// checks' one probe (shared-buffer-probe.h) - read back as floats
+        /// while it is still this frame's.
+        class BufferProbe : public SharedBufferProbe
         {
         public:
-            bool Initialize() override { return true; }
-            void Update(float, double, const Config &) override {}
-            void Render(int, int, double, const Config &) override
+            /// Whether the last Render was handed a ready buffer.
+            bool IsReady() const { return Last().ready; }
+            /// Its size, texels; 0 when not ready.
+            glm::ivec2 GetTexels() const { return IsReady() ? Last().texels : glm::ivec2(0); }
+            /// Its texels as RGBA floats, bottom row first; empty when not ready.
+            const std::vector<float> &GetData() const { return mData; }
+
+        protected:
+            void OnReady(const SharedBuffer &buffer) override
             {
-                const std::shared_ptr<const SharedBuffer> buffer = GetSharedBufferRegistry()->Find(SharedBufferId::NEON);
-                mReady = buffer && buffer->IsReady();
-                mTexels = mReady ? buffer->GetTexels() : glm::ivec2(0);
-                mData.clear();
-                if (!mReady)
-                {
-                    return;
-                }
-                mData.assign(size_t(mTexels.x) * size_t(mTexels.y) * 4, 0.0f);
+                const glm::ivec2 texels = buffer.GetTexels();
+                mData.assign(size_t(texels.x) * size_t(texels.y) * 4, 0.0f);
                 GLint previous = 0;
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
                 GLuint fbo = 0;
                 glGenFramebuffers(1, &fbo);
                 glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, buffer->GetTextureId(), 0);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, buffer.GetTextureId(), 0);
                 if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
                 {
                     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                    glReadPixels(0, 0, mTexels.x, mTexels.y, GL_RGBA, GL_FLOAT, mData.data());
+                    glReadPixels(0, 0, texels.x, texels.y, GL_RGBA, GL_FLOAT, mData.data());
                 }
                 glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
                 glDeleteFramebuffers(1, &fbo);
             }
-            void OnConfigChanged(const Config &) override {}
-            RendererLayer GetLayer() const override { return RendererLayer::CUSTOM; }
-
-            /// Whether the last Render was handed a ready buffer.
-            bool IsReady() const { return mReady; }
-            /// Its size, texels; 0 when not ready.
-            glm::ivec2 GetTexels() const { return mTexels; }
-            /// Its texels as RGBA floats, bottom row first; empty when not ready.
-            const std::vector<float> &GetData() const { return mData; }
+            void OnNotReady() override { mData.clear(); }
 
         private:
-            bool mReady = false;
-            glm::ivec2 mTexels{0};
             std::vector<float> mData;
         };
 

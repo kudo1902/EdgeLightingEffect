@@ -5,6 +5,83 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-27 - Render-target formats are asked about before they are allocated (I93)
+
+Not committed; on top of `dce6d45`. Built from
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md),
+steps 1-5 and 7; step 6, on the device, is open.
+
+- **The problem.** A driver's support for a format was learned only by
+  failing a full-size allocation: on a device without half-float render
+  targets that meant two ERROR lines per buffer, spread over whichever frames
+  first allocated each one, and nothing for a buffer the config never reached;
+  the half-float fields built their three programs - on the frame that already
+  carries the first-draw compile stall - before finding out they could not be
+  used; and the 8-bit fallback rows ran nowhere, since both Macs render every
+  format the library asks for.
+- **What changed.**
+  - `Framebuffer::IsColorRenderable`: a 4 x 4 texture allocated as `Resize`
+    allocates one, attached, `glCheckFramebufferStatus`; it restores the draw
+    binding, the 2D texture and the pixel-unpack buffer and leaves no GL
+    error. ~0.03 ms a probe (AMD 5300M). The extension strings are no
+    substitute: the AMD lists none of the four while rendering every float
+    format, and desktop GL and GLES 3.2 have float targets in core.
+  - `RenderTargetFormats` (`core/render-target-formats.h`): one per effect,
+    owned by `EdgeLightingEffect` and handed to every renderer like the
+    shared-buffer registry (`BaseRenderer::GetRenderTargetFormats`, never
+    null). Each format probed once and kept. `Initialize` logs its report -
+    the five formats the library uses, the four extensions, 0.22 ms - before
+    any renderer initialises.
+  - Every format walk asks it at its allocation (`ResizeInBestFormat`,
+    `SharedBuffer::BeginWrite`, both `resizeScaledBuffer`s) and starts at the
+    first row the driver renders; when no row renders it tries nothing. Both
+    half-float fields ask it before their programs are built.
+  - `SetRefusedFormats` on the object, per effect, is the verification hook,
+    and `neon-scale-check formats` the gate built on it.
+- **Designed twice.** A first version had each renderer probe its own lists in
+  `Initialize` and kept the refusal hook as process-wide state on
+  `Framebuffer`, which also failed `Resize`. It was replaced the same day by
+  the central object, which the plan's section 4.0 argues for; the central
+  hook also makes a better test, since a buffer that allocates without asking
+  now visibly gets the refused format. Building `formats` then found one
+  defect in the rework: with no row of a list rendering, the walk was still
+  sent on to allocate the last one - fixed (the object's "no" is final, each
+  skip logged once).
+- **Verified** on the AMD 5300M: `check`, `partition`, `shared-buffer`,
+  `flare-reuse`, `clock` and `sequence` pass with no WARN or ERROR; the
+  `cover` set is byte-identical to the build before the field gate; a host
+  file including its own GL header and then `edge-lighting.h` still compiles;
+  the report prints the same through the C++ API and the C ABI. `formats`
+  passes in about 10 s and fails on a build without the field gate (675 draws
+  into half float, three field programs built) and on one whose gather walk
+  does not ask (378 draws into RGBA16F).
+- **Measured: what the 8-bit rows cost**, half float refused against nothing
+  refused, 110 cells: every scene within 2-3 levels and 0.46% of lit channels
+  more than one off, except `segments` - ~53 levels and ~9% at every scale,
+  its boosts of 2.0 clamped to 1.0 by the emission table's RGBA8 row (the
+  fallback line says so). That is what a GLES 3.0 device without
+  `EXT_color_buffer_half_float` would draw.
+- **Reviewed twice the same day** (13 findings, 12 fixed, then 7, all fixed;
+  the plan's section 10 lists them). What changed behaviour: a probe with no
+  status - a failed upload, out of memory or a rejected transfer pair - is
+  kept as unknown and the full-size allocation decides that format, where it
+  had been a permanent "no"; a renderer outside an effect probes in
+  `Initialize`, not mid-frame; every buffer, the half-float fields included,
+  allocates through one `ResizeInBestFormat`; and `SetFailedAllocations` drives
+  its full-size fallback, which `formats` checks as case D.
+
+### Open
+
+- **Step 6: read the report on the Tizen device** - `GL_RENDERER`, the five
+  formats, the four extensions, the time. It answers the "half-float render
+  targets" part of the 2026-10-08 entry's open "Measure on the target" item; if
+  half float is refused there, look at a segment config and the banding the
+  dither cannot break on the device itself.
+- Not run on the M2.
+- The plan's open decisions (section 9): a C ABI mirror of the answers, a
+  blend check, a read-back check, the read binding the library moves, and
+  forcing a full-size failure now that the hook is off `Resize`.
+
 ## 2026-10-21 - The flare's ray needles are no longer cut in half (V36)
 
 Not committed; on top of `4467d61`, the V32 entry below. The rest of the thirty-eighth

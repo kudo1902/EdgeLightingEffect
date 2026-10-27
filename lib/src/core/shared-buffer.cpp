@@ -1,4 +1,5 @@
 #include "core/shared-buffer.h"
+#include "core/render-target-formats.h"
 #include "util/log-util.h"
 #include <utility>
 
@@ -10,7 +11,7 @@ namespace EdgeLighting
     {
     }
 
-    bool SharedBuffer::BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window)
+    bool SharedBuffer::BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, RenderTargetFormats &targets)
     {
         // What the buffer is before the resize: a reallocation leaves its
         // texels undefined, so the clear below has to be whole.
@@ -18,33 +19,19 @@ namespace EdgeLighting
         const glm::ivec2 wasSize = GetTexels();
         const GLint wasFormat = mBuffer.GetInternalFormat();
 
-        // The format walk resumes from the best format not yet refused - kept
-        // here because a released buffer cannot record it. The filter is
-        // requested through Resize, the only writer of the tracked value:
-        // setting it on the texture afterwards would leave the two disagreeing
-        // and make the next Resize reallocate, every frame.
-        bool allocated = false;
-        for (; mTier < mFormats.size(); ++mTier)
-        {
-            const Format &f = mFormats[mTier];
-            if (mBuffer.Resize(texels.x, texels.y, f.internalFormat, f.format, f.type, GL_LINEAR, 1))
-            {
-                allocated = true;
-                break;
-            }
-            if (mTier + 1 < mFormats.size())
-            {
-                LOG_E("SharedBuffer[%s]: %s unavailable, falling back to %s. %s", mBuffer.GetName(), f.name,
-                      mFormats[mTier + 1].name, mConsequence.c_str());
-            }
-        }
-        if (!allocated)
+        // The format walk (ResizeInBestFormat) resumes from the best format
+        // not yet refused - kept here because a released buffer cannot record
+        // it - and starts where this context renders. The filter is requested
+        // through Resize, the only writer of the tracked value: setting it on
+        // the texture afterwards would leave the two disagreeing and make the
+        // next Resize reallocate, every frame.
+        if (!ResizeInBestFormat(mBuffer, targets, mFormats.data(), mFormats.size(), mTier, texels.x, texels.y,
+                                GL_LINEAR, 1, mBuffer.GetName(), "shared", mConsequence.c_str()))
         {
             // Resize destroys the attachment on its failure path, so the
             // buffer holds id 0, and Bind would bind the CALLER's framebuffer -
             // which a clear, unclipped by the viewport, would then erase. Bail
             // before either.
-            mTier = mFormats.empty() ? 0 : mFormats.size() - 1;
             mDirtyKnown = false;
             mReady = false;
             return false;

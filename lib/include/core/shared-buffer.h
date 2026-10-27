@@ -10,6 +10,8 @@
 
 namespace EdgeLighting
 {
+    class RenderTargetFormats; // BeginWrite asks it; core/render-target-formats.h.
+
     /// One layer's offscreen image, shared with the other renderers: the GL
     /// buffer itself and the state that says what it holds. The producer draws
     /// into it as part of its own frame; readers sample it. Nothing is drawn
@@ -79,6 +81,11 @@ namespace EdgeLighting
         /// The viewport it was drawn for, px: uv (0, 0) to (1, 1) spans it.
         glm::ivec2 GetViewport() const { return mViewport; }
 
+        /// The sized internal format it is allocated in, e.g. GL_RGBA16F - so a
+        /// reader can tell whether it holds gradients finer than an 8-bit
+        /// level. Valid while allocated (@ref GetTextureId nonzero).
+        GLint GetInternalFormat() const { return mBuffer.GetInternalFormat(); }
+
         /// Writes so far. Compared only for equality.
         uint32_t GetVersion() const { return mVersion; }
 
@@ -95,10 +102,16 @@ namespace EdgeLighting
         /// caller's viewport at a reduced scale, so a host scissor in window
         /// px lands on the wrong texels. The clear's own scissor is put back
         /// as it was found.
+        ///
+        /// The format walk asks @p targets first - the producer's
+        /// BaseRenderer::GetRenderTargetFormats - and starts at the first
+        /// format this context renders, so it never fails a full-size
+        /// allocation in a format a probe already refused; its own fallback
+        /// is left for a refusal the probe did not predict.
         /// @return false if no format allocates, in which case nothing is bound
         ///         - binding then would bind the CALLER's framebuffer - and the
         ///         caller must draw nothing.
-        bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window);
+        bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, RenderTargetFormats &targets);
 
         /// Treat the texels as undefined: the next @ref BeginWrite clears the
         /// whole buffer rather than two windows. Moves nothing else. For

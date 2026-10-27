@@ -299,8 +299,15 @@ Things to know:
   afterwards, never with `BindDefault()`.
 - **Completeness.** A framebuffer is only usable if the driver accepts its
   attachments' formats (`glCheckFramebufferStatus`). RGBA8 is always accepted;
-  RGBA16F needs an extension on GLES 3.0. `Framebuffer::Resize` returns false
-  when the driver refuses, and the neon then tries the next format in a list.
+  RGBA16F needs an extension on GLES 3.0 (`EXT_color_buffer_half_float` or
+  `EXT_color_buffer_float`; GLES 3.2 and desktop GL have it in core, with no
+  extension listed). So the library asks before it allocates: the effect's
+  `RenderTargetFormats` probes each format once - a 4 x 4 texture, an FBO, the
+  status - and every buffer with a list of formats starts at the first one the
+  driver renders. `Framebuffer::Resize` still returns false if a full-size
+  allocation fails anyway, and the walk then tries the next format in its list.
+  The startup log's "Render-target formats" table says what this driver
+  renders.
 - **Clearing.** `Framebuffer::ClearBuffer()` uses `glClearBufferfv`, which does
   not touch the global clear-colour state. A clear respects the scissor box,
   which is why offscreen passes disable the host's scissor
@@ -1371,8 +1378,15 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | every frame it gathers; resized then (no-op if unchanged) |
 | `mScaled` | the neon's shared buffer (`SharedBuffer`, `SharedBufferId::NEON`): the whole viewport at `resolutionScale` (`GetViewportRegion`), what the blit and any other renderer read | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | every frame that draws P1b or P1c, through `BeginWrite` - resized then, and cleared only over the glow quad's window and the last write's |
-| `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback | only on configs the field serves (Part 5.5) |
+| `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback - where the driver cannot render it, the field is never built and the glow is shaded directly | only on configs the field serves (Part 5.5) |
 | `mRingField.buffer` | the edge ring's four strips, packed (`RingFieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
+
+Every "else" in that table is the effect's `RenderTargetFormats` deciding:
+each buffer with a list of formats asks it when it allocates and starts at the
+first format this driver renders, and the two fields ask it before their
+programs are built. On both development Macs every format renders, so the
+"else" rows run only on a device without half-float render targets - or under
+`neon-scale-check formats`, which refuses formats on purpose to draw them.
 
 `OnConfigChanged` releases the reduced buffer, the gather buffer and the
 coverage table when the layer is disabled, the segment table also whenever the
@@ -1388,7 +1402,9 @@ names in their constructors, so a GL context must be current when a
 1. `ensureProgram` builds `mEmissionShader`, the one program every frame uses.
    Every other program, the fill's included, is built on first use.
 2. `ResizeInBestFormat`: allocate the 128x2 emission table, RGBA16F or
-   RGBA8. Fails `Initialize` only if neither format allocates. The 1024x128
+   RGBA8 - the first the effect's `RenderTargetFormats` says this driver
+   renders (the effect's startup report probed both already, so this is a
+   lookup). Fails `Initialize` only if neither format renders or allocates. The 1024x128
    coverage table is NOT allocated here: at 1 MB it is most of what the
    renderer holds, and the default ring never reads it.
 3. Declare the vertex format (attribute 0, two floats) on the five rebuildable

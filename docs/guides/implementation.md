@@ -47,6 +47,23 @@ Concretely it holds:
 - a `Clock` (play/pause time accumulator).
 - an `AnimationManager` (by `unique_ptr`).
 - a `vector<shared_ptr<BaseRenderer>>`, registered by the host.
+- two objects it hands to every renderer it registers, before the renderer's
+  `Initialize`: the `SharedBufferRegistry`, through which a layer shares an
+  offscreen image (§3), and `RenderTargetFormats`
+  ([`core/render-target-formats.h`](../../lib/include/core/render-target-formats.h)) -
+  what this GL context can render to. Each format is probed once (a 4 x 4
+  texture and `glCheckFramebufferStatus`) and the answer kept; every buffer
+  that has a list of formats, best first, asks it at its allocation and starts
+  at the first one the driver renders. `GetRenderTargetFormats()` exposes it,
+  for its answers and for the verification hook `neon-scale-check formats`
+  refuses formats through.
+
+`Initialize()` logs the driver: every extension, the GL caps, then the
+render-target report - RGBA16F, RG16F, R16F, RGBA8 and RG8, each renderable or
+not, and the four extensions that decide them on GLES - before it initialises
+any renderer, so the report's probes are the ones every renderer finds kept.
+On a device, that report is the first thing to read when the glow looks banded:
+a half-float format that does not render puts every buffer on its 8-bit row.
 
 Renderers are independent visual layers with no scene graph and no depth
 sorting. They composite by blending, list order is stacking order, and any
