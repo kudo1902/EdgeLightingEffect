@@ -38,9 +38,9 @@ namespace EdgeLighting
     ///
     /// @par Writes
     /// The producer allocates and clears it through @ref BeginWrite, which
-    /// keeps the format tier, the version and which texels may hold anything
-    /// but 0 - so a write clears only the window it draws into and the one the
-    /// last write drew, rather than the whole viewport-sized buffer.
+    /// keeps the version and which texels may hold anything but 0 - so a write
+    /// clears only the window it draws into and the one the last write drew,
+    /// rather than the whole viewport-sized buffer.
     class SharedBuffer
     {
     public:
@@ -105,9 +105,10 @@ namespace EdgeLighting
         ///
         /// The format walk asks @p targets first - the producer's
         /// BaseRenderer::GetRenderTargetFormats - and starts at the first
-        /// format this context renders, so it never fails a full-size
-        /// allocation in a format a probe already refused; its own fallback
-        /// is left for a refusal the probe did not predict.
+        /// format this context may render at this size, so it never fails a
+        /// full-size allocation in a format a probe already refused, nor
+        /// retries one that already failed this large; its own fallback is
+        /// left for a refusal neither predicted.
         /// @return false if no format allocates, in which case nothing is bound
         ///         - binding then would bind the CALLER's framebuffer - and the
         ///         caller must draw nothing.
@@ -132,7 +133,6 @@ namespace EdgeLighting
     private:
         Framebuffer mBuffer;          ///< The image: one attachment.
         std::vector<Format> mFormats; ///< Candidate formats, best first.
-        size_t mTier = 0;             ///< Index of the best format the driver has not refused. Only ever advances.
         std::string mConsequence;     ///< What a fallback costs, for its log line.
         glm::ivec4 mDirty{0};         ///< The last write's window: every texel outside it is 0 while @c mDirtyKnown.
         bool mDirtyKnown = false;     ///< False while the texels are undefined.

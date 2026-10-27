@@ -140,6 +140,16 @@ namespace EdgeLighting
         ///       real FBO under an @c OffscreenCapture, and a caller that reads
         ///       @ref GetBoundId after calling this would otherwise capture 0
         ///       and redirect its later passes to the window.
+        /// @note Fails on any GL error the allocation raises, not only on an
+        ///       incomplete framebuffer: after GL_OUT_OF_MEMORY the spec leaves
+        ///       the GL's state undefined, completeness included, and that
+        ///       error is the full-size failure a format walk falls back on
+        ///       (ResizeInBestFormat). So on the allocation path - never on the
+        ///       early-out - it drains the errors pending on entry first, each
+        ///       logged as a warning, since they are the caller's; and it
+        ///       unbinds the pixel-unpack buffer for the uploads, as
+        ///       @ref IsColorRenderable does, so a host buffer bound there is
+        ///       not taken for a failure. Leaves no GL error behind.
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
                     GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
@@ -200,8 +210,26 @@ namespace EdgeLighting
                 prevFbo = 0;
             }
 
+            // Errors pending now are the caller's: drained here, each logged,
+            // so the ones read after the allocation below are its own. GL keeps
+            // no way to raise them again; this is the allocation path, so it
+            // costs a host's pending error only on a frame that allocates.
+            for (GLenum err = glGetError(); err != GL_NO_ERROR; err = glGetError())
+            {
+                LOG_W("Framebuffer[%s]: GL error 0x%x was pending before allocating - the caller's, cleared here.",
+                      mName.c_str(), err);
+            }
+
             destroy();
 
+            // No pixel-unpack buffer during the uploads, as in
+            // IsColorRenderable: with a host buffer bound there the null data
+            // pointer is an offset into it, and a read past the end of a small
+            // one is GL_INVALID_OPERATION - which the read below would take for
+            // a failed allocation.
+            GLint prevUnpack = 0;
+            glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &prevUnpack);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
             glGenTextures(colorAttachments, mTextures);
             for (int i = 0; i < colorAttachments; ++i)
             {
@@ -211,6 +239,15 @@ namespace EdgeLighting
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(prevUnpack));
+            // What the uploads raised: GL_OUT_OF_MEMORY above all, after which
+            // the spec leaves the GL's state undefined - so the completeness
+            // check below is not trusted alone. The first error is reported,
+            // the rest drained with it.
+            GLenum allocError = glGetError();
+            for (GLenum err = allocError; err != GL_NO_ERROR; err = glGetError())
+            {
             }
 
             glGenFramebuffers(1, &mFbo);
@@ -232,7 +269,22 @@ namespace EdgeLighting
 
             GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+            // And what attaching raised, if the uploads raised nothing.
+            for (GLenum err = glGetError(); err != GL_NO_ERROR; err = glGetError())
+            {
+                if (allocError == GL_NO_ERROR)
+                {
+                    allocError = err;
+                }
+            }
 
+            if (allocError != GL_NO_ERROR)
+            {
+                LOG_E("Framebuffer[%s]: allocating %dx%d in format 0x%x raised GL error 0x%x (status=0x%x).",
+                      mName.c_str(), width, height, internalFormat, allocError, status);
+                destroy();
+                return false;
+            }
             if (status != GL_FRAMEBUFFER_COMPLETE)
             {
                 LOG_E("Framebuffer[%s] incomplete after resize to %dx%d (status=0x%x).",
@@ -295,11 +347,11 @@ namespace EdgeLighting
         /// @p uploadError, if given, receives the error @c glTexImage2D raised -
         /// a format or pair this GL does not know, or GL_OUT_OF_MEMORY), or the
         /// status query itself raised an error. RenderTargetFormats reads the
-        /// two together (RenderTargetFormats::Answer::IsUnknown): an upload
-        /// that raised GL_INVALID_ENUM or GL_INVALID_VALUE - the internal
-        /// format itself rejected - is a "no"; any other status of 0 is no
-        /// answer about the format, kept as unknown, and the walk lets the
-        /// full-size allocation decide that format.
+        /// two together into one verdict (RenderTargetFormats::Verdict): an
+        /// upload that raised GL_INVALID_ENUM or GL_INVALID_VALUE - the
+        /// internal format itself rejected - is a "no"; any other status of 0
+        /// is no answer about the format, kept as unknown, and the walk lets
+        /// the full-size allocation decide that format.
         ///
         /// The raw, uncached check: the library asks it through the effect's
         /// @c RenderTargetFormats, which probes each format once and keeps the

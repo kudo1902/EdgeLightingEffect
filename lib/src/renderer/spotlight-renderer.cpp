@@ -760,7 +760,8 @@ namespace EdgeLighting
         // would leave mScaledBuffer holding id 0 and Bind would then bind the
         // CALLER'S framebuffer - with ClearBuffer about to wipe it. Bail
         // instead: nothing has been drawn or bound, noScissor puts the scissor
-        // enable back as this return unwinds, and Render composites nothing.
+        // enable back as this return unwinds, and Render draws the lamps at
+        // 1.0, which needs no buffer.
         if (!resizeScaledBuffer(bufW, bufH))
         {
             return;
@@ -793,7 +794,7 @@ namespace EdgeLighting
             mFrame.prepared = false;
             return;
         }
-        const bool scaled = UsesScaledBuffer(config);
+        bool scaled = UsesScaledBuffer(config);
 
         // The offscreen phase for this frame, if nothing ran it - a host that
         // drives the renderer without EdgeLightingEffect, which runs every
@@ -804,11 +805,32 @@ namespace EdgeLighting
         }
         const bool scaledReady = mFrame.scaledReady;
         mFrame.prepared = false;
-        // The scaled buffer could not be allocated: nothing to composite, and
-        // nothing touched.
-        if (scaled && !scaledReady)
+        // No scaled buffer could be allocated, in any format - the one way the
+        // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
+        // no buffer: no uniform that shapes the light differs between the
+        // paths, so this is exactly the 1.0 path's frame. The walk remembers
+        // the failure with its size (RenderTargetFormats), so the frames after
+        // this try nothing until the size drops below it. Logged when it
+        // starts and when it ends.
+        const bool fellBack = scaled && !scaledReady;
+        if (fellBack != mScaledFellBack)
         {
-            return;
+            if (fellBack)
+            {
+                LOG_W("SpotlightRenderer: no reduced-scale target could be allocated at scale %.3f - drawing at "
+                      "resolution scale 1.0.",
+                      GetClampedSpotScale(config));
+            }
+            else if (scaled)
+            {
+                LOG_I("SpotlightRenderer: a reduced-scale target allocated again - back to scale %.3f.",
+                      GetClampedSpotScale(config));
+            }
+            mScaledFellBack = fellBack;
+        }
+        if (fellBack)
+        {
+            scaled = false;
         }
 
         UseScreenBlend();
@@ -921,15 +943,14 @@ namespace EdgeLighting
 
     bool SpotlightRenderer::resizeScaledBuffer(int width, int height)
     {
-        // Walk SCALED_FORMATS from the last tier that allocated, starting
-        // where this context renders (ResizeInBestFormat). A refused format is
-        // never asked for again: Resize treats a format change as a
-        // reallocation, and its failure path destroys what was there, so
-        // re-asking every frame would churn the attachment - and the buffer is
-        // released between uses, so it cannot remember the refusal itself.
-        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT,
-                                  mScaledFormat, width, height, GL_LINEAR, 1, "SpotlightRenderer", "reduced-scale",
-                                  "The dark tail is rounded to 8 bits before the blit reads it.");
+        // Walk SCALED_FORMATS from the best row this context may render at
+        // this size (ResizeInBestFormat). The walk keeps nothing here: a
+        // refused format, or one whose allocation failed this large, is the
+        // effect's RenderTargetFormats' to remember, so a refusal is never
+        // asked for again although the buffer is released between uses.
+        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT, width,
+                                  height, GL_LINEAR, 1, "SpotlightRenderer", "reduced-scale",
+                                  "The dark tail is rounded to 8 bits before the blit reads it.", &mScaledFormat);
     }
 
     void SpotlightRenderer::ensureBuffer()

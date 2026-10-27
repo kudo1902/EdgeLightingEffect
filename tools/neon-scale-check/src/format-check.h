@@ -11,7 +11,8 @@ namespace NeonScaleCheck
     /// Prints the GPU and the startup report, then draws every `check` scene
     /// at scales 1.0, 0.5 and 0.25 - still, with the hue rotating and with the
     /// intensity moving, the frames the half-float fields serve - plus one
-    /// flare and one spotlight scene at 0.5, six times, each on a fresh
+    /// flare and one spotlight scene at 0.5 and at 1.0, six times, each on a
+    /// fresh
     /// effect with the neon, the flare, the spotlight and a reader of the
     /// neon's shared buffer:
     ///   - A: nothing refused - the reference;
@@ -37,8 +38,11 @@ namespace NeonScaleCheck
     ///     layer, variant and scale (FORMAT_QUALITY_BOUNDS) - a regression
     ///     gate on the 8-bit rows, not a quality claim;
     ///   - any frame of any run leaves a GL error;
-    ///   - in C, the neon is not dropped, any frame draws anything, or the
-    ///     shared buffer is ever ready;
+    ///   - in C, the neon is not dropped, a neon frame draws anything, a
+    ///     flare or spotlight frame differs by a byte from A's at 1.0 (with no
+    ///     scaled buffer to be had, each falls back to the path that needs
+    ///     none), that fallback is not logged once per layer, or the shared
+    ///     buffer is ever ready;
     ///   - in D, no fallback is logged naming the hook, a half-float format is
     ///     drawn into or alive, the shared buffer is ever not RGBA8, or any
     ///     frame differs by a byte from B's - the fallback has to land every

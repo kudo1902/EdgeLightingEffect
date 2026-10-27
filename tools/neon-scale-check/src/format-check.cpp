@@ -87,6 +87,10 @@ namespace NeonScaleCheck
             std::string group; ///< What its quality bound is kept per: layer, variant, scale.
             Config config;
             Variant variant;
+            /// For a flare or spotlight cell below 1.0: the name of the same
+            /// layer's cell at 1.0, which case C must draw - with no buffer to
+            /// be had, the layer falls back to 1.0. Empty otherwise.
+            std::string fullScaleName;
         } Cell;
 
         /// How far B's frames may be from A's, per group: measured on an AMD
@@ -111,13 +115,14 @@ namespace NeonScaleCheck
         /// 0.003, 0.001 at 1.0, 0.5, 0.25; hue 2 / 0.092, 0.108, 0.006;
         /// intensity 3 / 0.458, 2 / 0.303, 2 / 0.338 (card_outside,
         /// overdrive, sharp_corners - the moving intensity is the field's gain
-        /// path); segments 53 / 8.919 (the clamp); flare 1 / 0; spotlight
-        /// 2 / 0.003.
+        /// path); segments 53 / 8.919 (the clamp); flare 1 / 0 at 0.5, 0 / 0
+        /// at 1.0 (no buffer); spotlight 2 / 0.003 at 0.5, 0 / 0 at 1.0.
         const QualityBound FORMAT_QUALITY_BOUNDS[] = {
             {"neon still s1000", 4, 0.54},     {"neon still s500", 4, 0.51},      {"neon still s250", 4, 0.51},
             {"neon hue s1000", 4, 0.64},       {"neon hue s500", 4, 0.67},        {"neon hue s250", 4, 0.51},
             {"neon intensity s1000", 5, 1.19}, {"neon intensity s500", 4, 0.96},  {"neon intensity s250", 4, 1.01},
             {"neon segments", 55, 13.9},       {"flare s500", 3, 0.50},           {"spotlight s500", 4, 0.51},
+            {"flare s1000", 2, 0.50},          {"spotlight s1000", 2, 0.50},
         };
 
         const QualityBound *FindBound(const std::string &group)
@@ -163,7 +168,9 @@ namespace NeonScaleCheck
             }
 
             // The flare and the spotlight below 1.0, each alone: their scaled
-            // buffers are the other two walks.
+            // buffers are the other two walks. And each at 1.0, which needs no
+            // buffer: what either must draw when no scaled buffer allocates
+            // (case C).
             Cell flare;
             flare.config = BaseConfig();
             flare.config.neon.enable = false;
@@ -172,6 +179,12 @@ namespace NeonScaleCheck
             flare.variant = Variant::STILL;
             flare.group = "flare s500";
             flare.name = "flare still s500";
+            flare.fullScaleName = "flare still s1000";
+            cells.push_back(flare);
+            flare.config.lensFlare.resolutionScale = 1.0f;
+            flare.group = "flare s1000";
+            flare.name = "flare still s1000";
+            flare.fullScaleName.clear();
             cells.push_back(flare);
 
             Cell spot;
@@ -189,6 +202,12 @@ namespace NeonScaleCheck
             spot.variant = Variant::STILL;
             spot.group = "spotlight s500";
             spot.name = "spotlight still s500";
+            spot.fullScaleName = "spotlight still s1000";
+            cells.push_back(spot);
+            spot.config.spotlight.resolutionScale = 1.0f;
+            spot.group = "spotlight s1000";
+            spot.name = "spotlight still s1000";
+            spot.fullScaleName.clear();
             cells.push_back(spot);
             return cells;
         }
@@ -543,7 +562,7 @@ namespace NeonScaleCheck
 
         const std::vector<Cell> cells = MakeCells();
         std::printf("%zu cells a run: every check scene at 1.0, 0.5 and 0.25, still, hue and intensity; "
-                    "a flare and a spotlight at 0.5\n\n",
+                    "a flare and a spotlight at 0.5 and 1.0\n\n",
                     cells.size());
 
         const Hooks none;
@@ -612,7 +631,7 @@ namespace NeonScaleCheck
                     std::printf("    %-28s %3d  %6.3f%%\n", cells[i].name.c_str(), maxLevels, over1);
                 }
                 std::pair<int, double> &w = worst[cells[i].group];
-                if (maxLevels > w.first || over1 > w.second)
+                if (maxLevels > w.first || over1 > w.second || worstCell[cells[i].group].empty())
                 {
                     worstCell[cells[i].group] = cells[i].name;
                 }
@@ -698,18 +717,54 @@ namespace NeonScaleCheck
                         (differing != 0);
         }
 
-        // C: nothing renders - the neon cannot even hold its emission table.
+        // C: nothing renders - the neon cannot even hold its emission table,
+        // so no neon cell draws anything. The flare and the spotlight have a
+        // path that needs no buffer: below 1.0 each must fall back to it, log
+        // that once, and draw exactly what A draws at 1.0.
         failures += Summarise("C - everything refused", c, Unprobed(refuseAll), verbose);
         {
-            int drawn = 0;
-            for (const RGBA &frame : c.frames)
+            std::map<std::string, size_t> byName;
+            for (size_t i = 0; i < cells.size(); ++i)
             {
-                drawn += !AllZero(frame);
+                byName[cells[i].name] = i;
             }
-            std::printf("  neon dropped %s, frames that drew anything %d%s, shared buffer never ready %s\n",
-                        c.neonPresent ? "NO!" : "yes", drawn, drawn ? "!" : "",
-                        c.sharedReadyFrames == 0 ? "yes" : "NO!");
-            failures += c.neonPresent + (drawn != 0) + (c.sharedReadyFrames != 0);
+            int neonDrawn = 0;
+            int fullScaleWanted = 0;
+            int fullScaleMatched = 0;
+            for (size_t i = 0; i < cells.size(); ++i)
+            {
+                if (cells[i].group.compare(0, 5, "neon ") == 0)
+                {
+                    neonDrawn += !AllZero(c.frames[i]);
+                    continue;
+                }
+                // Every flare and spotlight cell, 1.0 itself included, must be
+                // A's 1.0 frame of its layer.
+                const std::string &reference = cells[i].fullScaleName.empty() ? cells[i].name : cells[i].fullScaleName;
+                const auto it = byName.find(reference);
+                ++fullScaleWanted;
+                if (it != byName.end() && c.frames[i] == a.frames[it->second] && !AllZero(c.frames[i]))
+                {
+                    ++fullScaleMatched;
+                }
+                else if (verbose || fullScaleMatched + 1 == fullScaleWanted)
+                {
+                    std::printf("  differs from A at 1.0: %s\n", cells[i].name.c_str());
+                }
+            }
+            int fallbackLogs = 0;
+            for (const std::string &w : c.warnings)
+            {
+                fallbackLogs += w.find("no reduced-scale target could be allocated") != std::string::npos;
+            }
+            const bool fallbacksLogged = fallbackLogs == 2;
+            std::printf("  neon dropped %s, neon frames that drew anything %d%s, flare and spotlight frames as A's at "
+                        "1.0 %d / %d%s, falls back to 1.0 logged %d (expected 2)%s, shared buffer never ready %s\n",
+                        c.neonPresent ? "NO!" : "yes", neonDrawn, neonDrawn ? "!" : "", fullScaleMatched,
+                        fullScaleWanted, fullScaleMatched == fullScaleWanted ? "" : "!", fallbackLogs,
+                        fallbacksLogged ? "" : "!", c.sharedReadyFrames == 0 ? "yes" : "NO!");
+            failures += c.neonPresent + (neonDrawn != 0) + (fullScaleMatched != fullScaleWanted) + !fallbacksLogged +
+                        (c.sharedReadyFrames != 0);
         }
 
         if (failures)

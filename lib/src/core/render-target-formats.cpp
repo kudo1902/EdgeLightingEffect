@@ -12,6 +12,8 @@ namespace EdgeLighting
 {
     namespace
     {
+        typedef RenderTargetFormats::Verdict Verdict;
+
         /// One format the startup report lists, with the transfer pair its
         /// buffers allocate it with.
         typedef struct ReportRow
@@ -35,6 +37,21 @@ namespace EdgeLighting
         /// its log does not read as a device's.
         const char *const REFUSED_BY_HOOK = "refused by RenderTargetFormats::SetRefusedFormats";
         const char *const UNKNOWN_BY_HOOK = "made unknown by RenderTargetFormats::SetUnknownFormats";
+
+        /// The verdict a probe's results give - the one place the rule lives
+        /// (see RenderTargetFormats::Verdict for each case's reason).
+        Verdict ClassifyProbe(GLenum status, GLenum uploadError)
+        {
+            if (status == GL_FRAMEBUFFER_COMPLETE)
+            {
+                return Verdict::RENDERABLE;
+            }
+            if (status != 0 || uploadError == GL_INVALID_ENUM || uploadError == GL_INVALID_VALUE)
+            {
+                return Verdict::REFUSED;
+            }
+            return Verdict::UNKNOWN;
+        }
 
         /// What @p answer says, for a log line: the status by name (or in
         /// hex); the upload's error if it raised one; and @p hook, naming the
@@ -69,22 +86,23 @@ namespace EdgeLighting
 
     RenderTargetFormats::Answer RenderTargetFormats::Ask(GLint internalFormat, GLenum format, GLenum type)
     {
-        // The hook first, and without touching what is kept: clearing it
+        // The hooks first, and without touching what is kept: clearing them
         // gives back the driver's own answer, probed or not.
         if (IsRefused(internalFormat))
         {
             Answer refused;
             refused.internalFormat = internalFormat;
+            refused.verdict = Verdict::REFUSED;
             refused.status = GL_FRAMEBUFFER_UNSUPPORTED;
-            refused.renderable = false;
             return refused;
         }
-        // Then SetUnknownFormats, likewise kept apart: the answer a probe
-        // whose upload failed for a passing reason gives.
+        // Then SetUnknownFormats: the answer a probe whose upload failed for
+        // a passing reason gives.
         if (isForcedUnknown(internalFormat))
         {
             Answer unknown;
             unknown.internalFormat = internalFormat;
+            unknown.verdict = Verdict::UNKNOWN;
             return unknown;
         }
         for (const Answer &answer : mAnswers)
@@ -96,23 +114,14 @@ namespace EdgeLighting
         }
         Answer answer;
         answer.internalFormat = internalFormat;
-        answer.renderable =
-            Framebuffer::IsColorRenderable(internalFormat, format, type, &answer.status, &answer.uploadError);
-        // Kept whatever it says. Without a status the upload failed or the
-        // status query raised an error: GL_INVALID_ENUM / GL_INVALID_VALUE
-        // (the internal format itself rejected) is a "no", anything else
-        // (GL_OUT_OF_MEMORY, a transfer pair this GL rejects) unknown, and a
-        // walk lets the allocation decide - so keeping it condemns nothing,
-        // and probing it again (every frame, mid-frame, draining the frame's
-        // GL errors) would buy nothing.
+        Framebuffer::IsColorRenderable(internalFormat, format, type, &answer.status, &answer.uploadError);
+        answer.verdict = ClassifyProbe(answer.status, answer.uploadError);
+        // Kept whatever it says, an unknown verdict included: a walk lets the
+        // allocation decide such a format, so keeping it condemns nothing, and
+        // probing it again (every frame, mid-frame, draining the frame's GL
+        // errors) would buy nothing.
         mAnswers.push_back(answer);
         return answer;
-    }
-
-    bool RenderTargetFormats::IsAllocationFailed(GLint internalFormat) const
-    {
-        return std::find(mFailedAllocations.begin(), mFailedAllocations.end(), internalFormat) !=
-               mFailedAllocations.end();
     }
 
     void RenderTargetFormats::AskReportFormats()
@@ -128,25 +137,59 @@ namespace EdgeLighting
         return std::find(mRefused.begin(), mRefused.end(), internalFormat) != mRefused.end();
     }
 
-    bool RenderTargetFormats::isForcedUnknown(GLint internalFormat) const
+    bool RenderTargetFormats::hasFailedAt(GLint internalFormat, int64_t texels) const
     {
-        return std::find(mUnknown.begin(), mUnknown.end(), internalFormat) != mUnknown.end();
+        for (const FailedAllocation &failed : mFailedSizes)
+        {
+            if (failed.internalFormat == internalFormat)
+            {
+                return texels >= failed.texels;
+            }
+        }
+        return false;
+    }
+
+    void RenderTargetFormats::recordFailedAllocation(GLint internalFormat, int64_t texels)
+    {
+        for (FailedAllocation &failed : mFailedSizes)
+        {
+            if (failed.internalFormat == internalFormat)
+            {
+                failed.texels = std::min(failed.texels, texels);
+                return;
+            }
+        }
+        mFailedSizes.push_back(FailedAllocation{internalFormat, texels});
+    }
+
+    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat) const
+    {
+        return std::find(mFailedAllocations.begin(), mFailedAllocations.end(), internalFormat) !=
+               mFailedAllocations.end();
+    }
+
+    bool RenderTargetFormats::isNewSkip(const char *owner, const char *what, const char *row)
+    {
+        // Once per walk and row: a walk asks every frame. Compared as text, on
+        // a path a frame takes only while a row is being skipped.
+        for (const LoggedSkip &logged : mLoggedSkips)
+        {
+            if (logged.owner == owner && logged.what == what && logged.row == row)
+            {
+                return false;
+            }
+        }
+        mLoggedSkips.push_back(LoggedSkip{owner, what, row});
+        return true;
     }
 
     void RenderTargetFormats::logSkipped(const char *owner, const char *what, const char *row, const char *next,
                                          const Answer &answer)
     {
-        // Once per walk and row: a walk none of whose rows renders resumes on
-        // its last one every frame. Compared as text, on a path a frame takes
-        // only while a row is being skipped.
-        for (const LoggedSkip &logged : mLoggedSkips)
+        if (!isNewSkip(owner, what, row))
         {
-            if (logged.owner == owner && logged.what == what && logged.row == row)
-            {
-                return;
-            }
+            return;
         }
-        mLoggedSkips.push_back(LoggedSkip{owner, what, row});
 
         // A verification run's refusal is not the driver's: say so, or its log
         // reads as a device without the format.
@@ -163,6 +206,32 @@ namespace EdgeLighting
         }
     }
 
+    void RenderTargetFormats::logSkippedAfterFailure(const char *owner, const char *what, const char *row,
+                                                     const char *next, int64_t texels)
+    {
+        if (!isNewSkip(owner, what, row))
+        {
+            return;
+        }
+        if (next)
+        {
+            LOG_W("%s: %s %s target skipped at %lld texels - an allocation of it that large already failed here; "
+                  "using %s.",
+                  owner, row, what, static_cast<long long>(texels), next);
+        }
+        else
+        {
+            LOG_W("%s: %s %s target, the last in its list, skipped at %lld texels - an allocation of it that large "
+                  "already failed here.",
+                  owner, row, what, static_cast<long long>(texels));
+        }
+    }
+
+    bool RenderTargetFormats::isForcedUnknown(GLint internalFormat) const
+    {
+        return std::find(mUnknown.begin(), mUnknown.end(), internalFormat) != mUnknown.end();
+    }
+
     void RenderTargetFormats::LogReport()
     {
         LOG_I("--- Render-target formats ---");
@@ -171,19 +240,26 @@ namespace EdgeLighting
         for (const ReportRow &row : REPORT_ROWS)
         {
             const Answer answer = Ask(row.internalFormat, row.format, row.type);
-            if (answer.renderable)
+            switch (answer.verdict)
+            {
+            case Verdict::RENDERABLE:
             {
                 LOG_I("%-8s: renderable", row.name);
-                continue;
+                break;
             }
-            if (answer.IsUnknown())
+            case Verdict::UNKNOWN:
             {
                 LOG_I("%-8s: UNKNOWN (%s) - the probe could not judge it; its allocation decides", row.name,
                       DescribeAnswer(answer, isForcedUnknown(row.internalFormat) ? UNKNOWN_BY_HOOK : nullptr).c_str());
-                continue;
+                break;
             }
-            LOG_I("%-8s: NOT renderable (%s)", row.name,
-                  DescribeAnswer(answer, IsRefused(row.internalFormat) ? REFUSED_BY_HOOK : nullptr).c_str());
+            case Verdict::REFUSED:
+            {
+                LOG_I("%-8s: NOT renderable (%s)", row.name,
+                      DescribeAnswer(answer, IsRefused(row.internalFormat) ? REFUSED_BY_HOOK : nullptr).c_str());
+                break;
+            }
+            }
         }
         const double probeMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -200,8 +276,8 @@ namespace EdgeLighting
               listed("GL_EXT_color_buffer_half_float"), listed("GL_EXT_color_buffer_float"),
               listed("GL_EXT_float_blend"), listed("GL_OES_texture_float_linear"),
               gles ? "" : " (desktop GL: float targets are core)");
-        // The probes THIS call made - a row already answered, or refused by
-        // the hook, adds none.
+        // The probes THIS call made - a row already answered, or answered by
+        // a hook, adds none.
         LOG_I("%zu probes, %.2f ms", mAnswers.size() - probesBefore, probeMs);
         LOG_I("-----------------------------");
     }

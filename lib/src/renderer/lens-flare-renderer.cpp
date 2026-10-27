@@ -351,7 +351,8 @@ namespace EdgeLighting
         // that guard - bail here. Nothing has been drawn and nothing bound, and
         // the only state touched so far is the scissor enable, which noScissor
         // puts back as this return unwinds - so returning leaves the frame
-        // exactly as it was found, and Render composites nothing.
+        // exactly as it was found, and Render draws the flare at 1.0, which
+        // needs no buffer.
         if (!resizeScaledBuffer(target.x, target.y))
         {
             return;
@@ -400,11 +401,11 @@ namespace EdgeLighting
         // where the flare lands and whether the blit runs - not the blend
         // timeline, and not the uniforms, bar the two that say which
         // resolution is being drawn into.
-        const float scale = GetClampedFlareScale(config);
+        float scale = GetClampedFlareScale(config);
         // Past the enable return above, this is `scale < 1.0` - asked through
         // the shared predicate so it cannot disagree with the release gate in
         // OnConfigChanged about which configs want the buffer.
-        const bool scaled = UsesScaledBuffer(config);
+        bool scaled = UsesScaledBuffer(config);
 
         // The offscreen phase for this frame, if nothing ran it - a host that
         // drives the renderer without EdgeLightingEffect, which runs every
@@ -415,11 +416,31 @@ namespace EdgeLighting
         }
         const bool scaledReady = mFrame.scaledReady;
         mFrame.prepared = false;
-        // The scaled buffer could not be allocated: nothing to composite, and
-        // nothing touched.
-        if (scaled && !scaledReady)
+        // No scaled buffer could be allocated, in any format - the one way the
+        // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
+        // no buffer: the flare shader is scale invariant, so this is exactly
+        // the 1.0 path's frame. The walk remembers the failure with its size
+        // (RenderTargetFormats), so the frames after this try nothing until
+        // the size drops below it. Logged when it starts and when it ends.
+        const bool fellBack = scaled && !scaledReady;
+        if (fellBack != mScaledFellBack)
         {
-            return;
+            if (fellBack)
+            {
+                LOG_W("LensFlareRenderer: no reduced-scale target could be allocated at scale %.3f - drawing at "
+                      "resolution scale 1.0.",
+                      scale);
+            }
+            else if (scaled)
+            {
+                LOG_I("LensFlareRenderer: a reduced-scale target allocated again - back to scale %.3f.", scale);
+            }
+            mScaledFellBack = fellBack;
+        }
+        if (fellBack)
+        {
+            scaled = false;
+            scale = 1.0f;
         }
 
         // Premultiplied "over": alpha = brightest channel, so the flare
@@ -556,15 +577,14 @@ namespace EdgeLighting
 
     bool LensFlareRenderer::resizeScaledBuffer(int width, int height)
     {
-        // Walk SCALED_FORMATS from the last tier that allocated, starting
-        // where this context renders (ResizeInBestFormat). A refused format is
-        // never asked for again: Resize treats a format change as a
-        // reallocation, and its failure path destroys what was there, so
-        // re-asking every frame would churn the attachment - and the buffer is
-        // released between uses, so it cannot remember the refusal itself.
-        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT,
-                                  mScaledFormat, width, height, GL_LINEAR, 1, "LensFlareRenderer", "reduced-scale",
-                                  "The haze is rounded to 8 bits before the blit reads it.");
+        // Walk SCALED_FORMATS from the best row this context may render at
+        // this size (ResizeInBestFormat). The walk keeps nothing here: a
+        // refused format, or one whose allocation failed this large, is the
+        // effect's RenderTargetFormats' to remember, so a refusal is never
+        // asked for again although the buffer is released between uses.
+        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT, width,
+                                  height, GL_LINEAR, 1, "LensFlareRenderer", "reduced-scale",
+                                  "The haze is rounded to 8 bits before the blit reads it.", &mScaledFormat);
     }
 
     bool LensFlareRenderer::scaledPassDithers() const

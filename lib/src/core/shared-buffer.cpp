@@ -19,14 +19,14 @@ namespace EdgeLighting
         const glm::ivec2 wasSize = GetTexels();
         const GLint wasFormat = mBuffer.GetInternalFormat();
 
-        // The format walk (ResizeInBestFormat) resumes from the best format
-        // not yet refused - kept here because a released buffer cannot record
-        // it - and starts where this context renders. The filter is requested
-        // through Resize, the only writer of the tracked value: setting it on
-        // the texture afterwards would leave the two disagreeing and make the
-        // next Resize reallocate, every frame.
-        if (!ResizeInBestFormat(mBuffer, targets, mFormats.data(), mFormats.size(), mTier, texels.x, texels.y,
-                                GL_LINEAR, 1, mBuffer.GetName(), "shared", mConsequence.c_str()))
+        // The format walk (ResizeInBestFormat) starts at the best format this
+        // context may render at this size - the probe's verdicts and every
+        // failed allocation are kept in @p targets, so the buffer keeps none.
+        // The filter is requested through Resize, the only writer of the
+        // tracked value: setting it on the texture afterwards would leave the
+        // two disagreeing and make the next Resize reallocate, every frame.
+        if (!ResizeInBestFormat(mBuffer, targets, mFormats.data(), mFormats.size(), texels.x, texels.y, GL_LINEAR,
+                                1, mBuffer.GetName(), "shared", mConsequence.c_str()))
         {
             // Resize destroys the attachment on its failure path, so the
             // buffer holds id 0, and Bind would bind the CALLER's framebuffer -

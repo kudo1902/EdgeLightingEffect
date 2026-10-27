@@ -75,6 +75,21 @@ steps 1-5 and 7; step 6, on the device, is open.
   produces - `SetFailedAllocations` the full-size fallback (`formats` case D),
   `SetUnknownFormats` an unknown answer (case E, which must draw what nothing
   refused draws).
+- **Then an architecture review** (six findings; 1-4 fixed, 5-6 - the report's
+  hand-kept format list and the three hooks as one override - left open).
+  What changed behaviour: the walk is stateless - every full-size allocation
+  that fails is recorded in `RenderTargetFormats` with its size, so no buffer
+  keeps a tier, a format that failed at 4K is tried again below that size
+  rather than lost for the effect's life, and the half-float fields no longer
+  switch themselves off for good after one failed bake; `Framebuffer::Resize`
+  fails on any GL error its allocation raises (it used to judge by
+  completeness alone, which `GL_OUT_OF_MEMORY` leaves undefined, and left the
+  error pending - measured), draining the caller's pending errors first and
+  unbinding the unpack buffer for its upload; each answer carries an explicit
+  verdict (RENDERABLE, REFUSED, UNKNOWN) decided in one place; and the flare
+  and the spotlight draw at 1.0 when no scaled buffer allocates, where they
+  used to draw nothing - `formats` case C now checks they match the 1.0
+  frames byte for byte.
 
 ### Open
 

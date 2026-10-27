@@ -190,10 +190,12 @@ namespace EdgeLighting
         void setupBlitGeometry();
 
         /// Allocate @c mScaledBuffer at @p width x @p height in the best
-        /// format the driver will render to - half float, else RGBA8 - and
-        /// leave @c mScaledFormat on it. See SCALED_FORMATS in the .cpp.
+        /// format this context may render at that size - half float, else
+        /// RGBA8 - and leave @c mScaledFormat on it. See SCALED_FORMATS in the
+        /// .cpp.
         /// @return false only if no format allocated, in which case there is
-        ///         no attachment and nothing may be bound or cleared.
+        ///         no attachment and nothing may be bound or cleared - Render
+        ///         then draws at 1.0.
         bool resizeScaledBuffer(int width, int height);
 
         /// Allocate the VBO at its CEILING size and record the attribute
@@ -253,12 +255,15 @@ namespace EdgeLighting
         /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer. Drawn by
         /// @ref RenderOffscreen, read by @ref Render.
         Framebuffer mScaledBuffer{"Spotlight.Scaled"};
-        /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
-        /// has not refused for @c mScaledBuffer, where the walk resumes. Kept
-        /// beside the buffer rather than in it because the buffer is released
-        /// between uses. Also picks spotlight.frag's @c uDither on the scaled
-        /// path: 0 in half float, 1 in RGBA8.
+        /// Index into SCALED_FORMATS (the .cpp) of the row @c mScaledBuffer
+        /// was last allocated in - what it holds, not where a walk resumes:
+        /// the walk keeps nothing (ResizeInBestFormat). Picks spotlight.frag's
+        /// @c uDither on the scaled path: 0 in half float, 1 in RGBA8.
         size_t mScaledFormat = 0;
+        /// The last frame that wanted the scaled path drew at 1.0, because no
+        /// scaled buffer could be allocated: for logging the switch, both
+        /// ways, once each.
+        bool mScaledFellBack = false;
         VertexArray mVertexArray{"SpotlightRenderer"};
         /// Fullscreen NDC quad for the blit. A second VAO rather than a reuse
         /// of @c mVertexArray: that one carries the five-attribute strip

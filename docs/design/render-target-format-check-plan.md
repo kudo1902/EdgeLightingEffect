@@ -217,78 +217,75 @@ New, in `lib/include/core/render-target-formats.h` and
 `core/`, beside `SharedBufferRegistry`, the other object the effect owns and
 hands out. GL thread only, like the registry.
 
-As built after the third review - the header,
+As built after the architecture review - the header,
 `lib/include/core/render-target-formats.h`, is the source of truth, and
 sections 5 and 10 record how the API got here (the first sketch had
-`IsRenderable` as the walk's question, no `uploadError`, no unknown answer and
-one hook):
+`IsRenderable` as the walk's question, no `uploadError`, no unknown answer,
+one hook and a tier kept beside every buffer):
 
 ```cpp
 /// What this effect's GL context can render to. Each format asked about is
 /// probed once (Framebuffer::IsColorRenderable) and its answer kept: every
-/// later ask is a lookup. Owned by EdgeLightingEffect - one per effect, so one
-/// per GL context - and handed to every renderer it registers
+/// later ask is a lookup. It also keeps every full-size allocation that failed,
+/// as the smallest size per format. Owned by EdgeLightingEffect - one per
+/// effect, so one per GL context - and handed to every renderer it registers
 /// (BaseRenderer::GetRenderTargetFormats).
 class RenderTargetFormats
 {
 public:
-    /// One format's answer.
+    /// What the probe says - decided once, in Ask: the one place the rule lives.
+    typedef enum class Verdict
+    {
+        RENDERABLE, ///< The probe's framebuffer was complete.
+        REFUSED,    ///< Incomplete, or the upload raised GL_INVALID_ENUM / GL_INVALID_VALUE. Final.
+        UNKNOWN,    ///< No status, for a reason that says nothing about the format: the allocation decides.
+    } Verdict;
+
     typedef struct Answer
     {
-        GLint internalFormat = 0;         ///< The sized internal format asked about.
-        GLenum status = 0;                ///< glCheckFramebufferStatus; 0 when there is none.
-        GLenum uploadError = GL_NO_ERROR; ///< What the probe's glTexImage2D raised, if it failed.
-        bool renderable = false;          ///< status == GL_FRAMEBUFFER_COMPLETE.
-
-        /// No status, and no upload error that condemns the format: the
-        /// allocation decides. GL_INVALID_ENUM / GL_INVALID_VALUE - the
-        /// internal format itself rejected - is a "no"; out of memory or
-        /// GL_INVALID_OPERATION (a transfer pair the GL rejects) says nothing
-        /// about the format.
-        bool IsUnknown() const;
+        GLint internalFormat = 0;
+        Verdict verdict = Verdict::UNKNOWN; ///< The only field a decision reads.
+        GLenum status = 0;                  ///< For the log.
+        GLenum uploadError = GL_NO_ERROR;   ///< For the log.
     } Answer;
 
-    /// Probed on the first ask, with @p format / @p type as the probe's
-    /// upload, then kept - every answer, an unknown one included. Keyed by the
-    /// internal format alone. A hook's answer comes back without a probe and
-    /// without touching what is kept.
     Answer Ask(GLint internalFormat, GLenum format, GLenum type);
-    /// The verdict alone: renders here. False for an unknown answer.
+    /// The verdict alone: RENDERABLE. What a host reports.
     bool IsRenderable(GLint internalFormat, GLenum format, GLenum type);
-    /// Renders here, or unknown - what a buffer asks before it commits to a
-    /// format: the half-float fields' gate (4.6); the walk asks it of each row.
-    bool MayAllocate(GLint internalFormat, GLenum format, GLenum type);
+    /// Not REFUSED, and no allocation of it that large has failed - what a
+    /// buffer asks before it commits (the half-float fields' gates, 4.6).
+    bool MayAllocate(GLint internalFormat, GLenum format, GLenum type, int width, int height, int attachments);
 
     void LogReport();                              ///< The startup report (4.5).
     void AskReportFormats();                       ///< Its asks without the log, for a renderer outside an effect.
     const std::vector<Answer> &GetAnswers() const; ///< Every answer kept, in the order asked.
 
     /// Verification only - a host never calls these (4.7). Per effect.
-    void SetRefusedFormats(std::vector<GLint> formats);    ///< Ask says no (GL_FRAMEBUFFER_UNSUPPORTED).
+    void SetRefusedFormats(std::vector<GLint> formats);    ///< Ask says REFUSED, without a probe.
     bool IsRefused(GLint internalFormat) const;
-    void SetFailedAllocations(std::vector<GLint> formats); ///< The walk's full-size allocation fails.
-    bool IsAllocationFailed(GLint internalFormat) const;
-    void SetUnknownFormats(std::vector<GLint> formats);    ///< Ask says unknown (status 0), without a probe.
+    void SetFailedAllocations(std::vector<GLint> formats); ///< The walk's full-size allocation fails, and is recorded.
+    void SetUnknownFormats(std::vector<GLint> formats);    ///< Ask says UNKNOWN, without a probe.
 
 private:
     /// The walk's question, private to it: the first of @p count @p rows, at
-    /// or after @p from, that MayAllocate passes; @p count if none does
-    /// (final - the walk then tries nothing). Logs each skipped row once.
+    /// or after @p from, not REFUSED and not failed at @p texels or less;
+    /// @p count if none. Logs each refused row once.
     template <typename Row>
-    size_t FirstRenderable(const Row *rows, size_t count, size_t from, const char *owner, const char *what);
-
-    template <typename Row>
-    friend bool ResizeInBestFormat(/* as below */);
+    size_t firstToTry(const Row *rows, size_t count, size_t from, int64_t texels, const char *owner,
+                      const char *what);
+    bool hasFailedAt(GLint internalFormat, int64_t texels) const;
+    void recordFailedAllocation(GLint internalFormat, int64_t texels); ///< Keeps the smallest size that failed.
+    // ... the hooks' lookups, the logged skips
 };
 
-/// THE format walk, beside the class: every buffer with a list of formats
-/// allocates through it (4.4). Starts at FirstRenderable, falls back on a
-/// full-size allocation that fails, leaves @p tier on the row that allocated
-/// - or on the last row, returning false.
+/// THE format walk, beside the class, and STATELESS: everything it learns is
+/// the object's (4.4). Starts at firstToTry, records and falls back on a
+/// full-size allocation that fails, returns false when nothing may be tried or
+/// allocates; @p allocated, if given, receives the row that allocated.
 template <typename Row>
 bool ResizeInBestFormat(Framebuffer &buffer, RenderTargetFormats &targets, const Row *rows, size_t count,
-                        size_t &tier, int width, int height, GLint filter, int attachments, const char *owner,
-                        const char *what, const char *consequence);
+                        int width, int height, GLint filter, int attachments, const char *owner, const char *what,
+                        const char *consequence, size_t *allocated = nullptr);
 ```
 
 `GetAnswers().size()` is the number of probes the effect has made, which is how
@@ -322,6 +319,13 @@ step 3R and section 6 check that the five report probes are the only ones.
   with it, so a stale answer cannot outlive its context.
 
 ### 4.4 Asked at allocation: the walks
+
+*Built as below in step 3R; the architecture review (section 10) took the tier
+out. The walk now keeps nothing: it asks the object for the first row to try
+at the size it allocates, and a full-size failure is recorded in the object
+with that size, so a format is skipped at that size and above and tried again
+below. What this section says about where each walk asks still holds; what it
+says about tiers is the record of the step-3R design.*
 
 Each walk asks at its top, from its current tier, then runs its loop exactly as
 now - `Resize`, and the full-size fallback for a refusal the probe did not
@@ -409,7 +413,7 @@ does not start with "OpenGL ES". `GLUtils::GetFramebufferStatusName` stays in
 
 Both eligibility gates in `NeonRenderer::RenderOffscreen` - the glow field's
 and the ring field's - gain one term, `GetRenderTargetFormats().MayAllocate`
-on the field's row (`GetFieldTarget`: R16F, RG16F with segments; built first
+(with the field's size since the architecture review) on the field's row (`GetFieldTarget`: R16F, RG16F with segments; built first
 as `IsRenderable`, which the third review narrowed to the verdict alone - an
 unknown answer leaves the field's allocation to decide, as in every walk),
 placed BEFORE `ensureFieldPrograms()` / `ensureRingFieldPrograms()` in their
@@ -774,9 +778,11 @@ tool's README gained its `formats` section in step 5.
      so it has a group of its own.
    - **B and C, errors.** `glGetError` is `GL_NO_ERROR` after every frame.
    - **C, failure.** `NeonRenderer::Initialize` returns false (the emission
-     table has no row left), the effect drops the layer, the flare and the
-     spotlight below 1.0 draw nothing, the neon's shared buffer is never
-     ready, and nothing crashes.
+     table has no row left), the effect drops the layer, the neon's shared
+     buffer is never ready, and nothing crashes. The flare and the spotlight
+     below 1.0 fall back to the 1.0 path, which needs no buffer: every frame of
+     theirs byte-identical to A's at 1.0, the fallback logged once per layer
+     (since the architecture review - they used to draw nothing).
    - **D, the fallback.** A fallback is logged naming the hook, no draw
      lands in half float and none is alive, the shared buffer is RGBA8,
      and every frame is byte-identical to B's: the full-size fallback
@@ -816,7 +822,11 @@ tool's README gained its `formats` section in step 5.
 - **The probe passes, the allocation fails.** Memory, or a size limit a 4 x 4
   texture does not reach. The walks keep their full-size fallback for exactly
   this, and log it as an ERROR. `SetFailedAllocations` forces it, and
-  `formats`' case D checks it (4.7, open decision 5).
+  `formats`' case D checks it (4.7, open decision 5). Since the architecture
+  review the failure is recorded with its size in `RenderTargetFormats`, and
+  `Resize` fails on the allocation's own GL error rather than on completeness
+  alone. A driver that allocates storage lazily, at first use, reports
+  neither: no check at allocation time can see that.
 - **COMPLETE, but wrong.** A driver could accept the format and clamp or drop
   what is written. The probe cannot see that; section 3's read-back could
   (open decision 3).
@@ -1020,4 +1030,67 @@ or a GL error left; `GL_RGBA16F` with `GL_RGBA_INTEGER` raises
 true; `SetUnknownFormats` makes no probe, a walk over it allocates RGBA16F, a
 refusal wins over it, and the report names it.
 
-**Open.** Step 6, the device; the M2; open decisions 1-4 of section 9.
+**After an architecture review, the same day:** six findings; the first four
+fixed, the last two left open.
+
+1. **The walk is stateless.** Since the probe, a walk's tier only remembered
+   "this format passed the probe and failed at full size" - and kept that
+   forever, at every size, so one failed 4K allocation sent the shared buffer
+   to RGBA8 for the effect's life. `RenderTargetFormats` now records every
+   full-size failure as the smallest size (texels x attachments) that failed
+   per format; a walk skips a format at that size or larger and tries it again
+   below. Every tier member is gone (`mGlowCover.format`, `mGather.format`,
+   `SharedBuffer::mTier`; the flare's and the spotlight's `mScaledFormat` now
+   only say which row the buffer holds, through the walk's optional
+   `allocated` out parameter), and so is the coverage table's shared tier. The
+   half-float fields follow the same rule: their gates ask `MayAllocate` with
+   the field's size, and a failed bake no longer sets `LazyBake::unavailable`
+   (left for a program that fails to build). A row skipped because another
+   walk's allocation of it failed this large is logged once per buffer, as a
+   refused row is.
+2. **`Resize` reads the allocation's error.** It judged failure by
+   completeness alone - which the spec leaves undefined after
+   `GL_OUT_OF_MEMORY` - and left the error pending: built against the old
+   header, a texture one texel past `GL_MAX_TEXTURE_SIZE` returned false and
+   left `GL_INVALID_VALUE` for the host's next `glGetError`. It now drains the
+   errors pending on entry (logged as the caller's), unbinds the pixel-unpack
+   buffer for its upload as the probe does, and fails on any error the
+   allocation raises - on the allocation path only, never on its early-out.
+3. **An explicit verdict.** `Answer::verdict` (RENDERABLE, REFUSED, UNKNOWN) is
+   decided once, in `Ask` (`ClassifyProbe`); `renderable` and `IsUnknown()`
+   are gone, and `IsRenderable`, `MayAllocate`, the walk and the report all
+   read the verdict. The walk's question is `firstToTry` (private, camelCase,
+   as the conventions want).
+4. **The flare and the spotlight fall back to 1.0.** Below 1.0, no scaled
+   buffer in any format used to mean the layer drew nothing; it now draws the
+   1.0 path, which needs no buffer, and logs the switch once each way.
+   `formats` case C checks it: the 0.5 and 1.0 cells of both layers (two new
+   1.0 cells, 112 a run) byte-identical to A's 1.0 frames.
+
+Open: (5) the report's format list is a hand-kept copy of seven lists in
+three renderers, declared through three near-identical row types - a format
+missed there probes mid-frame, which `formats` catches by its probe count;
+(6) the three verification hooks could be one per-format override.
+
+Verified, on the AMD 5300M: the six gates and `formats` pass with no WARN or
+ERROR line; `formats` reads the same draws per format in every run and the
+same B-against-A worst cells to the digit as the round before, plus the two
+new 1.0 rows at 0 / 0. Case C: all four flare and
+spotlight cells byte-identical to A's at 1.0, the fallback logged once per
+layer. Case D: 5 probes; one RGBA16F failure (the emission table, 128 x 2, at
+`Initialize`) recorded, so every larger RGBA16F buffer skips it - five skip
+lines, one per buffer, rather than five more failed allocations; the edge
+ring's field tried at three successively smaller sizes as the cells shrank,
+where it used to give up after the first; all 112 cells byte-identical to B. A
+throwaway program checked the rest, 27 checks: the verdicts and the hooks'
+precedence; a failure at 512 x 512 lands on RGBA8 with one fallback line, the
+same size again reallocates nothing and logs nothing, `MayAllocate` says no at
+and above the failed size and yes below, a smaller size gets RGBA16F back once
+the memory returns and a larger one still skips it, and a second buffer learns
+from the first; `Resize` past the size limit fails and leaves no GL error, and
+a walk there fails on every row and still gets RGBA16F at a normal size after;
+a 1-byte host unpack buffer no longer fails `Resize` and is bound again after;
+an error pending on entry is logged as the caller's and cleared.
+
+**Open.** Step 6, the device; the M2; open decisions 1-4 of section 9; the
+architecture review's findings 5 and 6.

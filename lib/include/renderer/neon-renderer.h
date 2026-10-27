@@ -786,12 +786,14 @@ namespace EdgeLighting
         ///     config that cannot use it.
         ///   - A failed program build sets @c unavailable
         ///     (@ref NeonRenderer::ensureFieldPrograms,
-        ///     @ref NeonRenderer::ensureRingFieldPrograms), as a failed bake
-        ///     does through @ref OnBaked.
+        ///     @ref NeonRenderer::ensureRingFieldPrograms); nothing else does.
         ///   - A driver that cannot render the field's half-float format never
-        ///     gets this far: @ref NeonRenderer::RenderOffscreen asks the effect's
-        ///     RenderTargetFormats before it builds the programs or calls
-        ///     @ref Decide, every frame, since the format follows the segments.
+        ///     gets this far, nor a field whose allocation already failed at
+        ///     this size or larger: @ref NeonRenderer::RenderOffscreen asks the
+        ///     effect's RenderTargetFormats (MayAllocate, with the field's
+        ///     size) before it builds the programs or calls @ref Decide, every
+        ///     frame, since the format follows the segments and the size the
+        ///     rect.
         typedef struct LazyBake
         {
             /// What @ref Decide says a frame does with the field:
@@ -811,7 +813,7 @@ namespace EdgeLighting
 
             bool current = false;         ///< The buffer describes this frame up to its intensity: nothing else invalidated it since its bake.
             bool settled = false;         ///< Nothing invalidated it on the last frame, so a bake now would be reused.
-            bool unavailable = false;     ///< Not on this driver (a program failed, or a bake's full-size allocation did): shade directly.
+            bool unavailable = false;     ///< Not on this driver (a program failed to build): shade directly.
             glm::ivec2 viewport{0};       ///< The viewport it was decided for.
             uint32_t gradientUploads = 0; ///< The gradient ring's upload count it was decided for.
             float intensity = 0.0f;       ///< NeonConfig::intensity it was baked at (I0).
@@ -837,15 +839,15 @@ namespace EdgeLighting
             }
 
             /// A bake ran, at @p bakedIntensity: what the buffer holds is
-            /// current if it @p baked, and the field is never used again on
-            /// this driver if not - a bake fails only when the buffer cannot be
-            /// allocated, and a format this driver does not render is turned
-            /// away before the bake (RenderTargetFormats), so what is left is a
-            /// full-size allocation the probe did not predict.
+            /// current if it @p baked. A bake fails only when the buffer cannot
+            /// be allocated - a format this driver does not render is turned
+            /// away before it - and that failure is the effect's
+            /// RenderTargetFormats' to remember, with its size: the gate then
+            /// keeps the field off at that size or larger and lets it try again
+            /// below, so a failed bake does NOT set @c unavailable.
             void OnBaked(bool baked, float bakedIntensity)
             {
                 current = baked;
-                unavailable = !baked;
                 intensity = bakedIntensity;
             }
         } LazyBake;
@@ -1043,12 +1045,6 @@ namespace EdgeLighting
             /// for the life of the renderer.
             bool fillUnavailable = false;
 
-            /// Index into the glow coverage table's format lists of the best
-            /// format the driver has not refused: the tier ResizeInBestFormat
-            /// resumes from, one for both lists. Only ever advances - see
-            /// @ref ensureGlowCoverBuffer.
-            size_t format = 0;
-
             /// Which pieces of @c mGlowCover.buffer have to be re-baked: bit 2b is
             /// band b's straight, bit 2b + 1 its corner, all eight when the shape
             /// moves. NOT set on every config change, as the emission table's
@@ -1108,11 +1104,6 @@ namespace EdgeLighting
             /// pass 1 and the edge ring; released when the layer is disabled.
             Framebuffer buffer{"NeonRenderer.Gather"};
 
-            /// Index into the gather buffer's format list (GATHER_FORMATS) of the
-            /// best format the driver has not refused: the tier
-            /// ResizeInBestFormat resumes from, kept here because the buffer is
-            /// released and cannot record it. Only ever advances.
-            size_t format = 0;
             GatherCache cache; ///< What @c buffer holds - see @ref GatherCache.
         } GatherTarget;
 
@@ -1302,10 +1293,10 @@ namespace EdgeLighting
         /// the mode or that table changes. A segment table that cannot be
         /// allocated sends the segments back into the main table's bake.
         ///
-        /// The format walk is ResizeInBestFormat's, resumed from
-        /// @c mGlowCover.format, since a released buffer has no format of its
-        /// own to resume from. A fresh allocation holds undefined texels, so it
-        /// sets both of @c mGlowCover's dirty masks whole.
+        /// The format walk is ResizeInBestFormat's, which keeps nothing in the
+        /// renderer: the verdicts and any failed allocation are the effect's
+        /// RenderTargetFormats'. A fresh allocation holds undefined texels, so
+        /// it sets both of @c mGlowCover's dirty masks whole.
         ///
         /// Two channels (RG16F, 0.5 MB at the full width) when the config has
         /// no segments (@p segments false), whose coverage would fill .b / .a

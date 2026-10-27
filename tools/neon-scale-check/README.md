@@ -340,11 +340,11 @@ library asks for. The refusal is forced through the effect's
 `RenderTargetFormats` (`SetRefusedFormats`, a verification hook), on a fresh
 effect per run, before `Initialize`; see
 [`docs/design/render-target-format-check-plan.md`](../../docs/design/render-target-format-check-plan.md)
-sections 4 and 6. It prints the GPU and the startup report, then draws 110
-cells five times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
+sections 4 and 6. It prints the GPU and the startup report, then draws 112
+cells six times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
 hue rotating and with the intensity moving (the frames the half-float fields
-serve), plus a flare and a spotlight at 0.5 - with the neon, the flare, the
-spotlight and a reader of the neon's shared buffer registered:
+serve), plus a flare and a spotlight at 0.5 and at 1.0 - with the neon, the
+flare, the spotlight and a reader of the neon's shared buffer registered:
 
 - **A**, nothing refused: the reference. It must reach half-float targets,
   link all three field programs and hand the reader an RGBA16F buffer, or the
@@ -365,8 +365,11 @@ spotlight and a reader of the neon's shared buffer registered:
   emission table's RGBA8 row (its own fallback line says so), and has a bound
   of its own.
 - **C**, every format the library allocates refused: the neon must be dropped
-  (its emission table has no row left), nothing may be drawn, and the shared
-  buffer must never be ready.
+  (its emission table has no row left) and no neon cell may draw anything; the
+  flare and the spotlight, with no scaled buffer to be had, must fall back to
+  the 1.0 path, which needs none - every one of their frames byte-identical to
+  A's at 1.0, and the fallback logged once per layer; and the shared buffer
+  must never be ready.
 - **D**, nothing refused, but every full-size allocation in half float failed
   (`SetFailedAllocations`): the walks' own fallback, for what a probe cannot
   predict. A fallback must be logged naming the hook, no half-float format

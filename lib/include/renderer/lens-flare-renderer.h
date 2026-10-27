@@ -121,9 +121,10 @@ namespace EdgeLighting
 
         bool setupShaders();
         void setupGeometry();
-        /// Sizes @c mScaledBuffer in the best format the driver will render
-        /// to, walking SCALED_FORMATS (the .cpp) from @c mScaledFormat and
-        /// leaving it on the tier that allocated. @return false if none did.
+        /// Sizes @c mScaledBuffer in the best format this context may render
+        /// at that size, walking SCALED_FORMATS (the .cpp), and leaves
+        /// @c mScaledFormat on the row that allocated. @return false if none
+        /// did - then Render draws at 1.0.
         bool resizeScaledBuffer(int width, int height);
         /// Whether the scaled pass dithers its own write: only into the RGBA8
         /// fallback, which rounds the haze before the blit could. Into half
@@ -176,12 +177,15 @@ namespace EdgeLighting
         /// by @ref Render. RGBA16F, with an RGBA8 fallback - see
         /// @c mScaledFormat.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
-        /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
-        /// has accepted for @c mScaledBuffer. Only ever moves forward, so a
-        /// refused format is not retried on every frame although the buffer
-        /// is released between uses. Also picks the scaled pass's
-        /// @c uDither (@ref scaledPassDithers).
+        /// Index into SCALED_FORMATS (the .cpp) of the row @c mScaledBuffer
+        /// was last allocated in - what it holds, not where a walk resumes:
+        /// the walk keeps nothing (ResizeInBestFormat). Picks the scaled
+        /// pass's @c uDither (@ref scaledPassDithers).
         size_t mScaledFormat = 0;
+        /// The last frame that wanted the scaled path drew at 1.0, because no
+        /// scaled buffer could be allocated: for logging the switch, both
+        /// ways, once each.
+        bool mScaledFellBack = false;
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref drawFlare.
