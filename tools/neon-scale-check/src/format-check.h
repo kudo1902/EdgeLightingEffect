@@ -33,10 +33,24 @@ namespace NeonScaleCheck
     /// at 0.5 and must allocate again at 0.25:
     ///   - D2: half float fails from that size;
     ///   - D3: every format fails from that size.
+    /// And what each cause of a failure may block (format-check-causes.cpp):
+    ///   - D4: on the main cells, RGBA16F incomplete with two attachments
+    ///     (a ForcedFailure reporting GL_FRAMEBUFFER_UNSUPPORTED) - the
+    ///     gather's segment attachment;
+    ///   - D5: on the retry cells, the fields bypassed in it and its own A,
+    ///     textures up to one px less than the viewport at 0.5
+    ///     (SetMaxTextureSize);
+    ///   - D6: on the `segments` cells, beside their own A, the segment
+    ///     coverage table's RG16F and RG8 refused, then failing every
+    ///     allocation;
+    ///   - S: the neon, the flare and the spotlight drawn outside an effect,
+    ///     each with its own RenderTargetFormats.
     /// It fails if:
     ///   - a run probes other than the report's five formats less the ones a
-    ///     hook answers (5, 2, 2, 0, 5, 2, 5, 5 for A, B, B bypassed, C, D, E,
-    ///     D2, D3);
+    ///     hook answers (5, 2, 2, 0, 5, 2, 5, 5, 5, 5, 3, 5 for A, B, B
+    ///     bypassed, C, D, E, D2, D3, D4, D5, D6 refused, D6 failing), or a
+    ///     renderer outside an effect probes other than five by the end of
+    ///     its Initialize, or any after;
     ///   - in B, any offscreen draw writes a refused format, or any texture
     ///     alive at the end has one - what a buffer allocated without asking
     ///     RenderTargetFormats does - or the shared buffer is ever ready in
@@ -70,7 +84,24 @@ namespace NeonScaleCheck
     ///     A's at 1.0 (no scaled buffer in any format), any frame at 0.25
     ///     differs from A's, the fall back to 1.0 and the return to the scale
     ///     are not each logged once per layer, or the shared buffer is ready
-    ///     in anything but RGBA16F.
+    ///     in anything but RGBA16F;
+    ///   - in D4, no gather fallback is logged naming the hook, a cell
+    ///     without segments differs by a byte from A's, or the shared buffer
+    ///     is ever not RGBA16F - kept by size alone, the gather's
+    ///     two-attachment failure put every larger one-attachment buffer on
+    ///     RGBA8;
+    ///   - in D5, the flare's or the spotlight's 0.5 frame is not A's 1.0
+    ///     frame, a 0.25 frame is not A's, the refusal is not logged once for
+    ///     each of the three scaled buffers, any allocation is tried and
+    ///     fails, or the shared buffer is ready in anything but RGBA16F;
+    ///   - in D6, the table is tried other than never (refused) or once,
+    ///     both rows failing (failing), its fill program is built when the
+    ///     table was known unavailable before the first frame, the held-back
+    ///     warning is not logged once, a frame is more than 2 levels from
+    ///     A's, or the shared buffer leaves RGBA16F - and A must build the
+    ///     fill program, the proof that check can fail;
+    ///   - in S, a frame differs by a byte from A's frame of the same cell,
+    ///     or leaves a GL error.
     /// Returns the process exit code. See docs/design/render-target-format-check-plan.md,
     /// section 6.
     int FormatCheck(int argc, char **argv);

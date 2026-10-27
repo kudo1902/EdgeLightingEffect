@@ -3193,10 +3193,13 @@ namespace EdgeLighting
 
     bool NeonRenderer::ensureGlowCoverFillProgram()
     {
-        // Only for segments that get a table of their own. A fill that will
-        // not build is no reason to draw no glow: the segments go back into
-        // the main table's bake, for good, and that path needs nothing more.
-        if (mGlowCover.segWantedDirect)
+        // Only for segments that get a table of their own - and not while
+        // that table cannot be allocated, which keeps them in the main
+        // table's bake (ensureGlowCoverBuffer): the compile would buy nothing
+        // until it can. A fill that will not build is no reason to draw no
+        // glow: the segments go back into the main table's bake, for good,
+        // and that path needs nothing more.
+        if (mGlowCover.segWantedDirect || (!mGlowCoverFillShader.IsValid() && !segmentTableMayAllocate()))
         {
             return true;
         }
@@ -3329,16 +3332,26 @@ namespace EdgeLighting
         bool direct = !segments || mGlowCover.segWantedDirect;
         const bool segHolds =
             mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width);
-        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
         if (!direct && !segHolds)
         {
-            RenderTargetFormats &targets = GetRenderTargetFormats();
-            const auto mayAllocate = [&](const TargetFormat &row)
+            direct = !segmentTableMayAllocate();
+            // Said once each way: a refused or failed format logs nothing
+            // here otherwise, the walk never running for it.
+            if (direct != mGlowCover.segTableBlocked)
             {
-                return targets.MayAllocate(row.internalFormat, row.format, row.type, segLayout.width,
-                                           GLOW_COVER_HEIGHT, 1);
-            };
-            direct = std::none_of(std::begin(GLOW_COVER_FORMATS_RG), std::end(GLOW_COVER_FORMATS_RG), mayAllocate);
+                if (direct)
+                {
+                    LOG_W("NeonRenderer: the segment coverage table cannot be allocated at %d x %d here - the "
+                          "segments are baked into the main coverage table instead.",
+                          MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth).width, int(GLOW_COVER_HEIGHT));
+                }
+                else
+                {
+                    LOG_I("NeonRenderer: the segment coverage table may be allocated again, at %d x %d.",
+                          MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth).width, int(GLOW_COVER_HEIGHT));
+                }
+                mGlowCover.segTableBlocked = direct;
+            }
         }
         if (direct != mGlowCover.segDirect)
         {
@@ -3362,6 +3375,7 @@ namespace EdgeLighting
         // segments go back into the main table for this frame; the failure is
         // RenderTargetFormats' to remember, so the check above keeps them
         // there at this size or larger and lets the table try again below it.
+        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
         if (!ResizeInBestFormat(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
                                 std::size(GLOW_COVER_FORMATS_RG), segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
                                 "NeonRenderer", "segment coverage", "The segments' coverage will be stored at 8 bits."))
@@ -3373,6 +3387,18 @@ namespace EdgeLighting
         mGlowCover.segLayout = segLayout;
         mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         return true;
+    }
+
+    bool NeonRenderer::segmentTableMayAllocate()
+    {
+        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
+        RenderTargetFormats &targets = GetRenderTargetFormats();
+        return std::any_of(std::begin(GLOW_COVER_FORMATS_RG), std::end(GLOW_COVER_FORMATS_RG),
+                           [&](const TargetFormat &row)
+                           {
+                               return targets.MayAllocate(row.internalFormat, row.format, row.type, segLayout.width,
+                                                          GLOW_COVER_HEIGHT, 1);
+                           });
     }
 
     void NeonRenderer::rebuildLoopSamples(const Config &config)

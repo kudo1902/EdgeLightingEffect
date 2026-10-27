@@ -400,9 +400,39 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   it takes the hook's failure itself; the spotlight's and the neon's find that
   failure kept and try nothing. Built with the failure memory ignoring size,
   both fail.
+- **D4**, **D5**, **D6** and **S** (`format-check-causes.cpp`): what each
+  cause of a failed allocation may block, and may not. A failure is kept by
+  its cause - out of memory by its total size, anything else by format and
+  attachment count - and a buffer past `GL_MAX_TEXTURE_SIZE` is refused
+  before any format is tried, keeping nothing.
+  - **D4**, on the main cells: RGBA16F incomplete with two attachments (a
+    `ForcedFailure` reporting `GL_FRAMEBUFFER_UNSUPPORTED`), the gather's
+    segment attachment. The gather falls back on the segment scenes only;
+    every cell without segments must match A byte for byte and the shared
+    buffer stay RGBA16F. Built with every failure kept by size alone, as
+    before the causes were told apart, 91 of 103 such cells differ and the
+    shared buffer goes to RGBA8.
+  - **D5**, on the retry cells with the fields bypassed (the edge ring's is
+    full resolution at every scale) beside its own A: a size limit one px
+    under the viewport at 0.5 (`SetMaxTextureSize`). Every 0.5 scaled buffer
+    is refused before it is tried - logged once each, no allocation fails -
+    so the flare and the spotlight draw their 0.5 cells as A draws 1.0, and
+    at 0.25 everything matches A.
+  - **D6**, on the `segments` cells beside their own A: the segment coverage
+    table's RG16F and RG8 refused - never tried, its fill program never
+    built - then failing every allocation - tried once, both rows failing,
+    the fill program built once before it (nothing knows an allocation fails
+    until it is made). Either way the held-back warning is logged once, the
+    frames stay within 2 levels of A's (1 on the M2 Pro) and the shared
+    buffer RGBA16F; A must build the fill program.
+  - **S**: the neon, the flare and the spotlight drawn outside an effect,
+    each making its own `RenderTargetFormats`: five probes by the end of
+    `Initialize` and none after, no GL error, and every frame byte for byte
+    A's for the same cell.
 
 Every run must make exactly the report's probes less the formats a hook
-answers (5 for A, D, D2 and D3, 2 for B and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
+answers (5 for A, D, D2, D3, D4, D5 and D6 failing, 3 for D6 refused, 2 for B
+and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

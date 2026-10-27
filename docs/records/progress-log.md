@@ -110,6 +110,30 @@ steps 1-5 and 7; step 6, on the device, is open.
   M2 Pro with every group inside its bound (still 2 levels / 0.24%, hue 2 /
   0.23%, intensity 2 / 0.26%, `segments` 53 / 9.4%), and `sequence`,
   `partition`, `check` and `shared-buffer` pass.
+- **Then the failure causes** (a second review of the walk, on the M2 Pro).
+  Every full-size failure used to be kept as "this format fails at this many
+  texels x attachments or more", whatever failed it. Right for memory, wrong
+  for the rest: a driver refusing two RGBA16F attachments would have put
+  every larger one-attachment RGBA16F buffer (the shared buffer among them)
+  on RGBA8, and a buffer past the texture size limit would have been kept
+  against every row of its list, by area. Now `Framebuffer::Resize` says what
+  failed it (`failure` out parameter) and `RenderTargetFormats` keeps out of
+  memory by total size, anything else by format and attachment count, and
+  refuses a buffer past `GL_MAX_TEXTURE_SIZE` (read by the report) before
+  any row is tried, keeping nothing; the report prints the limit.
+  `SetFailedAllocations` takes a `ForcedFailure` (formats, size, attachment
+  count, the error reported) and `SetMaxTextureSize` lowers the limit.
+  `formats` grew cases D4 (RGBA16F incomplete with two attachments: every
+  cell without segments as A, the shared buffer RGBA16F - a build keeping
+  every failure by size fails 91 of 103 cells), D5 (the size limit), D6 (the
+  segment table refused, then failing; it found that its fill program was
+  built even when the table was known unavailable - now gated on the same
+  test - and that a refused table was never logged - now logged once each
+  way) and S (the neon, the flare and the spotlight outside an effect: five
+  probes in `Initialize`, none after, frames byte for byte as inside one, a
+  path nothing ran before). The harness split into `format-check-run.{h,cpp}`
+  and `format-check-causes.cpp` (it had reached 954 lines). `formats` passes
+  in ~8 s on the M2 Pro.
 
 ### Open
 

@@ -150,22 +150,43 @@ namespace EdgeLighting
         ///       unbinds the pixel-unpack buffer for the uploads, as
         ///       @ref IsColorRenderable does, so a host buffer bound there is
         ///       not taken for a failure. Leaves no GL error behind.
+        /// @param failure If given, receives why a failed call failed - the
+        ///        GL error the allocation raised (GL_OUT_OF_MEMORY above all),
+        ///        else the incomplete framebuffer status, else
+        ///        GL_INVALID_VALUE for a size or attachment count refused
+        ///        before allocating, or GL_FRAMEBUFFER_UNSUPPORTED for more
+        ///        attachments than the driver allows - and GL_NO_ERROR on
+        ///        success. A format walk keeps a failure by its cause
+        ///        (RenderTargetFormats): out of memory by size, anything else
+        ///        by format and attachment count.
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
                     GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
                     GLenum type = GL_UNSIGNED_BYTE, GLint filter = GL_LINEAR,
-                    int colorAttachments = 1)
+                    int colorAttachments = 1, GLenum *failure = nullptr)
         {
+            const auto fail = [failure](GLenum why)
+            {
+                if (failure)
+                {
+                    *failure = why;
+                }
+                return false;
+            };
+            if (failure)
+            {
+                *failure = GL_NO_ERROR;
+            }
             if (width <= 0 || height <= 0)
             {
                 LOG_E("Framebuffer[%s]: invalid size %dx%d requested.", mName.c_str(), width, height);
-                return false;
+                return fail(GL_INVALID_VALUE);
             }
             if (colorAttachments < 1 || colorAttachments > MAX_COLOR_ATTACHMENTS)
             {
                 LOG_E("Framebuffer[%s]: invalid attachment count %d requested (1-%d).",
                       mName.c_str(), colorAttachments, MAX_COLOR_ATTACHMENTS);
-                return false;
+                return fail(GL_INVALID_VALUE);
             }
 
             if (mFbo != 0 && width == mWidth && height == mHeight &&
@@ -192,7 +213,7 @@ namespace EdgeLighting
                 {
                     LOG_E("Framebuffer[%s]: %d attachments requested, driver allows %d attachments / %d draw buffers.",
                           mName.c_str(), colorAttachments, maxAttachments, maxDrawBuffers);
-                    return false;
+                    return fail(GL_FRAMEBUFFER_UNSUPPORTED);
                 }
             }
 
@@ -283,14 +304,14 @@ namespace EdgeLighting
                 LOG_E("Framebuffer[%s]: allocating %dx%d in format 0x%x raised GL error 0x%x (status=0x%x).",
                       mName.c_str(), width, height, internalFormat, allocError, status);
                 destroy();
-                return false;
+                return fail(allocError);
             }
             if (status != GL_FRAMEBUFFER_COMPLETE)
             {
                 LOG_E("Framebuffer[%s] incomplete after resize to %dx%d (status=0x%x).",
                       mName.c_str(), width, height, status);
                 destroy();
-                return false;
+                return fail(status);
             }
 
             mWidth = width;

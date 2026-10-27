@@ -263,7 +263,9 @@ public:
     /// Verification only - a host never calls these (4.7). Per effect.
     void SetRefusedFormats(std::vector<GLint> formats);    ///< Ask says REFUSED, without a probe.
     bool IsRefused(GLint internalFormat) const;
-    void SetFailedAllocations(std::vector<GLint> formats, int64_t fromTexels = 0); ///< The walk's full-size allocation of at least fromTexels fails, and is recorded.
+    void SetFailedAllocations(ForcedFailure failure);   ///< The walk's full-size allocations it selects fail with its error, kept by cause.
+    void SetFailedAllocations(std::vector<GLint> formats, int64_t fromTexels = 0); ///< The same, out of memory, from a size.
+    void SetMaxTextureSize(int size);                   ///< A lower size limit: larger buffers refused before any row.
     void SetUnknownFormats(std::vector<GLint> formats);    ///< Ask says UNKNOWN, without a probe.
 
 private:
@@ -752,6 +754,18 @@ tool's README gained its `formats` section in step 5.
      the size that failed and above, never below - and in D3 the flare and
      the spotlight draw their 0.5 cells at 1.0 and say when they return. A
      build whose failure memory ignores size fails both.
+   - **D4**, **D5**, **D6** and **S** - added with the failure causes (a
+     failure kept by its cause: out of memory by total size, anything else
+     by format and attachment count; a buffer past `GL_MAX_TEXTURE_SIZE`
+     refused before any row, keeping nothing). D4: RGBA16F incomplete with
+     two attachments - no one-attachment buffer may lose half float (a build
+     keeping every failure by size alone fails it). D5: a size limit under
+     the viewport at 0.5 (`SetMaxTextureSize`) - refused before tried, then
+     allocated at 0.25. D6: the segment coverage table refused, then failing
+     - its gate and its fill program. S: the neon, the flare and the
+     spotlight outside an effect - probed in `Initialize`, none after, the
+     same frames. `tools/neon-scale-check/src/format-check.h` lists every
+     check.
 3. Assert, exiting non-zero on any failure as the other modes do:
    - **Probes.** `GetAnswers().size()` after every run is the report's five
      less the refused formats (a refusal is the hook's answer, made without a

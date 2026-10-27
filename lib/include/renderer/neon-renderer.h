@@ -1045,6 +1045,12 @@ namespace EdgeLighting
             /// for the life of the renderer.
             bool fillUnavailable = false;
 
+            /// The config wants the segment table and it cannot be allocated
+            /// (@ref NeonRenderer::segmentTableMayAllocate), so the segments
+            /// are baked directly - for logging the change, both ways, once
+            /// each: the gate decides before any walk could log it.
+            bool segTableBlocked = false;
+
             /// Which pieces of @c mGlowCover.buffer have to be re-baked: bit 2b is
             /// band b's straight, bit 2b + 1 its corner, all eight when the shape
             /// moves. NOT set on every config change, as the emission table's
@@ -1248,8 +1254,10 @@ namespace EdgeLighting
 
         /// The segment table's fill program (neon-glow-cover-fill.frag, pass
         /// 0f), built on the first frame whose segments get a table of their
-        /// own. A failure is logged once and sends the segments back into the
-        /// main table's own bake for good (@c GlowCoverTable::fillUnavailable).
+        /// own - not while that table cannot be allocated
+        /// (@ref segmentTableMayAllocate), since nothing would read it. A
+        /// failure is logged once and sends the segments back into the main
+        /// table's own bake for good (@c GlowCoverTable::fillUnavailable).
         bool ensureGlowCoverFillProgram();
 
         /// Make sure the field's two programs - neon-field-bake.frag and
@@ -1311,6 +1319,14 @@ namespace EdgeLighting
         /// @return false only if NO candidate could be allocated, in which case
         ///         the frame draws the fill alone, as for a failed program.
         bool ensureGlowCoverBuffer(bool segments);
+
+        /// Whether the segment table may be allocated at the width the config
+        /// wants (@c mGlowCover.segWantedWidth): some row of its list renders
+        /// here, or may, and has not failed that large (the effect's
+        /// RenderTargetFormats). The one gate on the segment table's mode,
+        /// asked by @ref ensureGlowCoverBuffer before the mode moves and by
+        /// @ref ensureGlowCoverFillProgram before it builds.
+        bool segmentTableMayAllocate();
 
         // --- CPU-side inputs: rebuilt on a config change ---------------------
         /// Place @c NeonConfig::numSamples points (clamped) evenly by arc

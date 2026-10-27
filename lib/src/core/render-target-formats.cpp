@@ -126,6 +126,7 @@ namespace EdgeLighting
 
     void RenderTargetFormats::AskReportFormats()
     {
+        readLimits();
         for (const ReportRow &row : REPORT_ROWS)
         {
             Ask(row.internalFormat, row.format, row.type);
@@ -137,36 +138,130 @@ namespace EdgeLighting
         return std::find(mRefused.begin(), mRefused.end(), internalFormat) != mRefused.end();
     }
 
-    bool RenderTargetFormats::hasFailedAt(GLint internalFormat, int64_t texels) const
+    const char *RenderTargetFormats::failedReason(GLint internalFormat, int width, int height, int attachments) const
     {
+        const int64_t perAttachment = static_cast<int64_t>(width) * height;
         for (const FailedAllocation &failed : mFailedSizes)
         {
-            if (failed.internalFormat == internalFormat)
+            if (failed.internalFormat != internalFormat)
             {
-                return texels >= failed.texels;
+                continue;
+            }
+            // Memory runs out by bytes: any allocation at least as large in
+            // total repeats it, whatever its shape or attachment count.
+            if (failed.outOfMemory && perAttachment * attachments >= failed.texels)
+            {
+                return "an allocation of it that large already ran out of memory here";
+            }
+            // Anything else said something about this format at that many
+            // attachments: as many or more, at least that large each.
+            if (!failed.outOfMemory && attachments >= failed.attachments && perAttachment >= failed.texels)
+            {
+                return "an allocation of it that large, with that many attachments, already failed here";
             }
         }
-        return false;
+        return nullptr;
     }
 
-    void RenderTargetFormats::recordFailedAllocation(GLint internalFormat, int64_t texels)
+    void RenderTargetFormats::recordFailedAllocation(GLint internalFormat, int width, int height, int attachments,
+                                                     GLenum failure)
     {
+        const bool outOfMemory = failure == GL_OUT_OF_MEMORY;
+        const int64_t perAttachment = static_cast<int64_t>(width) * height;
+        const int keyAttachments = outOfMemory ? 0 : attachments;
+        const int64_t texels = outOfMemory ? perAttachment * attachments : perAttachment;
         for (FailedAllocation &failed : mFailedSizes)
         {
-            if (failed.internalFormat == internalFormat)
+            if (failed.internalFormat == internalFormat && failed.outOfMemory == outOfMemory &&
+                failed.attachments == keyAttachments)
             {
                 failed.texels = std::min(failed.texels, texels);
                 return;
             }
         }
-        mFailedSizes.push_back(FailedAllocation{internalFormat, texels});
+        mFailedSizes.push_back(FailedAllocation{internalFormat, outOfMemory, keyAttachments, texels});
     }
 
-    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat, int64_t texels) const
+    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat, int64_t texels, int attachments) const
     {
-        return texels >= mFailedAllocationTexels &&
-               std::find(mFailedAllocations.begin(), mFailedAllocations.end(), internalFormat) !=
-                   mFailedAllocations.end();
+        const ForcedFailure &forced = mForcedFailure;
+        return texels >= forced.fromTexels && attachments >= forced.fromAttachments &&
+               std::find(forced.formats.begin(), forced.formats.end(), internalFormat) != forced.formats.end();
+    }
+
+    int RenderTargetFormats::GetMaxTextureSize() const
+    {
+        if (mMaxTextureSizeOverride > 0 && (mMaxTextureSize <= 0 || mMaxTextureSizeOverride < mMaxTextureSize))
+        {
+            return mMaxTextureSizeOverride;
+        }
+        return mMaxTextureSize;
+    }
+
+    bool RenderTargetFormats::isPastSizeLimit(int width, int height) const
+    {
+        const int limit = GetMaxTextureSize();
+        return limit > 0 && (width > limit || height > limit);
+    }
+
+    void RenderTargetFormats::readLimits()
+    {
+        if (mMaxTextureSize > 0)
+        {
+            return;
+        }
+        GLint size = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &size);
+        mMaxTextureSize = size;
+    }
+
+    void RenderTargetFormats::logPastSizeLimit(const char *owner, const char *what, int width, int height)
+    {
+        // Once per walk, as a skip is: the walk asks every frame.
+        if (!isNewSkip(owner, what, "size limit"))
+        {
+            return;
+        }
+        LOG_W("%s: %s target refused at %d x %d - past this GL's texture size limit of %d px%s; no format is tried.",
+              owner, what, width, height, GetMaxTextureSize(),
+              mMaxTextureSizeOverride > 0 && GetMaxTextureSize() == mMaxTextureSizeOverride
+                  ? " (set by RenderTargetFormats::SetMaxTextureSize)"
+                  : "");
+    }
+
+    std::string RenderTargetFormats::describeFailure(GLenum failure)
+    {
+        char text[48];
+        switch (failure)
+        {
+        case GL_OUT_OF_MEMORY:
+        {
+            return "GL_OUT_OF_MEMORY";
+        }
+        case GL_INVALID_VALUE:
+        {
+            return "GL_INVALID_VALUE";
+        }
+        case GL_INVALID_OPERATION:
+        {
+            return "GL_INVALID_OPERATION";
+        }
+        case GL_INVALID_ENUM:
+        {
+            return "GL_INVALID_ENUM";
+        }
+        default:
+        {
+            break;
+        }
+        }
+        const char *status = failure != 0 ? GLUtils::GetFramebufferStatusName(failure) : nullptr;
+        if (status)
+        {
+            return status;
+        }
+        std::snprintf(text, sizeof(text), "0x%x", failure);
+        return text;
     }
 
     bool RenderTargetFormats::isNewSkip(const char *owner, const char *what, const char *row)
@@ -208,7 +303,8 @@ namespace EdgeLighting
     }
 
     void RenderTargetFormats::logSkippedAfterFailure(const char *owner, const char *what, const char *row,
-                                                     const char *next, int64_t texels)
+                                                     const char *next, int width, int height, int attachments,
+                                                     const char *reason)
     {
         if (!isNewSkip(owner, what, row))
         {
@@ -216,15 +312,13 @@ namespace EdgeLighting
         }
         if (next)
         {
-            LOG_W("%s: %s %s target skipped at %lld texels - an allocation of it that large already failed here; "
-                  "using %s.",
-                  owner, row, what, static_cast<long long>(texels), next);
+            LOG_W("%s: %s %s target skipped at %d x %d x %d - %s; using %s.", owner, row, what, width, height,
+                  attachments, reason, next);
         }
         else
         {
-            LOG_W("%s: %s %s target, the last in its list, skipped at %lld texels - an allocation of it that large "
-                  "already failed here.",
-                  owner, row, what, static_cast<long long>(texels));
+            LOG_W("%s: %s %s target, the last in its list, skipped at %d x %d x %d - %s.", owner, row, what, width,
+                  height, attachments, reason);
         }
     }
 
@@ -236,6 +330,7 @@ namespace EdgeLighting
     void RenderTargetFormats::LogReport()
     {
         LOG_I("--- Render-target formats ---");
+        readLimits();
         const size_t probesBefore = mAnswers.size();
         const auto start = std::chrono::steady_clock::now();
         for (const ReportRow &row : REPORT_ROWS)
@@ -277,6 +372,9 @@ namespace EdgeLighting
               listed("GL_EXT_color_buffer_half_float"), listed("GL_EXT_color_buffer_float"),
               listed("GL_EXT_float_blend"), listed("GL_OES_texture_float_linear"),
               gles ? "" : " (desktop GL: float targets are core)");
+        LOG_I("Largest buffer side: %d px (GL_MAX_TEXTURE_SIZE) - a larger buffer is refused before any format is "
+              "tried",
+              GetMaxTextureSize());
         // The probes THIS call made - a row already answered, or answered by
         // a hook, adds none.
         LOG_I("%zu probes, %.2f ms", mAnswers.size() - probesBefore, probeMs);

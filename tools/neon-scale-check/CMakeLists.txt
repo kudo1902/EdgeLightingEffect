@@ -97,7 +97,8 @@ else()
     set(_el_formats_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/core/render-target-formats.h")
 endif()
 if(EXISTS "${_el_formats_header}")
-    target_sources(neon-scale-check PRIVATE src/format-check.cpp)
+    target_sources(neon-scale-check PRIVATE src/format-check.cpp src/format-check-run.cpp
+                                            src/format-check-causes.cpp)
     target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_FORMATS=1)
 endif()
 
