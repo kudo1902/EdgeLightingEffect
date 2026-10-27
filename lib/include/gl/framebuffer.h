@@ -294,9 +294,12 @@ namespace EdgeLighting
         /// status - 0 when there is none: the upload failed (then
         /// @p uploadError, if given, receives the error @c glTexImage2D raised -
         /// a format or pair this GL does not know, or GL_OUT_OF_MEMORY), or the
-        /// status query itself raised an error. A status of 0 is no answer
-        /// about the format: RenderTargetFormats keeps it as unknown, and the
-        /// walk lets the full-size allocation decide that format.
+        /// status query itself raised an error. RenderTargetFormats reads the
+        /// two together (RenderTargetFormats::Answer::IsUnknown): an upload
+        /// that raised GL_INVALID_ENUM or GL_INVALID_VALUE - the internal
+        /// format itself rejected - is a "no"; any other status of 0 is no
+        /// answer about the format, kept as unknown, and the walk lets the
+        /// full-size allocation decide that format.
         ///
         /// The raw, uncached check: the library asks it through the effect's
         /// @c RenderTargetFormats, which probes each format once and keeps the

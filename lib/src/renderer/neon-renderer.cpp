@@ -2407,21 +2407,23 @@ namespace EdgeLighting
         const glm::ivec4 glowWindow = GetSubWindow(scaledRegion, mGlowBounds.outer);
         const BufferRegion fieldRegion = GetWindowRegion(scaledRegion, glowWindow);
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
-        // Whether this context renders the fields' half-float format
-        // (GetFieldFormat: R16F, RG16F with segments), asked of the effect's
+        // Whether the fields' half-float format (GetFieldFormat: R16F, RG16F
+        // with segments) may be allocated here, asked of the effect's
         // RenderTargetFormats - a lookup, the startup report having probed
-        // both. Both gates ask it BEFORE building the field's programs, so a
-        // driver that cannot render the field never compiles them, and asks
-        // it again every frame rather than marking the field unavailable: the
-        // format follows the segments.
-        const auto fieldTargetRenderable = [this]()
+        // both. MayAllocate, not IsRenderable: a format the probe could not
+        // judge is the allocation's to decide, as in every walk, and a field
+        // whose allocation then fails marks itself unavailable. Both gates ask
+        // it BEFORE building the field's programs, so a driver that refuses
+        // the field never compiles them, and ask it again every frame rather
+        // than marking the field unavailable: the format follows the segments.
+        const auto fieldTargetAllowed = [this]()
         {
             const TargetFormat target = GetFieldTarget(mEffectiveSegments);
-            return GetRenderTargetFormats().IsRenderable(target.internalFormat, target.format, target.type);
+            return GetRenderTargetFormats().MayAllocate(target.internalFormat, target.format, target.type);
         };
         if (glowReady && !mGlowField.schedule.unavailable && !bypasses(NeonBypass::GLOW_FIELD) &&
             IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
-            FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && fieldTargetRenderable() &&
+            FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && fieldTargetAllowed() &&
             ensureFieldPrograms() && !reuseOffscreen)
         {
             field = mGlowField.schedule.Decide(viewport, mGradientLUT.GetUploadCount(), !fieldProgramsBuilt,
@@ -2435,7 +2437,7 @@ namespace EdgeLighting
         LazyBake::Decision ringField;
         if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
             !bypasses(NeonBypass::RING_FIELD) && IsRingFieldEligible(config, mGradientLUT.IsOpaque()) &&
-            fieldTargetRenderable())
+            fieldTargetAllowed())
         {
             const RingFieldLayout layout =
                 computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);

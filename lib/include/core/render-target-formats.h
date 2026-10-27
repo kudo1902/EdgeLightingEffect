@@ -50,10 +50,21 @@ namespace EdgeLighting
             GLenum uploadError = GL_NO_ERROR; ///< What the probe's glTexImage2D raised, if it failed.
             bool renderable = false;          ///< status == GL_FRAMEBUFFER_COMPLETE.
 
-            /// The probe gave no answer about the format: its upload failed
-            /// (GL_OUT_OF_MEMORY, a transfer pair the GL rejects) or the status
-            /// query raised an error. The allocation decides instead.
-            bool IsUnknown() const { return status == 0; }
+            /// The probe gave no answer about the format: its upload failed for
+            /// a reason that says nothing about the format - GL_OUT_OF_MEMORY,
+            /// or GL_INVALID_OPERATION (a format the GL takes, with a transfer
+            /// pair it does not: the asker's mistake) - or the status query
+            /// raised an error. The allocation decides instead. NOT unknown:
+            /// an upload that raised GL_INVALID_ENUM or GL_INVALID_VALUE - an
+            /// argument the GL does not accept at all, which for a 4 x 4
+            /// level-0 upload of a library row means the internal format
+            /// (the spec names GL_INVALID_VALUE; Apple's GL raises
+            /// GL_INVALID_ENUM, measured) - a definitive "no", as a refusing
+            /// status is.
+            bool IsUnknown() const
+            {
+                return status == 0 && uploadError != GL_INVALID_ENUM && uploadError != GL_INVALID_VALUE;
+            }
         } Answer;
 
         /// The answer for @p internalFormat: probed on the first ask, with
@@ -70,10 +81,20 @@ namespace EdgeLighting
         /// @pre A GL context is current, if this format has no answer kept.
         Answer Ask(GLint internalFormat, GLenum format, GLenum type);
 
-        /// Whether a buffer may try @p internalFormat: it renders here, or its
-        /// probe gave no answer (then the allocation decides). False only for
-        /// a format this driver refused, or the hook did.
+        /// Whether this driver renders to @p internalFormat - the verdict
+        /// alone: false for a format it refused AND for one its probe could
+        /// not judge (Answer::IsUnknown). What a host reports as supported.
         bool IsRenderable(GLint internalFormat, GLenum format, GLenum type)
+        {
+            return Ask(internalFormat, format, type).renderable;
+        }
+
+        /// Whether a buffer may allocate in @p internalFormat: it renders
+        /// here, or its probe gave no answer - then the allocation decides, as
+        /// it did before any probe existed. False only for a format this
+        /// driver refused (or the hook did). What a buffer asks before it
+        /// commits to a format; ResizeInBestFormat's walk asks it of each row.
+        bool MayAllocate(GLint internalFormat, GLenum format, GLenum type)
         {
             const Answer answer = Ask(internalFormat, format, type);
             return answer.renderable || answer.IsUnknown();
@@ -144,6 +165,15 @@ namespace EdgeLighting
         /// Whether @ref SetFailedAllocations names @p internalFormat.
         bool IsAllocationFailed(GLint internalFormat) const;
 
+        /// Verification only - a host never calls this. Every internal format
+        /// in @p formats comes back from @ref Ask as unknown (status 0, no
+        /// probe), as a probe whose upload failed for a passing reason leaves
+        /// it - so a run can drive the unknown path, which no driver the
+        /// project runs on produces: the walks must still allocate such a
+        /// format, and the fields still build. Per effect, set before the
+        /// first ask, like @ref SetRefusedFormats; a refusal wins over it.
+        void SetUnknownFormats(std::vector<GLint> formats) { mUnknown = std::move(formats); }
+
     private:
         /// The walk's question, asked at its allocation - private, since only
         /// @ref ResizeInBestFormat may ask it: the index of the first of
@@ -170,7 +200,7 @@ namespace EdgeLighting
             {
                 const Row &row = rows[tier];
                 const Answer answer = Ask(row.internalFormat, row.format, row.type);
-                if (answer.renderable || answer.IsUnknown())
+                if (answer.renderable || answer.IsUnknown()) // MayAllocate, keeping the answer for the log
                 {
                     return tier;
                 }
@@ -201,10 +231,14 @@ namespace EdgeLighting
         void logSkipped(const char *owner, const char *what, const char *row, const char *next,
                         const Answer &answer);
 
+        /// Whether @ref SetUnknownFormats names @p internalFormat.
+        bool isForcedUnknown(GLint internalFormat) const;
+
     private:
         std::vector<Answer> mAnswers;           ///< One per format asked, in order: a handful, so a linear scan beats a map.
         std::vector<GLint> mRefused;            ///< SetRefusedFormats' list; checked before mAnswers.
         std::vector<GLint> mFailedAllocations;  ///< SetFailedAllocations' list.
+        std::vector<GLint> mUnknown;            ///< SetUnknownFormats' list; checked after mRefused, before mAnswers.
         std::vector<LoggedSkip> mLoggedSkips;   ///< What logSkipped has already said, so a walk resumed on a refused row is quiet.
     };
 

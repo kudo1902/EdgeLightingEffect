@@ -217,6 +217,12 @@ New, in `lib/include/core/render-target-formats.h` and
 `core/`, beside `SharedBufferRegistry`, the other object the effect owns and
 hands out. GL thread only, like the registry.
 
+As built after the third review - the header,
+`lib/include/core/render-target-formats.h`, is the source of truth, and
+sections 5 and 10 record how the API got here (the first sketch had
+`IsRenderable` as the walk's question, no `uploadError`, no unknown answer and
+one hook):
+
 ```cpp
 /// What this effect's GL context can render to. Each format asked about is
 /// probed once (Framebuffer::IsColorRenderable) and its answer kept: every
@@ -229,46 +235,60 @@ public:
     /// One format's answer.
     typedef struct Answer
     {
-        GLint internalFormat = 0; ///< The sized internal format asked about.
-        GLenum status = 0;        ///< glCheckFramebufferStatus; 0 for a refused upload.
-        bool renderable = false;  ///< status == GL_FRAMEBUFFER_COMPLETE.
+        GLint internalFormat = 0;         ///< The sized internal format asked about.
+        GLenum status = 0;                ///< glCheckFramebufferStatus; 0 when there is none.
+        GLenum uploadError = GL_NO_ERROR; ///< What the probe's glTexImage2D raised, if it failed.
+        bool renderable = false;          ///< status == GL_FRAMEBUFFER_COMPLETE.
+
+        /// No status, and no upload error that condemns the format: the
+        /// allocation decides. GL_INVALID_ENUM / GL_INVALID_VALUE - the
+        /// internal format itself rejected - is a "no"; out of memory or
+        /// GL_INVALID_OPERATION (a transfer pair the GL rejects) says nothing
+        /// about the format.
+        bool IsUnknown() const;
     } Answer;
 
-    /// The answer for @p internalFormat: probed on the first ask, with
-    /// @p format / @p type as the probe's upload, then kept. Keyed by the
-    /// internal format alone - renderability is its property; the transfer
-    /// pair only feeds the probe. A format SetRefusedFormats names comes back
-    /// not renderable, status GL_FRAMEBUFFER_UNSUPPORTED, without a probe and
-    /// without replacing what is kept.
+    /// Probed on the first ask, with @p format / @p type as the probe's
+    /// upload, then kept - every answer, an unknown one included. Keyed by the
+    /// internal format alone. A hook's answer comes back without a probe and
+    /// without touching what is kept.
     Answer Ask(GLint internalFormat, GLenum format, GLenum type);
+    /// The verdict alone: renders here. False for an unknown answer.
     bool IsRenderable(GLint internalFormat, GLenum format, GLenum type);
+    /// Renders here, or unknown - what a buffer asks before it commits to a
+    /// format: the half-float fields' gate (4.6); the walk asks it of each row.
+    bool MayAllocate(GLint internalFormat, GLenum format, GLenum type);
 
-    /// A walk's question, asked at its allocation: the index of the first of
-    /// @p count @p rows, at or after @p from, that IsRenderable passes;
-    /// @p count if none does - final: the walk then tries nothing, and its
-    /// failure path puts its tier back on the last row (step 5 changed this
-    /// from count - 1, below). Logs one LOG_W the first time it skips each row
-    /// for a walk, naming @p owner and @p what. Rows are any type naming
-    /// internalFormat, format, type and name - TargetFormat,
-    /// SharedBuffer::Format, ScaledFormat.
+    void LogReport();                              ///< The startup report (4.5).
+    void AskReportFormats();                       ///< Its asks without the log, for a renderer outside an effect.
+    const std::vector<Answer> &GetAnswers() const; ///< Every answer kept, in the order asked.
+
+    /// Verification only - a host never calls these (4.7). Per effect.
+    void SetRefusedFormats(std::vector<GLint> formats);    ///< Ask says no (GL_FRAMEBUFFER_UNSUPPORTED).
+    bool IsRefused(GLint internalFormat) const;
+    void SetFailedAllocations(std::vector<GLint> formats); ///< The walk's full-size allocation fails.
+    bool IsAllocationFailed(GLint internalFormat) const;
+    void SetUnknownFormats(std::vector<GLint> formats);    ///< Ask says unknown (status 0), without a probe.
+
+private:
+    /// The walk's question, private to it: the first of @p count @p rows, at
+    /// or after @p from, that MayAllocate passes; @p count if none does
+    /// (final - the walk then tries nothing). Logs each skipped row once.
     template <typename Row>
     size_t FirstRenderable(const Row *rows, size_t count, size_t from, const char *owner, const char *what);
 
-    /// The startup report (4.5). EdgeLightingEffect::Initialize calls it.
-    void LogReport();
-
-    /// Every answer probed so far, in the order asked. A refusal by
-    /// SetRefusedFormats is not among them - it is the hook's, not the driver's.
-    const std::vector<Answer> &GetAnswers() const;
-
-    /// Verification only - a host never calls this. See 4.7.
-    void SetRefusedFormats(std::vector<GLint> formats);
-    const std::vector<GLint> &GetRefusedFormats() const;
-
-private:
-    std::vector<Answer> mAnswers; ///< A handful: a linear scan beats a map.
-    std::vector<GLint> mRefused;  ///< The hook's list; checked before mAnswers.
+    template <typename Row>
+    friend bool ResizeInBestFormat(/* as below */);
 };
+
+/// THE format walk, beside the class: every buffer with a list of formats
+/// allocates through it (4.4). Starts at FirstRenderable, falls back on a
+/// full-size allocation that fails, leaves @p tier on the row that allocated
+/// - or on the last row, returning false.
+template <typename Row>
+bool ResizeInBestFormat(Framebuffer &buffer, RenderTargetFormats &targets, const Row *rows, size_t count,
+                        size_t &tier, int width, int height, GLint filter, int attachments, const char *owner,
+                        const char *what, const char *consequence);
 ```
 
 `GetAnswers().size()` is the number of probes the effect has made, which is how
@@ -388,8 +408,10 @@ does not start with "OpenGL ES". `GLUtils::GetFramebufferStatusName` stays in
 ### 4.6 The fields ask too (step 4)
 
 Both eligibility gates in `NeonRenderer::RenderOffscreen` - the glow field's
-and the ring field's - gain one term,
-`GetRenderTargetFormats().IsRenderable(GetFieldFormat(...), GL_HALF_FLOAT)`,
+and the ring field's - gain one term, `GetRenderTargetFormats().MayAllocate`
+on the field's row (`GetFieldTarget`: R16F, RG16F with segments; built first
+as `IsRenderable`, which the third review narrowed to the verdict alone - an
+unknown answer leaves the field's allocation to decide, as in every walk),
 placed BEFORE `ensureFieldPrograms()` / `ensureRingFieldPrograms()` in their
 `&&` chains, so a driver that cannot render the field never compiles its
 programs. The first design kept two bools (`mFieldTargets`) probed in
@@ -701,7 +723,7 @@ tool's README gained its `formats` section in step 5.
 
 1. Print `GL_RENDERER` and the report (`RenderTargetFormats::LogReport`, the
    same function `Initialize` calls).
-2. Run three refusal sets, each on a fresh effect, set through
+2. Run these hook sets, each on a fresh effect, set through
    `effect.GetRenderTargetFormats()->SetRefusedFormats` before `Initialize`,
    over the twelve `check` scenes at scales 1.0, 0.5 and 0.25, still and under
    `--mode hue` and `--mode intensity` (the field paths serve only those), plus
@@ -713,10 +735,14 @@ tool's README gained its `formats` section in step 5.
    - **D** - nothing refused, but half float's full-size allocations failed
      (`SetFailedAllocations`, added after the second review): the walks'
      own fallback.
+   - **E** - nothing refused, but half float's answers unknown
+     (`SetUnknownFormats`, added after the third review): a probe whose
+     upload failed for a passing reason.
 3. Assert, exiting non-zero on any failure as the other modes do:
    - **Probes.** `GetAnswers().size()` after every run is the report's five
      less the refused formats (a refusal is the hook's answer, made without a
-     probe): 5 for A, 2 for B, 0 for C. Anything more means something probed
+     probe, and so is a hook's unknown): 5 for A and D, 2 for B and E, 0 for
+     C. Anything more means something probed
      a format outside the report.
    - **B, formats.** No draw ever lands in a refused format: before every
      offscreen draw, the bound draw framebuffer's colour attachments'
@@ -755,6 +781,11 @@ tool's README gained its `formats` section in step 5.
      lands in half float and none is alive, the shared buffer is RGBA8,
      and every frame is byte-identical to B's: the full-size fallback
      lands every buffer where B's probe did.
+   - **E, unknown.** The report prints the three rows UNKNOWN, no row is
+     skipped and none falls back, every half-float target and all three field
+     programs are reached, the shared buffer is RGBA16F, and every frame is
+     byte-identical to A's: an unknown answer leaves the allocation to
+     decide, and here it succeeds.
 4. A refusal belongs to the effect it was set on, so a failed assertion cannot
    leak it into a later run: each run makes its own effect.
 
@@ -784,8 +815,8 @@ tool's README gained its `formats` section in step 5.
 
 - **The probe passes, the allocation fails.** Memory, or a size limit a 4 x 4
   texture does not reach. The walks keep their full-size fallback for exactly
-  this, and log it as an ERROR. It can no longer be forced (4.7, open
-  decision 5).
+  this, and log it as an ERROR. `SetFailedAllocations` forces it, and
+  `formats`' case D checks it (4.7, open decision 5).
 - **COMPLETE, but wrong.** A driver could accept the format and clamp or drop
   what is written. The probe cannot see that; section 3's read-back could
   (open decision 3).
@@ -835,7 +866,7 @@ AMD Radeon Pro 5300M (macOS GL 4.1), Release; **not run on the M2**.
 | where | what |
 | ----- | ---- |
 | `lib/include/gl/framebuffer.h` | `Framebuffer::IsColorRenderable`, the probe (4.1) |
-| `lib/include/core/render-target-formats.h`, `lib/src/core/render-target-formats.cpp` | `RenderTargetFormats`: `Ask`, `IsRenderable`, `FirstRenderable`, `LogReport`, `GetAnswers`, the hook (4.2) |
+| `lib/include/core/render-target-formats.h`, `lib/src/core/render-target-formats.cpp` | `RenderTargetFormats`: `Ask`, `IsRenderable`, `MayAllocate`, `FirstRenderable`, `LogReport`, `GetAnswers`, the three verification hooks (4.2); `ResizeInBestFormat`, the one walk (4.4) |
 | `lib/include/renderer/base-renderer.h`, `lib/src/renderer/base-renderer.cpp` | the private setter and the never-null protected getter (4.3) |
 | `lib/include/core/edge-lighting.h`, `lib/src/core/edge-lighting.cpp` | the effect's object, its hand-over in `AddRenderer`, the public getter, `LogReport` in `Initialize` |
 | `lib/include/util/gl-utils.h` | `GetFramebufferStatusName` |
@@ -952,5 +983,41 @@ allocation failed, a walk falls back to RGBA8 once, logs it once naming the
 hook, and resumes there silently; two walks naming the same skip from two
 addresses log it once; and calling `FirstRenderable` from outside the class
 does not compile.
+
+**After a third deep review, the same day:** four findings, all fixed.
+
+- An upload error is read, not only recorded. One naming an argument the GL
+  does not accept at all - `GL_INVALID_ENUM` or `GL_INVALID_VALUE`, which for
+  a 4 x 4 upload of a library row means the internal format - is a definitive
+  "no"; out of memory, `GL_INVALID_OPERATION` (a transfer pair the GL rejects)
+  and a status query that raised an error stay unknown. The spec names
+  `GL_INVALID_VALUE` for an unknown internal format, and the first build of
+  this fix took it alone: a throwaway program then found Apple's GL raising
+  `GL_INVALID_ENUM` for one (`GL_TEXTURE_2D` passed as the format), which
+  stayed unknown and was tried at full size.
+- `IsRenderable` is the verdict alone, false for an unknown answer;
+  `MayAllocate` - renders or unknown - is what a buffer asks before it commits
+  to a format, and the half-float fields' gate asks it. `IsRenderable` used to
+  mean "may try", which a host reading it as "supported" would misreport.
+- A third hook, `SetUnknownFormats`, and `formats`' case E: half float
+  unknown must draw exactly what nothing refused draws.
+- Section 4.2's sketch is the API as built.
+
+Verified, on the AMD 5300M: the six gates and `formats` pass with no WARN or
+ERROR line. Case E: 2 probes, the report's three half-float rows UNKNOWN and
+naming the hook, no skip or fallback, every half-float target reached as in
+A (RGBA16F x1157, R16F x618, RG16F x67) and all three field programs built,
+the shared buffer RGBA16F on all 504 ready frames, and all 110 cells
+byte-identical to A. It can fail: built with the fields' gate asking
+`IsRenderable`, E fails (no field program, 108 cells differ from A); built
+with the walk skipping unknown rows, it fails four ways (8 skips and
+fallbacks, no half-float target, the shared buffer RGBA8, all 110 cells
+differ); every other case passes on both. A throwaway program checked the
+rest, 18 checks: an unknown internal format raises `GL_INVALID_ENUM` here, is
+kept as a "no", is never probed again and is skipped by a walk without a try
+or a GL error left; `GL_RGBA16F` with `GL_RGBA_INTEGER` raises
+`GL_INVALID_OPERATION` and is unknown - `IsRenderable` false, `MayAllocate`
+true; `SetUnknownFormats` makes no probe, a walk over it allocates RGBA16F, a
+refusal wins over it, and the report names it.
 
 **Open.** Step 6, the device; the M2; open decisions 1-4 of section 9.

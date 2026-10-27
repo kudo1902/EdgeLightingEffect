@@ -38,7 +38,7 @@ namespace NeonScaleCheck
         /// Every format the library allocates: nothing renders.
         const std::vector<GLint> EVERYTHING = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
         /// The startup report's rows (RenderTargetFormats::LogReport): what a
-        /// run probes, less what it refuses.
+        /// run probes, less what a hook answers instead.
         const GLint REPORT_ROWS[] = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
 
         const float CELL_SCALES[] = {1.0f, 0.5f, 0.25f};
@@ -193,18 +193,36 @@ namespace NeonScaleCheck
             return cells;
         }
 
+        /// What a run's RenderTargetFormats is told, through its three
+        /// verification hooks.
+        typedef struct Hooks
+        {
+            std::vector<GLint> refused; ///< SetRefusedFormats.
+            std::vector<GLint> failed;  ///< SetFailedAllocations.
+            std::vector<GLint> unknown; ///< SetUnknownFormats.
+        } Hooks;
+
+        /// The report rows a run does not probe: a hook answers them instead.
+        std::vector<GLint> Unprobed(const Hooks &hooks)
+        {
+            std::vector<GLint> out = hooks.refused;
+            out.insert(out.end(), hooks.unknown.begin(), hooks.unknown.end());
+            return out;
+        }
+
         /// Everything one run left to judge.
         typedef struct RunResult
         {
-            std::vector<RGBA> frames;            ///< Each cell's last frame, over transparent black.
-            bool neonPresent = false;            ///< The neon survived Initialize.
-            size_t probes = 0;                   ///< RenderTargetFormats::GetAnswers().size() at the end.
-            int glErrorFrames = 0;               ///< Frames after which glGetError was not GL_NO_ERROR.
-            std::map<GLint, long> drawFormats;   ///< Offscreen draws by the format they wrote.
-            std::map<GLint, int> aliveFormats;   ///< Textures alive at the end, by format.
+            std::vector<RGBA> frames;             ///< Each cell's last frame, over transparent black.
+            bool neonPresent = false;             ///< The neon survived Initialize.
+            size_t probes = 0;                    ///< RenderTargetFormats::GetAnswers().size() at the end.
+            int glErrorFrames = 0;                ///< Frames after which glGetError was not GL_NO_ERROR.
+            std::map<GLint, long> drawFormats;    ///< Offscreen draws by the format they wrote.
+            std::map<GLint, int> aliveFormats;    ///< Textures alive at the end, by format.
             int sharedReadyFrames = 0;
-            std::map<GLint, int> sharedFormats;  ///< The shared buffer's formats while ready.
-            std::vector<std::string> fieldLinks; ///< The field programs' "linked" log lines.
+            std::map<GLint, int> sharedFormats;   ///< The shared buffer's formats while ready.
+            std::vector<std::string> fieldLinks;  ///< The field programs' "linked" log lines.
+            std::vector<std::string> unknownRows; ///< The startup report's UNKNOWN rows.
             std::vector<std::string> warnings;
             std::vector<std::string> errors;
         } RunResult;
@@ -216,8 +234,7 @@ namespace NeonScaleCheck
             return at == std::string::npos ? line : line.substr(at + 2);
         }
 
-        RunResult Run(const std::vector<GLint> &refused, const std::vector<GLint> &failed, bool bypassFields,
-                      const std::vector<Cell> &cells)
+        RunResult Run(const Hooks &hooks, bool bypassFields, const std::vector<Cell> &cells)
         {
             RunResult result;
             std::ostringstream log;
@@ -225,8 +242,9 @@ namespace NeonScaleCheck
             DrawTargetWatch::Reset();
             {
                 EdgeLightingEffect effect;
-                effect.GetRenderTargetFormats()->SetRefusedFormats(refused);
-                effect.GetRenderTargetFormats()->SetFailedAllocations(failed);
+                effect.GetRenderTargetFormats()->SetRefusedFormats(hooks.refused);
+                effect.GetRenderTargetFormats()->SetFailedAllocations(hooks.failed);
+                effect.GetRenderTargetFormats()->SetUnknownFormats(hooks.unknown);
                 const std::shared_ptr<NeonRenderer> neon = std::make_shared<NeonRenderer>();
                 if (bypassFields)
                 {
@@ -313,6 +331,10 @@ namespace NeonScaleCheck
                 {
                     result.fieldLinks.push_back(message);
                 }
+                if (message.find(": UNKNOWN (") != std::string::npos)
+                {
+                    result.unknownRows.push_back(message);
+                }
                 if (line.find("[WARN]") != std::string::npos)
                 {
                     result.warnings.push_back(message);
@@ -325,17 +347,17 @@ namespace NeonScaleCheck
             return result;
         }
 
-        bool Refused(const std::vector<GLint> &set, GLint format)
+        bool Contains(const std::vector<GLint> &set, GLint format)
         {
             return std::find(set.begin(), set.end(), format) != set.end();
         }
 
-        size_t ExpectedProbes(const std::vector<GLint> &refused)
+        size_t ExpectedProbes(const std::vector<GLint> &unprobed)
         {
             size_t probes = 0;
             for (const GLint row : REPORT_ROWS)
             {
-                probes += Refused(refused, row) ? 0 : 1;
+                probes += Contains(unprobed, row) ? 0 : 1;
             }
             return probes;
         }
@@ -391,11 +413,12 @@ namespace NeonScaleCheck
         }
 
         /// The common lines of a run's summary, and the checks every run
-        /// shares: the probe count and the GL errors. Returns the failures.
-        int Summarise(const char *label, const RunResult &run, const std::vector<GLint> &refused, bool verbose)
+        /// shares: the probe count (the report's rows, less @p unprobed - the
+        /// ones a hook answered) and the GL errors. Returns the failures.
+        int Summarise(const char *label, const RunResult &run, const std::vector<GLint> &unprobed, bool verbose)
         {
             int failures = 0;
-            const size_t expected = ExpectedProbes(refused);
+            const size_t expected = ExpectedProbes(unprobed);
             const bool probesBad = run.probes != expected;
             failures += probesBad;
             failures += run.glErrorFrames != 0;
@@ -447,6 +470,46 @@ namespace NeonScaleCheck
         {
             return std::all_of(frame.begin(), frame.end(), [](unsigned char v) { return v == 0; });
         }
+
+        /// Cells whose frames differ by a byte between two runs; prints the
+        /// first (every one with @p verbose), naming @p other.
+        int CountDiffering(const RunResult &run, const RunResult &other, const char *otherName,
+                           const std::vector<Cell> &cells, bool verbose)
+        {
+            int differing = 0;
+            for (size_t i = 0; i < cells.size(); ++i)
+            {
+                if (run.frames[i] != other.frames[i])
+                {
+                    if (differing == 0 || verbose)
+                    {
+                        std::printf("  differs from %s: %s\n", otherName, cells[i].name.c_str());
+                    }
+                    ++differing;
+                }
+            }
+            return differing;
+        }
+
+        /// Draws into, and textures alive in, any format of @p set.
+        void CountInFormats(const RunResult &run, const std::vector<GLint> &set, int &drawn, int &alive)
+        {
+            drawn = 0;
+            for (const auto &entry : run.drawFormats)
+            {
+                drawn += Contains(set, entry.first) ? int(entry.second) : 0;
+            }
+            alive = 0;
+            for (const auto &entry : run.aliveFormats)
+            {
+                alive += Contains(set, entry.first) ? entry.second : 0;
+            }
+        }
+
+        bool SharedOnlyIn(const RunResult &run, GLint format)
+        {
+            return run.sharedReadyFrames > 0 && run.sharedFormats.size() == 1 && run.sharedFormats.count(format);
+        }
     }
 
     int FormatCheck(int argc, char **argv)
@@ -483,55 +546,46 @@ namespace NeonScaleCheck
                     "a flare and a spotlight at 0.5\n\n",
                     cells.size());
 
-        const RunResult a = Run({}, {}, false, cells);
-        const RunResult b = Run(HALF_FLOAT, {}, false, cells);
-        const RunResult bBypassed = Run(HALF_FLOAT, {}, true, cells);
-        const RunResult c = Run(EVERYTHING, {}, false, cells);
-        const RunResult d = Run({}, HALF_FLOAT, false, cells);
+        const Hooks none;
+        Hooks refuseHalf;
+        refuseHalf.refused = HALF_FLOAT;
+        Hooks refuseAll;
+        refuseAll.refused = EVERYTHING;
+        Hooks failHalf;
+        failHalf.failed = HALF_FLOAT;
+        Hooks unknownHalf;
+        unknownHalf.unknown = HALF_FLOAT;
+
+        const RunResult a = Run(none, false, cells);
+        const RunResult b = Run(refuseHalf, false, cells);
+        const RunResult bBypassed = Run(refuseHalf, true, cells);
+        const RunResult c = Run(refuseAll, false, cells);
+        const RunResult d = Run(failHalf, false, cells);
+        const RunResult e = Run(unknownHalf, false, cells);
 
         int failures = 0;
 
         // A: the reference, and the proof the checks below can fail - it has
         // to reach every half-float target the B run must not.
-        failures += Summarise("A - nothing refused", a, {}, verbose);
+        failures += Summarise("A - nothing refused", a, Unprobed(none), verbose);
         {
             const bool sawHalf = a.drawFormats.count(GL_RGBA16F) && a.drawFormats.count(GL_RG16F);
             const bool allFields = a.fieldLinks.size() == 3;
-            const bool shared = a.sharedReadyFrames > 0 && a.sharedFormats.size() == 1 &&
-                                a.sharedFormats.count(GL_RGBA16F);
+            const bool shared = SharedOnlyIn(a, GL_RGBA16F);
             std::printf("  reaches half-float targets %s, all three field programs %s, shared buffer RGBA16F %s\n",
                         sawHalf ? "yes" : "NO!", allFields ? "yes" : "NO!", shared ? "yes" : "NO!");
             failures += !sawHalf + !allFields + !shared;
         }
 
         // B: no refused format anywhere, no field, frames as the bypassed run.
-        failures += Summarise("B - half float refused", b, HALF_FLOAT, verbose);
+        failures += Summarise("B - half float refused", b, Unprobed(refuseHalf), verbose);
         {
             int drawnRefused = 0;
-            for (const auto &entry : b.drawFormats)
-            {
-                drawnRefused += Refused(HALF_FLOAT, entry.first) ? int(entry.second) : 0;
-            }
             int aliveRefused = 0;
-            for (const auto &entry : b.aliveFormats)
-            {
-                aliveRefused += Refused(HALF_FLOAT, entry.first) ? entry.second : 0;
-            }
-            const bool shared = b.sharedReadyFrames > 0 && b.sharedFormats.size() == 1 &&
-                                b.sharedFormats.count(GL_RGBA8);
+            CountInFormats(b, HALF_FLOAT, drawnRefused, aliveRefused);
+            const bool shared = SharedOnlyIn(b, GL_RGBA8);
             const bool noFields = b.fieldLinks.empty();
-            int differing = 0;
-            for (size_t i = 0; i < cells.size(); ++i)
-            {
-                if (b.frames[i] != bBypassed.frames[i])
-                {
-                    if (differing == 0 || verbose)
-                    {
-                        std::printf("  differs from the fields-bypassed run: %s\n", cells[i].name.c_str());
-                    }
-                    ++differing;
-                }
-            }
+            const int differing = CountDiffering(b, bBypassed, "the fields-bypassed run", cells, verbose);
             std::printf("  draws into a refused format %d%s, refused textures alive %d%s, shared buffer only "
                         "RGBA8 %s, field programs linked %zu%s, cells differing from the fields-bypassed run "
                         "%d%s\n",
@@ -540,7 +594,7 @@ namespace NeonScaleCheck
                         differing ? "!" : "");
             failures += (drawnRefused != 0) + (aliveRefused != 0) + !shared + !noFields + (differing != 0);
         }
-        failures += Summarise("B with both fields bypassed", bBypassed, HALF_FLOAT, verbose);
+        failures += Summarise("B with both fields bypassed", bBypassed, Unprobed(refuseHalf), verbose);
 
         // B against A, per group: the 8-bit rows' cost.
         std::printf("B against A, worst cell per group (max levels / %% of lit channels more than 1 off; "
@@ -592,38 +646,19 @@ namespace NeonScaleCheck
         // fails (SetFailedAllocations) - the fallback the walks keep for what
         // a probe cannot predict. It has to land every buffer where B's probe
         // landed it: the same 8-bit rows, the same frames, byte for byte.
-        failures += Summarise("D - half float passes the probe, its allocations fail", d, {}, verbose);
+        failures += Summarise("D - half float passes the probe, its allocations fail", d, Unprobed(failHalf), verbose);
         {
             int drawnFailed = 0;
-            for (const auto &entry : d.drawFormats)
-            {
-                drawnFailed += Refused(HALF_FLOAT, entry.first) ? int(entry.second) : 0;
-            }
             int aliveFailed = 0;
-            for (const auto &entry : d.aliveFormats)
-            {
-                aliveFailed += Refused(HALF_FLOAT, entry.first) ? entry.second : 0;
-            }
+            CountInFormats(d, HALF_FLOAT, drawnFailed, aliveFailed);
             int fallbacks = 0;
-            for (const std::string &e : d.errors)
+            for (const std::string &err : d.errors)
             {
-                fallbacks += e.find("falling back to") != std::string::npos &&
-                             e.find("SetFailedAllocations") != std::string::npos;
+                fallbacks += err.find("falling back to") != std::string::npos &&
+                             err.find("SetFailedAllocations") != std::string::npos;
             }
-            const bool shared = d.sharedReadyFrames > 0 && d.sharedFormats.size() == 1 &&
-                                d.sharedFormats.count(GL_RGBA8);
-            int differing = 0;
-            for (size_t i = 0; i < cells.size(); ++i)
-            {
-                if (d.frames[i] != b.frames[i])
-                {
-                    if (differing == 0 || verbose)
-                    {
-                        std::printf("  differs from B: %s\n", cells[i].name.c_str());
-                    }
-                    ++differing;
-                }
-            }
+            const bool shared = SharedOnlyIn(d, GL_RGBA8);
+            const int differing = CountDiffering(d, b, "B", cells, verbose);
             std::printf("  fallbacks logged %d%s, draws into a failed format %d%s, failed-format textures alive "
                         "%d%s, shared buffer only RGBA8 %s, cells differing from B %d%s\n",
                         fallbacks, fallbacks == 0 ? "!" : "", drawnFailed, drawnFailed ? "!" : "", aliveFailed,
@@ -631,8 +666,40 @@ namespace NeonScaleCheck
             failures += (fallbacks == 0) + (drawnFailed != 0) + (aliveFailed != 0) + !shared + (differing != 0);
         }
 
+        // E: the probe gives no answer for half float (SetUnknownFormats) - an
+        // upload that failed for a passing reason. Unknown is not "no": every
+        // walk and both field gates must let the allocation decide, which
+        // here succeeds, so the run must be A's - the report says UNKNOWN for
+        // the three rows (and probes only the other two), nothing is skipped
+        // or falls back, every half-float target and all three field programs
+        // are reached, and every frame matches A's byte for byte.
+        failures += Summarise("E - half float unknown to the probe", e, Unprobed(unknownHalf), verbose);
+        {
+            const bool sawHalf = e.drawFormats.count(GL_RGBA16F) && e.drawFormats.count(GL_RG16F);
+            const bool unknownReported = e.unknownRows.size() == HALF_FLOAT.size();
+            int skipsOrFallbacks = 0;
+            for (const std::string &w : e.warnings)
+            {
+                skipsOrFallbacks += w.find("not renderable on this driver") != std::string::npos;
+            }
+            for (const std::string &err : e.errors)
+            {
+                skipsOrFallbacks += err.find("falling back to") != std::string::npos;
+            }
+            const bool allFields = e.fieldLinks.size() == 3;
+            const bool shared = SharedOnlyIn(e, GL_RGBA16F);
+            const int differing = CountDiffering(e, a, "A", cells, verbose);
+            std::printf("  report rows UNKNOWN %zu%s, skips or fallbacks logged %d%s, reaches half-float targets "
+                        "%s, all three field programs %s, shared buffer RGBA16F %s, cells differing from A %d%s\n",
+                        e.unknownRows.size(), unknownReported ? "" : "!", skipsOrFallbacks,
+                        skipsOrFallbacks ? "!" : "", sawHalf ? "yes" : "NO!", allFields ? "yes" : "NO!",
+                        shared ? "yes" : "NO!", differing, differing ? "!" : "");
+            failures += !unknownReported + (skipsOrFallbacks != 0) + !sawHalf + !allFields + !shared +
+                        (differing != 0);
+        }
+
         // C: nothing renders - the neon cannot even hold its emission table.
-        failures += Summarise("C - everything refused", c, EVERYTHING, verbose);
+        failures += Summarise("C - everything refused", c, Unprobed(refuseAll), verbose);
         {
             int drawn = 0;
             for (const RGBA &frame : c.frames)

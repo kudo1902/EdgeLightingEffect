@@ -372,15 +372,24 @@ spotlight and a reader of the neon's shared buffer registered:
   predict. A fallback must be logged naming the hook, no half-float format
   drawn into or alive, and every frame must match B's byte for byte - the
   fallback lands every buffer where B's probe did.
+- **E**, half float unknown to the probe (`SetUnknownFormats`): what a 4 x 4
+  upload that failed for a passing reason - out of memory, a transfer pair the
+  GL rejects - leaves, which must not count as "no". The report must print the
+  three rows UNKNOWN, no row may be skipped or fall back, every half-float
+  target and all three field programs must be reached, the shared buffer must
+  be RGBA16F, and every frame must match A's byte for byte: unknown leaves the
+  allocation to decide, and here it succeeds.
 
-Every run must make exactly the report's probes less the refused formats (5,
-2, 0, and 5 for D) and leave no GL error. About 10 s; exits non-zero on any failure.
+Every run must make exactly the report's probes less the formats a hook
+answers (5 for A and D, 2 for B and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without
 asking `RenderTargetFormats` fails B, which is the point - built with the gather
 buffer's walk not asking, or with the half-float fields' gate removed, it
-fails.
+fails. A buffer or gate that takes an unknown answer for "no" fails E - built
+with the fields' gate asking `IsRenderable` instead of `MayAllocate`, or with
+the walk skipping unknown rows, it fails.
 
 ## `generate`
 

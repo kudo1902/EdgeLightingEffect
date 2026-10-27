@@ -31,10 +31,16 @@ namespace EdgeLighting
             {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, "RG8"},
         };
 
+        /// What a log line adds when a verification hook gave the answer, so
+        /// its log does not read as a device's.
+        const char *const REFUSED_BY_HOOK = "refused by RenderTargetFormats::SetRefusedFormats";
+        const char *const UNKNOWN_BY_HOOK = "made unknown by RenderTargetFormats::SetUnknownFormats";
+
         /// What @p answer says, for a log line: the status by name (or in
-        /// hex); for an unknown answer, the upload's error if it raised one;
-        /// the hook when it was the hook's refusal.
-        std::string DescribeAnswer(const RenderTargetFormats::Answer &answer, bool refusedByHook)
+        /// hex); the upload's error if it raised one; and @p hook, naming the
+        /// verification hook that gave this answer, if one did (nullptr if
+        /// the driver did) - REFUSED_BY_HOOK or UNKNOWN_BY_HOOK.
+        std::string DescribeAnswer(const RenderTargetFormats::Answer &answer, const char *hook)
         {
             char text[160];
             const char *statusName = GLUtils::GetFramebufferStatusName(answer.status);
@@ -52,9 +58,10 @@ namespace EdgeLighting
                 std::snprintf(text, sizeof(text), ", the 4 x 4 upload raised 0x%x", answer.uploadError);
                 out += text;
             }
-            if (refusedByHook)
+            if (hook)
             {
-                out += ", refused by RenderTargetFormats::SetRefusedFormats";
+                out += ", ";
+                out += hook;
             }
             return out;
         }
@@ -72,6 +79,14 @@ namespace EdgeLighting
             refused.renderable = false;
             return refused;
         }
+        // Then SetUnknownFormats, likewise kept apart: the answer a probe
+        // whose upload failed for a passing reason gives.
+        if (isForcedUnknown(internalFormat))
+        {
+            Answer unknown;
+            unknown.internalFormat = internalFormat;
+            return unknown;
+        }
         for (const Answer &answer : mAnswers)
         {
             if (answer.internalFormat == internalFormat)
@@ -83,11 +98,13 @@ namespace EdgeLighting
         answer.internalFormat = internalFormat;
         answer.renderable =
             Framebuffer::IsColorRenderable(internalFormat, format, type, &answer.status, &answer.uploadError);
-        // Kept whatever it says. Without a status (the upload failed:
-        // GL_OUT_OF_MEMORY, a pair this GL rejects; or the status query raised
-        // an error) the answer is unknown, and a walk lets the allocation
-        // decide - so keeping it condemns nothing, and probing it again (every
-        // frame, mid-frame, draining the frame's GL errors) would buy nothing.
+        // Kept whatever it says. Without a status the upload failed or the
+        // status query raised an error: GL_INVALID_ENUM / GL_INVALID_VALUE
+        // (the internal format itself rejected) is a "no", anything else
+        // (GL_OUT_OF_MEMORY, a transfer pair this GL rejects) unknown, and a
+        // walk lets the allocation decide - so keeping it condemns nothing,
+        // and probing it again (every frame, mid-frame, draining the frame's
+        // GL errors) would buy nothing.
         mAnswers.push_back(answer);
         return answer;
     }
@@ -111,6 +128,11 @@ namespace EdgeLighting
         return std::find(mRefused.begin(), mRefused.end(), internalFormat) != mRefused.end();
     }
 
+    bool RenderTargetFormats::isForcedUnknown(GLint internalFormat) const
+    {
+        return std::find(mUnknown.begin(), mUnknown.end(), internalFormat) != mUnknown.end();
+    }
+
     void RenderTargetFormats::logSkipped(const char *owner, const char *what, const char *row, const char *next,
                                          const Answer &answer)
     {
@@ -128,7 +150,7 @@ namespace EdgeLighting
 
         // A verification run's refusal is not the driver's: say so, or its log
         // reads as a device without the format.
-        const std::string why = DescribeAnswer(answer, IsRefused(answer.internalFormat));
+        const std::string why = DescribeAnswer(answer, IsRefused(answer.internalFormat) ? REFUSED_BY_HOOK : nullptr);
         if (next)
         {
             LOG_W("%s: %s %s target is not renderable on this driver (%s), using %s.", owner, row, what, why.c_str(),
@@ -157,10 +179,11 @@ namespace EdgeLighting
             if (answer.IsUnknown())
             {
                 LOG_I("%-8s: UNKNOWN (%s) - the probe could not judge it; its allocation decides", row.name,
-                      DescribeAnswer(answer, false).c_str());
+                      DescribeAnswer(answer, isForcedUnknown(row.internalFormat) ? UNKNOWN_BY_HOOK : nullptr).c_str());
                 continue;
             }
-            LOG_I("%-8s: NOT renderable (%s)", row.name, DescribeAnswer(answer, IsRefused(row.internalFormat)).c_str());
+            LOG_I("%-8s: NOT renderable (%s)", row.name,
+                  DescribeAnswer(answer, IsRefused(row.internalFormat) ? REFUSED_BY_HOOK : nullptr).c_str());
         }
         const double probeMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

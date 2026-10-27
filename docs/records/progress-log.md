@@ -61,14 +61,20 @@ steps 1-5 and 7; step 6, on the device, is open.
   its boosts of 2.0 clamped to 1.0 by the emission table's RGBA8 row (the
   fallback line says so). That is what a GLES 3.0 device without
   `EXT_color_buffer_half_float` would draw.
-- **Reviewed twice the same day** (13 findings, 12 fixed, then 7, all fixed;
-  the plan's section 10 lists them). What changed behaviour: a probe with no
-  status - a failed upload, out of memory or a rejected transfer pair - is
-  kept as unknown and the full-size allocation decides that format, where it
-  had been a permanent "no"; a renderer outside an effect probes in
-  `Initialize`, not mid-frame; every buffer, the half-float fields included,
-  allocates through one `ResizeInBestFormat`; and `SetFailedAllocations` drives
-  its full-size fallback, which `formats` checks as case D.
+- **Reviewed three times the same day** (13 findings, 12 fixed; then 7, then
+  4, all fixed; the plan's section 10 lists them). What changed behaviour: a
+  probe with no status - a failed upload, out of memory or a rejected transfer
+  pair - is kept as unknown and the full-size allocation decides that format,
+  where it had been a permanent "no", but an upload that raised
+  `GL_INVALID_ENUM` or `GL_INVALID_VALUE` - the internal format itself
+  rejected; Apple's GL raises the first - is a "no"; `IsRenderable` is the
+  verdict alone and `MayAllocate` (renders or unknown) is what the fields'
+  gate asks; a renderer outside an effect probes in `Initialize`, not
+  mid-frame; every buffer, the half-float fields included, allocates through
+  one `ResizeInBestFormat`; and two more hooks drive what no driver here
+  produces - `SetFailedAllocations` the full-size fallback (`formats` case D),
+  `SetUnknownFormats` an unknown answer (case E, which must draw what nothing
+  refused draws).
 
 ### Open
 
