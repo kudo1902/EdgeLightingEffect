@@ -58,6 +58,12 @@ namespace NeonScaleCheck
             /// layer's cell at 1.0, which case C must draw - with no buffer to
             /// be had, the layer falls back to 1.0. Empty otherwise.
             std::string fullScaleName;
+            /// Frames it draws; 0 for its variant's (FramesFor).
+            int frames = 0;
+            /// What each frame passes Update, seconds - the frame time an
+            /// out-of-memory failure expires by; negative for its variant's
+            /// (0 still, 1/60 moving).
+            float deltaTime = -1.0f;
         } Cell;
 
         /// What a run's RenderTargetFormats is told, through its verification
@@ -68,6 +74,7 @@ namespace NeonScaleCheck
             RenderTargetFormats::ForcedFailure failed;   ///< SetFailedAllocations: fails nothing by default.
             std::vector<GLint> unknown;                  ///< SetUnknownFormats.
             int maxTextureSize = 0;                      ///< SetMaxTextureSize: 0 lowers nothing.
+            double outOfMemoryRetry = -1.0;              ///< SetOutOfMemoryRetry; negative keeps the library's.
         } Hooks;
 
         /// Everything one run left to judge.
@@ -76,6 +83,7 @@ namespace NeonScaleCheck
             std::vector<RGBA> frames;             ///< Each cell's last frame, over transparent black.
             bool neonPresent = false;             ///< The neon survived Initialize.
             size_t probes = 0;                    ///< RenderTargetFormats::GetAnswers().size() at the end.
+            std::vector<RenderTargetFormats::FailedAllocation> failedAllocations; ///< What it kept at the end.
             int glErrorFrames = 0;                ///< Frames after which glGetError was not GL_NO_ERROR.
             std::map<GLint, long> drawFormats;    ///< Offscreen draws by the format they wrote.
             std::map<GLint, int> aliveFormats;    ///< Textures alive at the end, by format.
@@ -160,7 +168,7 @@ namespace NeonScaleCheck
         /// FORMAT_QUALITY_BOUNDS, printed. Returns the failures.
         int CheckQualityBounds(const RunResult &a, const RunResult &b, const std::vector<Cell> &cells, bool verbose);
 
-        /// Cases D4, D7, D5, D6 and S (format-check-causes.cpp): what each cause
+        /// Cases D4, D7, D5, D6, D8 and S (format-check-causes.cpp): what each cause
         /// of a failed allocation may block, and a renderer outside an effect.
         /// @p a is case A's run on @p cells, the reference. Returns the
         /// failures.

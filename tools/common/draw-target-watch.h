@@ -13,9 +13,11 @@
 // about to write, unless that framebuffer is the caller's own. The format is
 // derived from the attachment's own parameters (component type, bits per
 // channel, colour encoding), so it binds nothing, raises no GL error, and
-// sees a renderbuffer or a texture of any target alike. It chains to
-// whatever the pointer held when it was installed, so it can sit beside
-// PassRecorder. Static library only: the C ABI dylib carries its own glad.
+// sees a renderbuffer or a texture of any target alike. It wraps
+// glGenTextures the same way, only to keep the highest name made, so a scan
+// of the live textures knows where to stop. It chains to whatever the
+// pointers held when it was installed, so it can sit beside PassRecorder.
+// Static library only: the C ABI dylib carries its own glad.
 
 #include "gl/gl-header.h"
 
@@ -26,8 +28,9 @@ namespace NeonTools
     class DrawTargetWatch
     {
     public:
-        /// Put the wrapper in front of glad_glDrawArrays. Call once, after
-        /// gladLoadGLLoader - loading GL again replaces the pointer.
+        /// Put the wrappers in front of glad_glDrawArrays and
+        /// glad_glGenTextures. Call once, after gladLoadGLLoader - loading GL
+        /// again replaces the pointers.
         static void Install();
 
         /// Watch every draw until @ref End. The framebuffer bound for drawing
@@ -44,6 +47,11 @@ namespace NeonTools
         /// counts twice per draw); 0 for an attachment whose component type
         /// and channel sizes name no format the watcher lists.
         static const std::map<GLint, long> &GetFormats();
+
+        /// The highest texture name glGenTextures has returned since
+        /// @ref Install, watched or not - how far a scan of the live textures
+        /// has to look.
+        static GLuint GetHighestTextureName();
     };
 }
 

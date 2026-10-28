@@ -1,5 +1,7 @@
 #include "draw-target-watch.h"
 
+#include <algorithm>
+
 namespace NeonTools
 {
     namespace
@@ -9,6 +11,8 @@ namespace NeonTools
         const int WATCHED_ATTACHMENTS = 4;
 
         PFNGLDRAWARRAYSPROC gNextDrawArrays = nullptr;
+        PFNGLGENTEXTURESPROC gNextGenTextures = nullptr;
+        GLuint gHighestTexture = 0;
         bool gWatching = false;
         GLint gCallerFramebuffer = 0;
         std::map<GLint, long> gFormats;
@@ -94,6 +98,16 @@ namespace NeonTools
             }
             gNextDrawArrays(mode, first, count);
         }
+
+        /// Make the names, then remember the highest.
+        void APIENTRY HookGenTextures(GLsizei n, GLuint *textures)
+        {
+            gNextGenTextures(n, textures);
+            for (GLsizei i = 0; i < n; ++i)
+            {
+                gHighestTexture = std::max(gHighestTexture, textures[i]);
+            }
+        }
     }
 
     void DrawTargetWatch::Install()
@@ -103,6 +117,16 @@ namespace NeonTools
             gNextDrawArrays = glad_glDrawArrays;
             glad_glDrawArrays = HookDrawArrays;
         }
+        if (gNextGenTextures == nullptr)
+        {
+            gNextGenTextures = glad_glGenTextures;
+            glad_glGenTextures = HookGenTextures;
+        }
+    }
+
+    GLuint DrawTargetWatch::GetHighestTextureName()
+    {
+        return gHighestTexture;
     }
 
     void DrawTargetWatch::Begin()

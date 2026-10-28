@@ -16,9 +16,21 @@ namespace EdgeLighting
         if (!mRenderTargetFormats)
         {
             mRenderTargetFormats = std::make_shared<RenderTargetFormats>();
+            mOwnsRenderTargetFormats = true;
             mRenderTargetFormats->AskReportFormats();
         }
         return *mRenderTargetFormats;
+    }
+
+    void BaseRenderer::AdvanceOwnRenderTargetFormats(float deltaTime)
+    {
+        // Only an object this renderer made: the effect's is advanced by the
+        // effect, once a frame - advancing it here too would age its failures
+        // once per renderer.
+        if (mOwnsRenderTargetFormats)
+        {
+            mRenderTargetFormats->Advance(deltaTime);
+        }
     }
 
 } // namespace EdgeLighting

@@ -108,6 +108,24 @@ namespace NeonScaleCheck
     ///     warning is not logged once, a frame is more than 2 levels from
     ///     A's, or the shared buffer leaves RGBA16F - and A must build the
     ///     fill program, the proof that check can fail;
+    ///   - in D8, with only the first allocation of one format failing -
+    ///     RGBA16F (the emission table's; on `arcs`, `segments`, the flare and
+    ///     the spotlight), RG16F on `arcs` (the coverage table's), RG16F on
+    ///     `segments` (the segment table's), RGBA16F from the viewport's size
+    ///     on `arcs` (the shared buffer's) and on the flare (its buffer's),
+    ///     and RGBA16F at two attachments on `segments` (the gather's) - a
+    ///     cell drawn after 3 s of
+    ///     frame time differs by a byte from A's (every buffer must move back
+    ///     up once the out-of-memory failure expires, those a still frame
+    ///     reuses included, and a field baked from a buffer's 8-bit row must
+    ///     not be composited after it), nothing was drawn in the 8-bit row
+    ///     meanwhile, the shared buffer is not seen as RGBA8 and then RGBA16F
+    ///     (RGBA16F), the failure is not cleared or that is not logged once;
+    ///     and with every RGBA16F allocation failing over 40
+    ///     frames 1 s apart, it is not tried exactly 5 times (0, 2, 6, 14,
+    ///     30 s: one retry per expiry, each doubling the wait) or does not end
+    ///     waiting 32 s until 62 s. D and D6 failing hold their failure for
+    ///     the run (RenderTargetFormats::SetOutOfMemoryRetry, infinity);
     ///   - in S, a frame differs by a byte from A's frame of the same cell,
     ///     or leaves a GL error.
     /// Returns the process exit code. See docs/design/render-target-format-check-plan.md,

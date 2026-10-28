@@ -64,6 +64,11 @@ namespace EdgeLighting
         return true;
     }
 
+    bool SharedBuffer::IsBelowBestFormat(RenderTargetFormats &targets) const
+    {
+        return IsBelowBestRow(mBuffer, targets, mFormats.data(), mFormats.size());
+    }
+
     void SharedBuffer::MarkReady(const glm::ivec2 &viewport)
     {
         mViewport = viewport;

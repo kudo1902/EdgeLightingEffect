@@ -717,8 +717,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void SpotlightRenderer::Update(float, double, const Config &)
+    void SpotlightRenderer::Update(float deltaTime, double, const Config &)
     {
+        // Outside an effect, the frame time its own RenderTargetFormats'
+        // out-of-memory failures expire by.
+        AdvanceOwnRenderTargetFormats(deltaTime);
     }
 
     void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double, const Config &config)

@@ -726,11 +726,39 @@ namespace EdgeLighting
             BufferRegion region; ///< The region it was laid out over (GetBufferRegion).
         } GatherCache;
 
+        /// The formats a field's bake read its inputs in: the emission table
+        /// (through the gather), the glow coverage table (0 while the config
+        /// does not read it) and its segment table (0 when there is none),
+        /// and the gather buffer. Each is a function of the config - but its
+        /// PRECISION is not: a buffer moves rows with no config change, back
+        /// up when an out-of-memory failure expires, or down when a new one
+        /// is kept against a walk that runs again (IsBelowBestRow,
+        /// RenderTargetFormats). A field baked from the other rows describes
+        /// another image, so it is composited only while these hold
+        /// (@ref getFieldInputFormats). 0 for a buffer that holds nothing.
+        typedef struct FieldInputFormats
+        {
+            GLint emission = 0;
+            GLint cover = 0;
+            GLint segments = 0;
+            GLint gather = 0;
+
+            bool operator==(const FieldInputFormats &other) const
+            {
+                return emission == other.emission && cover == other.cover && segments == other.segments &&
+                       gather == other.gather;
+            }
+            bool operator!=(const FieldInputFormats &other) const { return !(*this == other); }
+        } FieldInputFormats;
+
         /// When a field is baked and when it is read - the schedule the
         /// shading's field (@c mGlowField.schedule) and the edge ring's (@c mRingField.schedule)
         /// share. A field outlives the frame it was baked on; a config change
         /// (@ref OnConfigChanged calls @ref Invalidate), the viewport and a
-        /// gradient ring upload - a cross-fade frame - invalidate it.
+        /// gradient ring upload - a cross-fade frame - invalidate it, and so
+        /// does an input buffer that moved rows since its bake
+        /// (@ref FieldInputFormats, checked by @ref NeonRenderer::RenderOffscreen
+        /// right before each composite).
         ///
         /// The bake is LAZY: only a config that has held for a frame is baked
         /// (@c settled), so an animation that changes the config every frame
@@ -784,6 +812,10 @@ namespace EdgeLighting
         ///     change to the neon or the geometry but the intensity alone, and
         ///     clears @c current itself when it releases the buffer for a
         ///     config that cannot use it.
+        ///   - @ref NeonRenderer::RenderOffscreen calls @ref DropIfInputsMoved
+        ///     once the gather has run, before either composite: a field whose
+        ///     inputs moved rows since its bake shades directly that frame and
+        ///     is baked again on the next.
         ///   - A failed program build sets @c unavailable
         ///     (@ref NeonRenderer::ensureFieldPrograms,
         ///     @ref NeonRenderer::ensureRingFieldPrograms); nothing else does.
@@ -817,6 +849,7 @@ namespace EdgeLighting
             glm::ivec2 viewport{0};       ///< The viewport it was decided for.
             uint32_t gradientUploads = 0; ///< The gradient ring's upload count it was decided for.
             float intensity = 0.0f;       ///< NeonConfig::intensity it was baked at (I0).
+            FieldInputFormats inputFormats; ///< What its bake read its inputs in (@ref DropIfInputsMoved).
 
             /// The schedule's step for a frame whose config the field can
             /// serve, drawn at @p frameViewport with the gradient ring at
@@ -845,10 +878,26 @@ namespace EdgeLighting
             /// RenderTargetFormats' to remember, with its size: the gate then
             /// keeps the field off at that size or larger and lets it try again
             /// below, so a failed bake does NOT set @c unavailable.
-            void OnBaked(bool baked, float bakedIntensity)
+            void OnBaked(bool baked, float bakedIntensity, const FieldInputFormats &bakedFrom)
             {
                 current = baked;
                 intensity = bakedIntensity;
+                inputFormats = bakedFrom;
+            }
+
+            /// Whether a field held from an earlier frame may be composited
+            /// over inputs in @p frameFormats: drop it - shade directly this
+            /// frame, bake again on the next, the config having held - when an
+            /// input moved rows since its bake. Call once the gather has run
+            /// or been skipped, before the composite; @p decision is this
+            /// frame's, and a frame that bakes reads @p frameFormats anyway.
+            void DropIfInputsMoved(Decision &decision, const FieldInputFormats &frameFormats)
+            {
+                if (decision.use && !decision.bake && frameFormats != inputFormats)
+                {
+                    decision.use = false;
+                    current = false;
+                }
             }
         } LazyBake;
 
@@ -1283,6 +1332,15 @@ namespace EdgeLighting
         bool ensureFillProgram();
 
         // --- Buffers: allocated in the best format the driver gives ----------
+        /// Make sure @c mEmission.buffer is allocated in the best row of
+        /// EMISSION_FORMATS this context may render - by @ref Initialize, and
+        /// then every frame that draws the glow, which costs one comparison
+        /// while the table holds its first row. A table that fell back past a
+        /// format whose out-of-memory failure has since expired is allocated
+        /// again, and marked unbaked. @return false if no row allocates; the
+        /// frame then draws the fill alone.
+        bool ensureEmissionBuffer();
+
         /// Make sure @c mGlowCover.buffer is allocated, allocating it if not, at
         /// the width the config wants (@c mGlowCover.wantedWidth,
         /// GetGlowCoverWidth) in the best format the driver will give, and
@@ -1483,6 +1541,12 @@ namespace EdgeLighting
         /// @pre Pass 0 has run this frame if it is going to: the table's
         ///      version is part of the key.
         GatherInputs getGatherInputs(const Config &config, int viewportWidth, int viewportHeight) const;
+
+        /// The formats the fields' bakes read their inputs in now - see
+        /// @ref FieldInputFormats. The coverage table counts only while
+        /// @p config reads it, so a table released for going unread does not
+        /// drop a field that never read it.
+        FieldInputFormats getFieldInputFormats(const Config &config) const;
 
         // --- Uniform uploads the passes share --------------------------------
         /// The transform and the rect's shape - uMVP, uRectSize,

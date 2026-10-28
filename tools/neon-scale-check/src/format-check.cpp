@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -60,6 +61,11 @@ namespace NeonScaleCheck
         refuseAll.refused = EVERYTHING;
         Hooks failHalf;
         failHalf.failed.formats = HALF_FLOAT;
+        // D is a failure that holds for the whole run: its moving cells pass
+        // ~7 s of frame time, past the out-of-memory retry, and a retry - one
+        // more failure, the same frames - would re-run a gather B reuses, a
+        // level off in places. D8 is the failure that expires.
+        failHalf.outOfMemoryRetry = std::numeric_limits<double>::infinity();
         Hooks unknownHalf;
         unknownHalf.unknown = HALF_FLOAT;
 

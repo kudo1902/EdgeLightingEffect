@@ -400,12 +400,16 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   it takes the hook's failure itself; the spotlight's and the neon's find that
   failure kept and try nothing. Built with the failure memory ignoring size,
   both fail.
-- **D4**, **D7**, **D5**, **D6** and **S** (`format-check-causes.cpp`): what
-  each cause of a failed allocation may block, and may not. A failure is kept
-  by its cause - out of memory by its total size, tried again below it;
-  anything else by format and attachment count, at every size - and a buffer
-  past `GL_MAX_TEXTURE_SIZE` is refused before any format is tried, keeping
-  nothing.
+- **D4**, **D7**, **D5**, **D6**, **D8** and **S**
+  (`format-check-causes.cpp`): what each cause of a failed allocation may
+  block, and may not. A failure is kept by its cause - out of memory by its
+  total size, tried again below it at once and at any size once it expires
+  (2 s of frame time, doubling with each retry that fails again, up to
+  512 s); anything else by format and attachment count, at every size, for
+  good - and a buffer past `GL_MAX_TEXTURE_SIZE` is refused before any format
+  is tried, keeping nothing. D and D6's failing run hold their failure for the
+  whole run (`SetOutOfMemoryRetry`, infinity): D's moving cells pass ~7 s of
+  frame time, and a retry would re-run a gather B reuses.
   - **D4**, on the main cells: RGBA16F incomplete with two attachments (a
     `ForcedFailure` reporting `GL_FRAMEBUFFER_UNSUPPORTED`), the gather's
     segment attachment. The gather falls back on the segment scenes only;
@@ -434,14 +438,54 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     until it is made). Either way the held-back warning is logged once, the
     frames stay within 2 levels of A's (1 on the M2 Pro) and the shared
     buffer RGBA16F; A must build the fill program.
+  - **D8**, on cells of its own beside their own A: out of memory that
+    passes, and out of memory that lasts. Passing, six ways: only the
+    first allocation of one format fails (`ForcedFailure::count`); the cells
+    are drawn, then a cell passes 3 s of frame time and lets the failure
+    expire, then the cells are drawn again, and each of those must match A's
+    byte for byte - every buffer moved back up (`IsBelowBestRow`), those a
+    still frame reuses included - with something drawn in the 8-bit row
+    meanwhile and the failure cleared, logged once.
+    - RGBA16F, on `arcs`, `segments`, the flare and the spotlight: the
+      emission table takes the failure, in `Initialize`, so the shared
+      buffer (seen as RGBA8 and then RGBA16F), the gather, the four-channel
+      coverage table and the flare's and the spotlight's scaled buffers draw
+      in RGBA8.
+    - RG16F on `arcs`: the two-channel coverage table takes it, RG8.
+    - RG16F on `segments`: the segment coverage table takes it, RG8.
+    - RGBA16F from the viewport's size (D2's threshold) on `arcs`: only the
+      shared buffer is that large, so nothing else re-runs pass 1b on the
+      still frames after the expiry. In the first way the emission table's
+      move does, which hides the shared buffer's own check.
+    - The same on the flare alone, on throughout: in the first way the neon
+      cells switch it off, which gives its buffer back and hides its cache's
+      check.
+    - RGBA16F at two attachments on `segments`: only the gather has two. In
+      the first way the emission table's move changes the gather's inputs
+      and re-runs it, which hides the gather cache's check.
+
+    Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
+    be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,
+    each doubling the wait) and end waiting 32 s until 62 s. Each of the seven
+    checks that move a buffer back up - the emission table's, the gather
+    cache's, the reused frame's (the shared buffer), the flare cache's, the
+    two coverage tables' and the fields' input check - was disabled in turn,
+    and the case failed every time; the last three ways exist because the
+    first three did not catch the shared buffer's, the flare's and the
+    gather's. The fields' check came from the second way, which failed before
+    it existed: the edge ring's field, baked from the 8-bit coverage table,
+    was still composited after the table moved up
+    (`LazyBake::DropIfInputsMoved`).
   - **S**: the neon, the flare and the spotlight drawn outside an effect,
     each making its own `RenderTargetFormats`: five probes by the end of
     `Initialize` and none after, no GL error, and every frame byte for byte
     A's for the same cell.
 
 Every run must make exactly the report's probes less the formats a hook
-answers (5 for A, D, D2, D3, D4, both D7 runs, D5 and D6 failing, 3 for D6
-refused, 2 for B and E, 0 for C) and leave no GL error. About 15 s; exits non-zero on any failure.
+answers (5 for A, D, D2, D3, D4, both D7 runs, D5, D6 failing and both D8
+runs, 3 for D6 refused, 2 for B and E, 0 for C) and leave no GL error - the
+scan of the textures alive at the end included, which looks up to the highest
+name `glGenTextures` returned (`DrawTargetWatch`). About 15 s; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

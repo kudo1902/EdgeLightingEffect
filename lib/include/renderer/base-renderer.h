@@ -153,6 +153,15 @@ namespace EdgeLighting
         /// base-renderer.cpp, since this header only declares the class.
         RenderTargetFormats &GetRenderTargetFormats();
 
+        /// Move the frame time of the object this renderer made for itself
+        /// (@ref GetRenderTargetFormats, outside an effect) on by
+        /// @p deltaTime, so its out-of-memory failures expire as an effect's
+        /// do (RenderTargetFormats::Advance); a no-op on the effect's object,
+        /// which the effect advances once a frame for all its renderers. A
+        /// renderer that allocates through ResizeInBestFormat calls this from
+        /// its Update.
+        void AdvanceOwnRenderTargetFormats(float deltaTime);
+
     private:
         /// Only the effect hands a renderer its registry, once, as it registers
         /// it - so no renderer can be pointed at another effect's after it has
@@ -173,6 +182,7 @@ namespace EdgeLighting
         void setRenderTargetFormats(const std::shared_ptr<RenderTargetFormats> &formats)
         {
             mRenderTargetFormats = formats;
+            mOwnsRenderTargetFormats = false;
         }
 
     private:
@@ -180,6 +190,9 @@ namespace EdgeLighting
         /// See @ref GetRenderTargetFormats. A shared_ptr to a declared-only
         /// type is fine here: its deleter is captured where it is made.
         std::shared_ptr<RenderTargetFormats> mRenderTargetFormats;
+        /// @c mRenderTargetFormats is one this renderer made, outside an
+        /// effect - see @ref AdvanceOwnRenderTargetFormats.
+        bool mOwnsRenderTargetFormats = false;
     };
 
 } // namespace EdgeLighting

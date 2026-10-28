@@ -5,6 +5,64 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-28 - An out-of-memory failure expires (I93)
+
+Not committed; on top of `5be9a9b`. From a code review of the branch; the
+detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problem.** An out-of-memory failure was kept for the effect's life, at
+  its size and above, against every walk of its format: a forced failure of
+  the ~61k-texel gather put the 230k-texel shared buffer on RGBA8 for every
+  frame of `formats` case D7. One passing shortage - a video decoder taking
+  memory for a moment - would leave the shared buffer at 8 bits, and R7's
+  contour rings back, for good.
+- **What changed.**
+  - `RenderTargetFormats` keeps a frame time (`Advance`, the host's frame
+    delta from `EdgeLightingEffect::Update`; a renderer outside an effect
+    advances its own object). An out-of-memory failure expires after 2 s
+    (`OUT_OF_MEMORY_RETRY_SECONDS`); a retry that runs out again doubles the
+    wait, up to 512 s; an allocation that large that succeeds clears it and
+    says so. Every other failure still holds for good.
+  - Every caller that skips its walk while its buffer holds asks
+    `IsBelowBestRow` first - the emission table (`ensureEmissionBuffer`, now
+    re-walked when it fell back), the glow coverage and segment tables, the
+    gather cache, the neon's reused offscreen frame, the flare's cache - so a
+    buffer moves back up, still frames included.
+  - Skips are logged again after a shortage passes; `ResizeInBestFormat`
+    releases the buffer on an invalid size; `formats` scans live textures up
+    to the highest name generated.
+  - Gate: `formats` case D8 (a shortage that passes: every cell drawn after
+    it is A's byte for byte; one that lasts: 5 tries in 40 s, waiting 32 s at
+    the end) on two new hooks, `ForcedFailure::count` and
+    `SetOutOfMemoryRetry`. Cases D and D6's failing run hold their failure
+    for the run.
+  - Then an architecture review of it: D8's passing shortage runs six ways
+    (RGBA16F; RG16F on the coverage table; RG16F on the segment table; and,
+    each alone, the shared buffer, the flare's buffer and the gather), since
+    disabling each check in turn left four of them ungated - the coverage
+    tables', and three the first way hid behind the emission table's move. The RG16F-on-`arcs` way
+    found a defect: the edge ring's field, baked from the 8-bit coverage
+    table, was still composited after the table moved up, a field being
+    invalidated only by config changes. A field now records the formats its
+    bake read (`FieldInputFormats`) and is composited only while they hold
+    (`LazyBake::DropIfInputsMoved`). The host-visible changes of the whole
+    format check are section 8 of
+    [`upgrade-notes.md`](../guides/upgrade-notes.md).
+- **Measured.** Apple M2 Pro: `formats` passes, every earlier case's output
+  unchanged; `check`, `shared-buffer`, `partition`, `clock`, `flare-reuse`
+  and `sequence` pass. Disabling any one of the seven checks that move a
+  buffer back up - the emission table's, the gather cache's, the reused
+  frame's, the flare cache's, the two coverage tables' and the fields' input
+  check - fails D8.
+- **Open.** The AMD 5300M and the device (step 6). A failure other than out
+  of memory is still kept for good, which is right only if the driver reports
+  a shortage as `GL_OUT_OF_MEMORY` - read the device's log for it. From the
+  architecture review: one type owning a buffer and its format list (each
+  buffer's policy is spread across five places), a seam in place of the five
+  verification setters, and counters in place of the gate's log-text
+  checks.
+
 ## 2026-10-27 - Render-target formats are asked about before they are allocated (I93)
 
 Not committed; on top of `dce6d45`. Built from

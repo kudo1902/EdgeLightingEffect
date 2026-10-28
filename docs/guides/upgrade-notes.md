@@ -2,8 +2,8 @@
 
 What a host has to know when it moves from `main` (`1b5cf94`) to this line of
 work - the edge ring and the single neon path, the opaque fill's own cutoffs,
-the `double` clock and the shared buffer, and the fixes of the 2026-10-20
-reviews.
+the `double` clock and the shared buffer, the fixes of the 2026-10-20
+reviews, and the render-target format check.
 Six of the changes are silent - the host still compiles and links, and the
 picture moves - so read section 0 first (the default resolution scale is now
 0.5), the next two before upgrading anything that uses an opaque fill or a
@@ -12,6 +12,11 @@ of the ring. Three are not silent: a host's own renderer stops compiling until
 it takes the clock's time as a `double` (section 6), and so do a host's own
 `Animation` and `Modulator` subclasses, and anything that used the removed
 contour tracer or `PathUtils` (section 7).
+Section 8 moves no pixel on a GPU that renders every format the library asks
+for, but changes two things a host can see: the library reads and clears the
+host's pending GL errors at `Initialize` and on frames that allocate, and the
+flare and the spotlight below scale 1.0 draw at 1.0, rather than nothing, when
+memory runs out.
 
 ## 0. `NeonConfig::resolutionScale` defaults to 0.5, and 1.0 takes the same path
 
@@ -289,7 +294,63 @@ marked **source break** stop a host compiling until it follows them.
   animation attached to two effects runs at their combined speed (I92); and a
   modulator sequence must not contain itself (I90).
 
-## 8. Nothing else a host can see moved
+## 8. Render-target formats are asked about first, and the GL error queue is read
+
+The library now asks the driver which formats it can render to before it
+allocates anything (`RenderTargetFormats`, I93), and keeps what each full-size
+allocation that failed says. On a GPU that renders every format it asks for -
+both Macs - no pixel moves. What a host can see:
+
+- **The host's pending GL errors are read and cleared.** Telling a failed
+  allocation from a format the driver will not render takes `glGetError`, so
+  the library drains whatever is pending first and logs each error as a
+  warning naming it as the caller's (`... was pending before probing format
+  ...`, `... was pending before allocating ...`). It does that in
+  `EdgeLightingEffect::Initialize`, which now probes five formats (a 4 x 4
+  texture and a framebuffer each; 0.18 ms on an M2 Pro, 0.22 ms on an AMD
+  5300M) and logs a report of them, and in `Framebuffer::Resize` on any frame
+  that allocates: the first frames, a resize of the rect or the viewport, a
+  scale change, a layer switched on, a buffer moving back to a better format.
+  A host that checks `glGetError` after the effect renders loses its own
+  errors on those frames - check before calling into the effect, or read the
+  warnings. The C ABI's `el_effect_init*` probe the same way.
+- **The flare and the spotlight draw at 1.0 when no scaled buffer can be
+  allocated.** Below scale 1.0 they used to draw nothing; they now draw the
+  1.0 path, which needs no buffer - the same picture as at 1.0, at 1.0's cost
+  (four times the fragments of 0.5), logged once each way. That happens when
+  memory is short, so expect it under memory pressure.
+- **A format that ran out of memory comes back.** A buffer whose allocation
+  ran out of memory falls to the next format in its list (8 bits for most)
+  and is held there for 2 s of frame time, then tried again, the wait doubling
+  with each retry that fails again, up to 512 s. Frame time is the delta the
+  host passes `EdgeLightingEffect::Update` (or `el_effect_update`), not the
+  effect's clock, so pausing the clock does not hold it - but a host that
+  renders without calling Update never retries. Any other failure (an
+  incomplete framebuffer) holds for good, as before.
+- **A driver without half-float targets** lands every buffer on its 8-bit row
+  from the first frame, with no failed allocation and no ERROR line, and
+  never compiles the hue-invariant fields' programs. The picture is what such
+  a driver drew before: within 3 levels of a half-float GPU on every
+  `neon-scale-check` scene but one whose segment boosts of 2.0 clamp (~53
+  levels).
+- **`Framebuffer`** (`gl/framebuffer.h`): `Resize` takes an optional last
+  parameter, `GLenum *failure`, saying why it failed; it fails on any GL error
+  its allocation raises, not only on an incomplete framebuffer; and it unbinds
+  the pixel-unpack buffer around its upload and puts it back. A host that uses
+  the wrapper compiles unchanged. `IsColorRenderable` is new.
+- **A host's own renderer** compiles unchanged. `BaseRenderer` gains private
+  members and two protected methods, `GetRenderTargetFormats` and
+  `AdvanceOwnRenderTargetFormats`, so rebuild it with the library. A host
+  renderer with a buffer in a format a driver may refuse can allocate it
+  through `ResizeInBestFormat` (`core/render-target-formats.h`), as the
+  library's do.
+- **`EdgeLightingEffect::GetRenderTargetFormats()`** is public, for reading
+  the answers (`GetAnswers`). Its setters (`SetRefusedFormats`,
+  `SetFailedAllocations`, `SetUnknownFormats`, `SetMaxTextureSize`,
+  `SetOutOfMemoryRetry`) are verification hooks for `neon-scale-check
+  formats`: a host never calls them. Nothing changed in the C ABI.
+
+## 9. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

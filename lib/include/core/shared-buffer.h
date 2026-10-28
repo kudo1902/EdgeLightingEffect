@@ -114,6 +114,14 @@ namespace EdgeLighting
         ///         caller must draw nothing.
         bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, RenderTargetFormats &targets);
 
+        /// Whether the buffer fell back past a format @p targets may allocate
+        /// again now - an out-of-memory failure that has expired - so the next
+        /// @ref BeginWrite would move it back up (IsBelowBestRow). For a
+        /// producer that skips its write on a frame it reuses: without asking,
+        /// a still frame would keep the buffer where it fell. Free while it
+        /// holds its first format.
+        bool IsBelowBestFormat(RenderTargetFormats &targets) const;
+
         /// Treat the texels as undefined: the next @ref BeginWrite clears the
         /// whole buffer rather than two windows. Moves nothing else. For
         /// verification (NeonBypass::CLEAR) - a producer never needs it.

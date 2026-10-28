@@ -277,8 +277,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float, double time, const Config &config)
+    void LensFlareRenderer::Update(float deltaTime, double time, const Config &config)
     {
+        // Outside an effect, the frame time its own RenderTargetFormats'
+        // out-of-memory failures expire by.
+        AdvanceOwnRenderTargetFormats(deltaTime);
         // The rays' rotation, every frame, so a rate that moves while the
         // layer is off is integrated as it moved; drawFlare reads it again.
         mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate);
@@ -309,8 +312,12 @@ namespace EdgeLighting
         // nothing else writes it. The common case is a still sun with the
         // rays not spinning (rotationRate 0, the default). No capture, no
         // bind, no draw: the caller's target is never left.
+        // Not when the buffer fell back past a format it may have again (an
+        // out-of-memory failure that expired): the walk below moves it back
+        // up, or a still sun would keep it at 8 bits.
         FlareInputs inputs = getFlareInputs(target, scale, viewportWidth, viewportHeight, time, config);
-        if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid())
+        if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid() &&
+            !IsBelowBestRow(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT))
         {
             mFrame.scaledReady = true;
             // The blend state a drawn frame leaves, so a reused one leaves the

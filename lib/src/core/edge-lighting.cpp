@@ -53,6 +53,9 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
+        // The frame delta itself, not the clock's: an out-of-memory failure
+        // expires in real time, and a paused clock must not keep it.
+        mRenderTargetFormats->Advance(deltaTime);
         mAnimationManager->Update(mClock.Update(deltaTime));
         refreshActiveConfig();
 

@@ -2124,16 +2124,12 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
         }
-        // Allocated ONCE, here, and never touched again: the emission table's
-        // dimensions are compile-time constants, so unlike every other buffer
-        // in the renderer it has no reason to be revisited per frame. Its
-        // format is settled here too: ResizeInBestFormat asks this effect's
-        // RenderTargetFormats which rows render, and this is the only
-        // allocation the buffer ever gets.
-        if (!ResizeInBestFormat(mEmission.buffer, GetRenderTargetFormats(), EMISSION_FORMATS,
-                                std::size(EMISSION_FORMATS), NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1,
-                                "NeonRenderer", "emission",
-                                "Arc intensities and stacked segment boosts above 1.0 will clamp."))
+        // Allocated here: the emission table's dimensions are compile-time
+        // constants, so unlike every other buffer in the renderer its size is
+        // never revisited. Its format is settled here too - and revisited only
+        // if it fell back past one whose out-of-memory failure later expires
+        // (ensureEmissionBuffer).
+        if (!ensureEmissionBuffer())
         {
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
             return false;
@@ -2197,6 +2193,9 @@ namespace EdgeLighting
         // be integrated as it moved. RenderOffscreen reads it again for the
         // same time, which moves nothing.
         mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
+        // Outside an effect, the frame time its own RenderTargetFormats'
+        // out-of-memory failures expire by.
+        AdvanceOwnRenderTargetFormats(deltaTime);
 
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // without any config change to announce it. Nothing here has to say
@@ -2320,7 +2319,7 @@ namespace EdgeLighting
         // frame degrades to the fill: no glow, nothing stale. The glow
         // coverage table's program and buffer likewise, but only on a ring
         // that reads the table. The gather is its own pass at every scale.
-        bool glowReady = ensureGlowPrograms() &&
+        bool glowReady = ensureGlowPrograms() && ensureEmissionBuffer() &&
                          (IsGlowCoverUnread(mEffectiveSegments, config) ||
                           (ensureGlowCoverProgram() && ensureGlowCoverFillProgram() &&
                            ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
@@ -2385,10 +2384,13 @@ namespace EdgeLighting
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
-        // either.
+        // either. Nor when the shared buffer fell back past a format it may
+        // have again (an out-of-memory failure that expired): pass 1b's walk
+        // moves it back up, or a still frame would keep it at 8 bits.
         const bool reuseOffscreen = glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) &&
                                     !emissionStale &&
-                                    !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight);
+                                    !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight) &&
+                                    !mScaled->IsBelowBestFormat(GetRenderTargetFormats());
         // The shading factored into the hue-invariant field (1f) and its
         // composite (1c), in pass 1b's place where the config allows it, on
         // LazyBake's schedule. A frame that reuses its offscreen buffers has
@@ -2489,7 +2491,7 @@ namespace EdgeLighting
                 const bool baked =
                     renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, huePhase, config);
                 field.use = field.use && baked;
-                mGlowField.schedule.OnBaked(baked, config.neon.intensity);
+                mGlowField.schedule.OnBaked(baked, config.neon.intensity, getFieldInputFormats(config));
                 mGlowField.origin = region.origin * scale;
                 mGlowField.texelScale = glm::vec2(region.texels) / (region.size * scale);
             };
@@ -2513,10 +2515,15 @@ namespace EdgeLighting
             // and no texel of it: the quad settles on the widest one the
             // animation reaches, and the gather stops running.
             const GatherInputs gatherInputs = getGatherInputs(config, viewportWidth, viewportHeight);
+            // Nor a buffer that fell back past a format it may have again (an
+            // out-of-memory failure that expired): the pass's walk moves it
+            // back up.
             const bool gatherCurrent = !bypasses(NeonBypass::GATHER) && mGather.cache.drawn &&
                                        mGather.buffer.IsValid() &&
                                        gatherInputs == mGather.cache.inputs &&
-                                       AnnulusCovers(mGather.cache.bounds, mGatherBounds);
+                                       AnnulusCovers(mGather.cache.bounds, mGatherBounds) &&
+                                       !IsBelowBestRow(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS,
+                                                       std::size(GATHER_FORMATS));
             const BufferRegion gatherRegion =
                 gatherCurrent ? mGather.cache.region
                               : GetBufferRegion(mGatherBounds.outer, centerFull, viewportWidth, viewportHeight,
@@ -2531,6 +2538,19 @@ namespace EdgeLighting
                 glowReady =
                     renderGatherPass(GetRegionProjection(gatherRegion, scale), gatherRegion.texels, scale, config);
                 mGather.cache = GatherCache{glowReady, gatherInputs, mGatherBounds, gatherRegion};
+            }
+
+            // A field held from an earlier frame is composited only over
+            // inputs in the formats its bake read them in. A buffer moves rows
+            // with no config change to invalidate the field - back up once an
+            // out-of-memory failure expires, the gather possibly in the pass
+            // just above - and a field baked from the other rows would then
+            // composite another image. Shade directly instead; the config has
+            // held, so the next frame bakes again.
+            {
+                const FieldInputFormats inputFormats = getFieldInputFormats(config);
+                mGlowField.schedule.DropIfInputsMoved(field, inputFormats);
+                mRingField.schedule.DropIfInputsMoved(ringField, inputFormats);
             }
 
             // --- Pass 1b: the shading, at the reduced scale, into the
@@ -2584,7 +2604,7 @@ namespace EdgeLighting
             {
                 glDisable(GL_BLEND);
                 const bool baked = renderRingFieldPass(gatherUVFull, huePhase, config);
-                mRingField.schedule.OnBaked(baked, config.neon.intensity);
+                mRingField.schedule.OnBaked(baked, config.neon.intensity, getFieldInputFormats(config));
                 ringField.use = ringField.use && baked;
             }
 
@@ -3259,6 +3279,25 @@ namespace EdgeLighting
                              PROGRAM_FILL, 0, "opaque mode will draw no fill");
     }
 
+    bool NeonRenderer::ensureEmissionBuffer()
+    {
+        // Every frame, and free while the table holds its best row: the
+        // common case, decided by one comparison in IsBelowBestRow.
+        RenderTargetFormats &targets = GetRenderTargetFormats();
+        if (mEmission.buffer.IsValid() &&
+            !IsBelowBestRow(mEmission.buffer, targets, EMISSION_FORMATS, std::size(EMISSION_FORMATS)))
+        {
+            return true;
+        }
+        // A fresh allocation holds undefined texels: the table is baked again
+        // before anything reads it (isEmissionTableStale), which moves its
+        // version and so re-runs the gather too.
+        mEmission.bake.baked = false;
+        return ResizeInBestFormat(mEmission.buffer, targets, EMISSION_FORMATS, std::size(EMISSION_FORMATS),
+                                  NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1, "NeonRenderer", "emission",
+                                  "Arc intensities and stacked segment boosts above 1.0 will clamp.");
+    }
+
     bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
     {
         // A live buffer is kept while it can hold this config: this runs every
@@ -3283,7 +3322,16 @@ namespace EdgeLighting
         {
             const GLint format = mGlowCover.buffer.GetInternalFormat();
             const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
-            mainHolds = (!segments || !twoChannel) && widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
+            // Nor when it fell back past a format that may be tried again
+            // now (an out-of-memory failure that expired): the walk below
+            // moves it back up.
+            const bool belowBest =
+                twoChannel ? IsBelowBestRow(mGlowCover.buffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
+                                            std::size(GLOW_COVER_FORMATS_RG))
+                           : IsBelowBestRow(mGlowCover.buffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS,
+                                            std::size(GLOW_COVER_FORMATS));
+            mainHolds = (!segments || !twoChannel) && !belowBest &&
+                        widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
             fourChannel = segments || !twoChannel;
         }
         if (!mainHolds)
@@ -3331,7 +3379,9 @@ namespace EdgeLighting
         // fill program that will not build, which no size changes.
         bool direct = !segments || mGlowCover.segWantedDirect;
         const bool segHolds =
-            mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width);
+            mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width) &&
+            !IsBelowBestRow(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
+                            std::size(GLOW_COVER_FORMATS_RG));
         if (!direct && !segHolds)
         {
             direct = !segmentTableMayAllocate();
@@ -4106,6 +4156,21 @@ namespace EdgeLighting
                                   static_cast<float>(viewportHeight) - config.geometry.position.y -
                                       config.geometry.height * 0.5f);
         return inputs;
+    }
+
+    NeonRenderer::FieldInputFormats NeonRenderer::getFieldInputFormats(const Config &config) const
+    {
+        const auto formatOf = [](const Framebuffer &buffer)
+        { return buffer.IsValid() ? buffer.GetInternalFormat() : GLint(0); };
+        FieldInputFormats formats;
+        formats.emission = formatOf(mEmission.buffer);
+        if (!IsGlowCoverUnread(mEffectiveSegments, config))
+        {
+            formats.cover = formatOf(mGlowCover.buffer);
+            formats.segments = formatOf(mGlowCover.segBuffer);
+        }
+        formats.gather = formatOf(mGather.buffer);
+        return formats;
     }
 
     void NeonRenderer::uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,

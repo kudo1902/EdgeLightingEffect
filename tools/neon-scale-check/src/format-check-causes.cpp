@@ -10,11 +10,12 @@
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
 
-// `formats`' cases D4, D5, D6 and S: what each cause of a failed allocation may
+// `formats`' cases D4, D7, D5, D6, D8 and S: what each cause of a failed allocation may
 // block - and may not - and a renderer drawn outside an effect. See
 // format-check.h for every case's checks.
 
@@ -280,6 +281,9 @@ namespace NeonScaleCheck
                 refused.hooks.refused = {GL_RG16F, GL_RG8};
                 Way failing{"  failing", Hooks{}, 2, 1};
                 failing.hooks.failed.formats = {GL_RG16F, GL_RG8};
+                // A failure that holds for the run, as D's: no retry, whatever
+                // frame time the moving cells pass.
+                failing.hooks.outOfMemoryRetry = std::numeric_limits<double>::infinity();
                 for (const Way &way : {refused, failing})
                 {
                     const RunResult run = Run(way.hooks, false, cells);
@@ -305,6 +309,165 @@ namespace NeonScaleCheck
                     failures +=
                         (tries != way.tries) + (fills != way.fills) + (blocked != 1) + (worstLevels > 2) + !shared;
                 }
+                return failures;
+            }
+
+            /// One way D8's passing shortage is drawn: which allocation fails,
+            /// what that leaves in the 8-bit row, and on which cells.
+            typedef struct PassingShortage
+            {
+                const char *label;
+                GLint failed;           ///< Its first allocation fails (ForcedFailure::count 1)...
+                int64_t fromTexels;     ///< ...of at least this many texels x attachments; 0 is any...
+                int fromAttachments;    ///< ...and at least this many attachments.
+                GLint fallback;         ///< The row the buffers it reaches fall to - drawn into here, never in A.
+                std::vector<Cell> cells; ///< Drawn before the wait and after it; the first also waits.
+                bool shared;            ///< The shared buffer is among the buffers it reaches.
+            } PassingShortage;
+
+            /// One passing shortage: @p way's cells " during", the first again
+            /// " wait" for 3 s of frame time, every cell again " after" - drawn
+            /// with and without the failure. Every " after" cell must be A's
+            /// byte for byte. Returns the failures.
+            int CheckPassingShortage(const PassingShortage &way, bool verbose)
+            {
+                std::vector<Cell> cells;
+                const auto addPhase = [&cells, &way](const char *phase)
+                {
+                    for (Cell cell : way.cells)
+                    {
+                        cell.name += phase;
+                        cells.push_back(cell);
+                    }
+                };
+                addPhase(" during");
+                Cell wait = way.cells.front();
+                wait.name += " wait";
+                wait.deltaTime = 3.0f;
+                cells.push_back(wait);
+                addPhase(" after");
+
+                Hooks passing;
+                passing.failed.formats = {way.failed};
+                passing.failed.fromTexels = way.fromTexels;
+                passing.failed.fromAttachments = way.fromAttachments;
+                passing.failed.count = 1;
+                const RunResult a = Run(Hooks{}, false, cells);
+                const RunResult run = Run(passing, false, cells);
+                int failures = Summarise(way.label, run, Unprobed(passing), verbose);
+
+                // Summed, not chained: every cell that differs is printed.
+                int afterCells = 0;
+                int afterSame = 0;
+                for (const Cell &cell : cells)
+                {
+                    const std::string suffix = " after";
+                    if (cell.name.size() > suffix.size() &&
+                        cell.name.compare(cell.name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                    {
+                        ++afterCells;
+                        afterSame += SameFrame(run, cell.name, a, cell.name, "A", cells);
+                    }
+                }
+                const bool fellBack = run.drawFormats.count(way.fallback) && !a.drawFormats.count(way.fallback);
+                const bool sharedBoth = run.sharedFormats.count(GL_RGBA8) && run.sharedFormats.count(GL_RGBA16F);
+                const int fallbacks = CountLines(run.errors, "falling back to", "SetFailedAllocations");
+                const int passed = CountLines(run.infos, "out-of-memory failure kept against");
+                std::printf("  failed allocations %d (expected 1)%s, drawn in %s meanwhile %s%s, after it as A %d / %d%s, "
+                            "passing logged %d (expected 1)%s, failures kept at the end %zu (expected 0)%s\n",
+                            fallbacks, fallbacks == 1 ? "" : "!", FormatName(way.fallback), fellBack ? "yes" : "NO!",
+                            way.shared ? (sharedBoth ? ", shared buffer RGBA8 then RGBA16F yes"
+                                                     : ", shared buffer RGBA8 then RGBA16F NO!")
+                                       : "",
+                            afterSame, afterCells, afterSame == afterCells ? "" : "!", passed, passed == 1 ? "" : "!",
+                            run.failedAllocations.size(), run.failedAllocations.empty() ? "" : "!");
+                return failures + (fallbacks != 1) + !fellBack + (way.shared && !sharedBoth) +
+                       (afterSame != afterCells) + (passed != 1) + !run.failedAllocations.empty();
+            }
+
+            /// D8: out of memory that passes - what a failure's expiry is for.
+            ///   - Passing, six ways (PassingShortage): only the first
+            ///     allocation of one format fails (ForcedFailure::count), which
+            ///     keeps that format off every buffer at least that large. A
+            ///     cell that passes 3 s of frame time lets it expire, and every
+            ///     buffer must move back up - those that never resize and
+            ///     those a still frame reuses included, each asking
+            ///     IsBelowBestRow - so the cells drawn again after it are A's,
+            ///     byte for byte, the failure is cleared and that is said once.
+            ///     RGBA16F: the emission table takes the failure, in
+            ///     Initialize, and the shared buffer, the gather, the flare's
+            ///     and the spotlight's scaled buffers and - on `segments` - the
+            ///     four-channel coverage table fall to RGBA8. RG16F on `arcs`:
+            ///     the two-channel coverage table takes it and falls to RG8.
+            ///     RG16F on `segments`: the segment coverage table does.
+            ///     RGBA16F from the viewport's size (RetryThreshold) on `arcs`:
+            ///     only the shared buffer is that large, so it alone falls,
+            ///     and nothing else re-runs pass 1b on the still frames after
+            ///     the expiry - the emission table's move did, in the first
+            ///     way. The same on the flare alone, kept on throughout: the
+            ///     neon cells of the first way switch it off, which gives its
+            ///     buffer back and hides its cache's check. RGBA16F at two
+            ///     attachments on `segments`: only the gather has two, and
+            ///     falls; in the first way the emission table's move changes
+            ///     the gather's inputs and re-runs it anyway, hiding the gather
+            ///     cache's check.
+            ///   - Lasting: every RGBA16F allocation fails, over 40 frames 1 s
+            ///     apart. Each expiry costs one retry - the emission table's,
+            ///     the smallest and first asked - which fails again and doubles
+            ///     the wait: failures at 0, 2, 6, 14 and 30 s, so the run ends
+            ///     waiting 32 s, until 62 s.
+            int CheckTransientFailure(bool verbose)
+            {
+                const Scene *arcs = FindScene("arcs");
+                const Scene *segments = FindScene("segments");
+                std::printf("D8 - out of memory that passes, and out of memory that lasts%s\n",
+                            arcs && segments ? "" : " - no `arcs` or `segments` scene!");
+                if (!arcs || !segments)
+                {
+                    return 1;
+                }
+                const Cell arcsCell = NeonCell(*arcs, Variant::STILL, SCALE_500);
+                const Cell segmentsCell = NeonCell(*segments, Variant::STILL, SCALE_500);
+                const Cell flareCell = FlareCell(SCALE_500);
+                const Cell spotlightCell = SpotlightCell(SCALE_500);
+                const int64_t viewportSized = RetryThreshold();
+                const PassingShortage ways[] = {
+                    {"  passing, RGBA16F", GL_RGBA16F, 0, 1, GL_RGBA8,
+                     {arcsCell, segmentsCell, flareCell, spotlightCell}, true},
+                    {"  passing, RG16F - the coverage table", GL_RG16F, 0, 1, GL_RG8, {arcsCell}, false},
+                    {"  passing, RG16F - the segment table", GL_RG16F, 0, 1, GL_RG8, {segmentsCell}, false},
+                    {"  passing, RGBA16F from the viewport's size - the shared buffer", GL_RGBA16F, viewportSized, 1,
+                     GL_RGBA8, {arcsCell}, true},
+                    {"  passing, RGBA16F from the viewport's size - the flare's buffer", GL_RGBA16F, viewportSized, 1,
+                     GL_RGBA8, {flareCell}, false},
+                    {"  passing, RGBA16F at two attachments - the gather", GL_RGBA16F, 0, 2, GL_RGBA8,
+                     {segmentsCell}, false},
+                };
+                int failures = 0;
+                for (const PassingShortage &way : ways)
+                {
+                    failures += CheckPassingShortage(way, verbose);
+                }
+
+                Hooks lasting;
+                lasting.failed.formats = {GL_RGBA16F};
+                Cell held = NeonCell(*arcs, Variant::STILL, SCALE_500);
+                held.frames = 40;
+                held.deltaTime = 1.0f;
+                const RunResult kept = Run(lasting, false, {held});
+                failures += Summarise("  lasting", kept, Unprobed(lasting), verbose);
+                const auto record = std::find_if(kept.failedAllocations.begin(), kept.failedAllocations.end(),
+                                                 [](const RenderTargetFormats::FailedAllocation &failed)
+                                                 { return failed.internalFormat == GL_RGBA16F && failed.outOfMemory; });
+                const bool found = record != kept.failedAllocations.end();
+                const double waitSeconds = found ? record->wait : 0.0;
+                const double retryAt = found ? record->retryAt : 0.0;
+                const int tries = CountLines(kept.errors, "RGBA16F", "target unavailable");
+                const bool backedOff = found && waitSeconds == 32.0 && retryAt == 62.0;
+                std::printf("  failed allocations over 40 s %d (expected 5)%s, waiting %.0f s until %.0f s (expected 32 "
+                            "until 62)%s\n",
+                            tries, tries == 5 ? "" : "!", waitSeconds, retryAt, backedOff ? "" : "!");
+                failures += (tries != 5) + !backedOff;
                 return failures;
             }
 
@@ -378,6 +541,7 @@ namespace NeonScaleCheck
             failures += CheckGrowingRect(verbose);
             failures += CheckSizeLimit(verbose);
             failures += CheckSegmentTable(cells, verbose);
+            failures += CheckTransientFailure(verbose);
             failures += CheckStandalone(cells, a);
             return failures;
         }

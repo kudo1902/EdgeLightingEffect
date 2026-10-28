@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace EdgeLighting
@@ -148,10 +149,11 @@ namespace EdgeLighting
                 continue;
             }
             // Memory runs out by bytes: any allocation at least as large in
-            // total repeats it, whatever its shape or attachment count.
-            if (failed.outOfMemory && perAttachment * attachments >= failed.texels)
+            // total repeats it, whatever its shape or attachment count - until
+            // the failure expires, memory being something a GL gets back.
+            if (failed.outOfMemory && mTime < failed.retryAt && perAttachment * attachments >= failed.texels)
             {
-                return "an allocation of it that large already ran out of memory here";
+                return "an allocation of it that large ran out of memory here, too recently to try again";
             }
             // Anything else said something about this format at that many
             // attachments, whatever the size: as many or more fail too.
@@ -175,21 +177,91 @@ namespace EdgeLighting
         const int64_t texels = outOfMemory ? static_cast<int64_t>(width) * height * attachments : 0;
         for (FailedAllocation &failed : mFailedSizes)
         {
-            if (failed.internalFormat == internalFormat && failed.outOfMemory == outOfMemory)
+            if (failed.internalFormat != internalFormat || failed.outOfMemory != outOfMemory)
             {
-                failed.texels = std::min(failed.texels, texels);
+                continue;
+            }
+            if (!outOfMemory)
+            {
                 failed.attachments = std::min(failed.attachments, keyAttachments);
                 return;
             }
+            if (mTime < failed.retryAt)
+            {
+                // Still armed, so this allocation was smaller than the one
+                // that failed: memory is tighter than that said. Kept at the
+                // smaller size, the wait started again but not lengthened -
+                // one shortage, not a retry.
+                failed.texels = std::min(failed.texels, texels);
+                failed.retryAt = mTime + failed.wait;
+                return;
+            }
+            // Expired and run out again: a retry that failed. Armed afresh at
+            // this size - what failed before is older news - for twice the
+            // wait, so a shortage that holds costs fewer and fewer tries.
+            const double longest = std::max(OUT_OF_MEMORY_RETRY_MAX_SECONDS, mOutOfMemoryRetrySeconds);
+            failed.texels = texels;
+            failed.wait = std::min(failed.wait * 2.0, longest);
+            failed.retryAt = mTime + failed.wait;
+            return;
         }
-        mFailedSizes.push_back(FailedAllocation{internalFormat, outOfMemory, keyAttachments, texels});
+        FailedAllocation added{internalFormat, outOfMemory, keyAttachments, texels,
+                               std::numeric_limits<double>::infinity(), 0.0};
+        if (outOfMemory)
+        {
+            added.wait = mOutOfMemoryRetrySeconds;
+            added.retryAt = mTime + added.wait;
+        }
+        mFailedSizes.push_back(added);
     }
 
-    bool RenderTargetFormats::isAllocationForcedToFail(GLint internalFormat, int64_t texels, int attachments) const
+    void RenderTargetFormats::onAllocated(GLint internalFormat, int width, int height, int attachments,
+                                          const char *owner, const char *what, const char *row)
+    {
+        // An expired out-of-memory failure this allocation is as large as:
+        // the memory is back. Cleared, so the next shortage waits the first
+        // wait again. A smaller one says nothing about the size that failed.
+        const int64_t texels = static_cast<int64_t>(width) * height * attachments;
+        const auto recovered = std::find_if(mFailedSizes.begin(), mFailedSizes.end(),
+                                            [&](const FailedAllocation &failed)
+                                            {
+                                                return failed.internalFormat == internalFormat && failed.outOfMemory &&
+                                                       texels >= failed.texels;
+                                            });
+        if (recovered == mFailedSizes.end())
+        {
+            return;
+        }
+        LOG_I("%s: %s %s target allocated at %d x %d x %d - the out-of-memory failure kept against %s (from %lld "
+              "texels) has passed.",
+              owner, row, what, width, height, attachments, row, static_cast<long long>(recovered->texels));
+        mFailedSizes.erase(recovered);
+        // And the skips past this row that shortage logged, every walk's: the
+        // next shortage is news, and each walk it sends down gets its line
+        // again. Not on any other allocation - a skip for a refusal, or a
+        // failure that does not expire, is said once.
+        mLoggedSkips.erase(std::remove_if(mLoggedSkips.begin(), mLoggedSkips.end(),
+                                          [row](const LoggedSkip &logged) { return logged.row == row; }),
+                           mLoggedSkips.end());
+    }
+
+    bool RenderTargetFormats::takeForcedFailure(GLint internalFormat, int64_t texels, int attachments)
     {
         const ForcedFailure &forced = mForcedFailure;
-        return texels >= forced.fromTexels && attachments >= forced.fromAttachments &&
-               std::find(forced.formats.begin(), forced.formats.end(), internalFormat) != forced.formats.end();
+        const bool selected =
+            texels >= forced.fromTexels && attachments >= forced.fromAttachments &&
+            (forced.count <= 0 || mForcedFailuresTaken < forced.count) &&
+            std::find(forced.formats.begin(), forced.formats.end(), internalFormat) != forced.formats.end();
+        if (selected)
+        {
+            ++mForcedFailuresTaken;
+        }
+        return selected;
+    }
+
+    void RenderTargetFormats::Advance(double seconds)
+    {
+        mTime += std::max(seconds, 0.0);
     }
 
     int RenderTargetFormats::GetMaxTextureSize() const

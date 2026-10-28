@@ -278,6 +278,10 @@ namespace NeonScaleCheck
                 effect.GetRenderTargetFormats()->SetFailedAllocations(hooks.failed);
                 effect.GetRenderTargetFormats()->SetUnknownFormats(hooks.unknown);
                 effect.GetRenderTargetFormats()->SetMaxTextureSize(hooks.maxTextureSize);
+                if (hooks.outOfMemoryRetry >= 0.0)
+                {
+                    effect.GetRenderTargetFormats()->SetOutOfMemoryRetry(hooks.outOfMemoryRetry);
+                }
                 const std::shared_ptr<NeonRenderer> neon = std::make_shared<NeonRenderer>();
                 if (bypassFields)
                 {
@@ -298,7 +302,10 @@ namespace NeonScaleCheck
                 {
                     Config config = cell.config;
                     const float baseIntensity = config.neon.intensity;
-                    const int frames = FramesFor(cell.variant);
+                    const int frames = cell.frames > 0 ? cell.frames : FramesFor(cell.variant);
+                    const float deltaTime = cell.deltaTime >= 0.0f      ? cell.deltaTime
+                                            : cell.variant == Variant::STILL ? 0.0f
+                                                                             : 1.0f / 60.0f;
                     for (int f = 0; f < frames; ++f)
                     {
                         if (cell.variant == Variant::INTENSITY)
@@ -306,7 +313,7 @@ namespace NeonScaleCheck
                             config.neon.intensity = baseIntensity * (1.0f + 0.1f * std::sin(0.9f * float(f)));
                         }
                         effect.SetConfig(config);
-                        effect.Update(cell.variant == Variant::STILL ? 0.0f : 1.0f / 60.0f);
+                        effect.Update(deltaTime);
                         if (!capture.Begin(FRAME_WIDTH, FRAME_HEIGHT))
                         {
                             std::fprintf(stderr, "neon-scale-check: the capture target failed\n");
@@ -333,8 +340,14 @@ namespace NeonScaleCheck
                     }
                 }
 
-                // Every texture alive, while the effect still holds its own.
-                for (GLuint name = 1; name < 16384; ++name)
+                // Every texture alive, while the effect still holds its own: up
+                // to the highest name ever generated (DrawTargetWatch), so a
+                // driver that does not reuse names cannot hide one past a
+                // fixed bound. Every texture here is 2D - the library and the
+                // capture make no other - and an error from binding one that
+                // was not would count as a frame with a GL error.
+                const GLuint highest = DrawTargetWatch::GetHighestTextureName();
+                for (GLuint name = 1; name <= highest; ++name)
                 {
                     if (!glIsTexture(name))
                     {
@@ -346,7 +359,14 @@ namespace NeonScaleCheck
                     ++result.aliveFormats[format];
                 }
                 glBindTexture(GL_TEXTURE_2D, 0);
+                bool scanError = false;
+                while (glGetError() != GL_NO_ERROR)
+                {
+                    scanError = true;
+                }
+                result.glErrorFrames += scanError;
                 result.probes = effect.GetRenderTargetFormats()->GetAnswers().size();
+                result.failedAllocations = effect.GetRenderTargetFormats()->GetFailedAllocations();
                 result.sharedReadyFrames = probe->GetReadyFrames();
                 result.sharedFormats = probe->GetFormats();
             }

@@ -326,8 +326,10 @@ step 3R and section 6 check that the five report probes are the only ones.
 out. The walk now keeps nothing: it asks the object for the first row to try
 at the size it allocates, and a full-size failure is recorded in the object
 with that size, so a format is skipped at that size and above and tried again
-below. What this section says about where each walk asks still holds; what it
-says about tiers is the record of the step-3R design.*
+below - and, out of memory, at any size once the failure expires, with every
+buffer that fell back past it moving back up (the code review at the end of
+section 10). What this section says about where each walk asks still holds;
+what it says about tiers is the record of the step-3R design.*
 
 Each walk asks at its top, from its current tier, then runs its loop exactly as
 now - `Resize`, and the full-size fallback for a refusal the probe did not
@@ -1122,3 +1124,94 @@ an error pending on entry is logged as the caller's and cleared.
 
 **Open.** Step 6, the device; the M2; open decisions 1-4 of section 9; the
 architecture review's findings 5 and 6.
+
+**After a code review, 2026-10-28: out of memory expires.** The stateless walk
+fixed "failed at 4K, so a smaller buffer is refused too", but an out-of-memory
+failure still held at its size and above for the effect's life - and, kept per
+format by total size, against every walk of that format, not only the one that
+failed. `formats` case D7 showed it: a forced failure of the two-attachment
+gather (~61k texels) put the one-attachment shared buffer (230k) on RGBA8 for
+all 24 frames. On a TV, where a video decoder can take memory for a moment,
+one passing shortage would leave the shared buffer at 8 bits - and the contour
+rings R7's dither removes back - for good. Memory comes back; a refusal or an
+incomplete framebuffer does not, so only out of memory changed:
+
+- **Expiry, with backoff.** `RenderTargetFormats` keeps a frame time
+  (`Advance`, fed by `EdgeLightingEffect::Update` with the host's frame delta -
+  not the effect's `Clock`, which a host may pause - and, for a renderer
+  outside an effect, by its own `Update` through
+  `BaseRenderer::AdvanceOwnRenderTargetFormats`). A failure expires
+  `OUT_OF_MEMORY_RETRY_SECONDS` (2 s) after it; then the first walk past it
+  tries the format at any size. A retry that runs out again re-arms it at its
+  own size for twice the wait, up to `OUT_OF_MEMORY_RETRY_MAX_SECONDS`
+  (512 s): a shortage that never passes costs one failed allocation every
+  ~8.5 minutes in the end. A smaller failure while it is armed restarts the
+  wait without doubling it - one shortage, not a retry. An allocation as large
+  as the failure that succeeds clears it, logged once, and with it every
+  walk's logged skip of that row, so the next shortage is logged again. Frame
+  time rather than wall time so a run is reproducible; a host that never calls
+  `Update` never lets a failure expire.
+- **Buffers move back up.** Expiry is no use to a buffer whose caller skips
+  the walk while it holds. `IsBelowBestRow` (free while a buffer holds its
+  first row) says whether a walk at its size would now land higher, and every
+  such caller asks it: the emission table, which is never resized and is now
+  re-walked by `ensureEmissionBuffer` (marked unbaked when it moves); the glow
+  coverage and segment tables' hysteresis; the gather cache; the neon's reused
+  offscreen frame (`SharedBuffer::IsBelowBestFormat`); the flare's cache. The
+  spotlight and the fields walk on every frame they draw.
+- **Verification.** `ForcedFailure::count` fails only the first N allocations
+  it selects - a shortage that passes - and `SetOutOfMemoryRetry` sets the
+  first wait (infinity keeps a failure for the run, which cases D and D6's
+  failing run now ask for: D's moving cells pass ~7 s of frame time, and a
+  retry re-runs a gather B reuses, a level off in places). Case D8: with only
+  the first RGBA16F allocation failing - the emission table's, in `Initialize`
+  - the shared buffer, the gather and the flare's and spotlight's buffers draw
+  in RGBA8, a cell passing 3 s of frame time lets the failure expire, and the
+  neon, flare and spotlight cells drawn after it are A's byte for byte; with
+  every RGBA16F allocation failing over 40 one-second frames, the format is
+  tried exactly 5 times (0, 2, 6, 14, 30 s) and ends waiting 32 s. With
+  `IsBelowBestRow` forced false the passing run's neon cell differs from A's
+  and the case fails.
+
+**After an architecture review of that change, the same day.** Two of its
+sites had no gate: disabling the coverage tables' `IsBelowBestRow` checks left
+`formats` passing, since D8 failed only RGBA16F and its `arcs` coverage table
+is RG16F. D8's passing shortage now runs six ways - RGBA16F on `arcs`,
+`segments`, the flare and the spotlight (the four-channel coverage table too);
+RG16F on `arcs` (the two-channel coverage table); RG16F on `segments` (the
+segment table); RGBA16F from the viewport's size on `arcs` (the shared buffer
+alone) and on the flare alone; RGBA16F at two attachments on `segments` (the
+gather alone) - and each must leave the cells drawn after the expiry A's, byte
+for byte, having drawn in the 8-bit row meanwhile. The last three exist because
+disabling each site in turn showed the first way hid three of them: the
+emission table's move re-runs pass 1b and the gather anyway (its version is in
+the gather's key), and its neon cells switch the flare off, which gives its
+buffer back. The RG16F-on-`arcs`
+way found a defect the first two ways could not: the edge ring's field, baked
+from the 8-bit table, was still composited after the table moved up and was
+re-baked, because a field is invalidated by config changes and nothing else,
+and a buffer moving rows is not one. A field now records the formats its bake
+read its inputs in (`FieldInputFormats`: the emission, coverage and segment
+tables and the gather buffer) and is composited only while they hold
+(`LazyBake::DropIfInputsMoved`, checked once the gather has run, so a gather
+that moved rows in this very frame counts); otherwise the frame shades
+directly and the next one bakes. That covers a buffer moving down, too.
+Disabling any one of the seven checks - the emission table's, the gather
+cache's, the reused frame's, the flare cache's, the two coverage tables' and
+the fields' - fails `formats`. The review's other findings - each buffer's format policy
+spread across five places (one type owning a buffer and its list would close
+earlier item 5 too), the five verification setters standing in for a seam,
+the gate's reliance on log wording - are open, and the host-visible changes
+are now section 8 of [`upgrade-notes.md`](../guides/upgrade-notes.md).
+
+Also from the code review: `ResizeInBestFormat` now releases the buffer on an
+invalid size, as its return promises; and `formats` scans the live textures up
+to the highest name `glGenTextures` returned (`DrawTargetWatch`) rather than a
+fixed 16384, and counts an error the scan raises.
+
+Verified on the Apple M2 Pro: `formats` (every case's output unchanged but the
+new D8), `check`, `shared-buffer`, `partition`, `clock`, `flare-reuse` and
+`sequence` pass. Not run on the AMD 5300M or the device. Still open from that
+review: a failure other than out of memory is kept at every size, for good,
+which is right only if the driver reports a shortage as `GL_OUT_OF_MEMORY` -
+read step 6's log for "target unavailable ... (GL_FRAMEBUFFER_...)".
