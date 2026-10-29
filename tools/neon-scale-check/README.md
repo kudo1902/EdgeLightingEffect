@@ -514,7 +514,7 @@ allocates with no data starts out 0x3C in every byte (`DrawTargetWatch`
 wraps `glTexImage2D`): the GL leaves those texels undefined - a device's may
 hold another buffer's old contents - and a desktop GL hands back zeros, so
 without it a buffer that reads a texel it never cleared or drew would pass on
-every Mac. Every case passes with it, so no buffer the gate reaches does. About 15 s; exits non-zero on any failure.
+every Mac. Every case passes with it, so no buffer the gate reaches does. About 70 s on an M2 Pro; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

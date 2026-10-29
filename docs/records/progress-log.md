@@ -55,7 +55,18 @@ the detail is at the end of section 10 of
     buffer to stay RGBA16F; and a new check fails the shared buffer's retry
     again and compares its frame and every texel (read back) with a run
     whose failure is held. `ReadSharedTexels` is shared with `sequence`.
-- **Measured.** PENDING
+- **Measured.** Apple M2 Pro. With every fresh texture filled, every
+  earlier `formats` case passes unchanged - no buffer the gate reaches reads
+  a texel it never wrote. Each fix reverted alone fails `formats`: the
+  shared buffer's whole clear (the failed-retry check: 86,400 texels never
+  written, the frame different; with the fill off too it passes, so the fill
+  is what shows it on a Mac), the reused frame's gather check and the gather
+  cache's (the 1/16 way, both - at 0.5 the way caught only the cache's), and
+  the drop marking the schedule settled (the RG16F ways' waiting cell, a
+  level off for one more frame). `formats` (66 s - not the ~15 s the docs
+  said, for all the cases added since), `check`, `shared-buffer`,
+  `partition`, `clock`, `flare-reuse` and `sequence` pass. Not run on the AMD
+  5300M or the device.
 - **Open.** As in the entry below. And a trade-off rather than a defect: a retry destroys
   the buffer that fell back before it tries the better format (`Resize`
   frees the old allocation first). That gives the retry the most memory to

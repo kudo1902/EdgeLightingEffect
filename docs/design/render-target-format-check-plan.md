@@ -1263,4 +1263,15 @@ whole buffer, so every write clears it all - fails the shared buffer's retry
 again and compares its frame and every texel, read back, with a run whose
 failure is held for the run.
 
-PENDING-VERIFIED
+Verified on the Apple M2 Pro: with the fill, every earlier `formats` case
+passes unchanged; each fix reverted alone fails `formats` - the whole clear
+(86,400 of the 230,400 texels never written, the frame different; with the
+fill off too, the check passes), the reused frame's and the gather cache's
+gather checks (both caught by the 1/16 way), the drop marking the schedule
+settled - and `formats`, `check`, `shared-buffer`, `partition`, `clock`,
+`flare-reuse` and `sequence` pass. Not run on the AMD 5300M or the device.
+Left as a trade-off rather than changed: a retry destroys the buffer that fell
+back before it tries the better format (`Resize` frees the old allocation
+first), which gives the retry the most memory, but if the fallback's own
+allocation then fails too, the layer loses its buffer until the next wait
+ends.
