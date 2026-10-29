@@ -1275,3 +1275,18 @@ back before it tries the better format (`Resize` frees the old allocation
 first), which gives the retry the most memory, but if the fallback's own
 allocation then fails too, the layer loses its buffer until the next wait
 ends.
+
+**After a third review, the same day: the gates that read the shared buffer.**
+No library defect; `formats` passes under ASan and UBSan. But the failed-retry
+check proved something only where the glow's window leaves texels outside it,
+and nothing checked that; and `sequence` and `shared-buffer` compared
+shared-buffer texels without the fill, so a texel nobody wrote read 0 in every
+run alike. `SharedBuffer::GetLastWriteWindow` now says where the last write
+drew; the failed-retry check and every `shared-buffer` cell require each texel
+outside it to be 0, and some to lie outside it; and both modes install the
+fill (`DrawTargetWatch::InstallFreshTextureFill`). With the whole clear after
+a reallocation removed, `shared-buffer` fails nearly every cell and
+`sequence` 338 frames of 6 sequences - each only with the fill. One measured
+correction to the reasoning above: the blit reads two texels past the window
+on `small_rect` at 0.5, so an uncleared texel does show in the frame there,
+at the window's edge.

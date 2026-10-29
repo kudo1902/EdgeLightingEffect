@@ -336,14 +336,16 @@ namespace NeonScaleCheck
                     const bool moved = probe->Last().version != seen.version;
                     bool bad = stale != 0;
                     char held = stale != 0 ? 's' : ' ';
+                    // One mark per cell: `s` wins, the failure the others
+                    // would hide.
                     if (variant.hueRotationRate == 0.0f && moved)
                     {
-                        held = 'v';
+                        held = held == 's' ? 's' : 'v';
                         bad = true;
                     }
                     else if (variant.hueRotationRate != 0.0f && moved)
                     {
-                        held = 'f';
+                        held = held == 's' ? 's' : 'f';
                         ++fieldCells;
                     }
 

@@ -5,6 +5,49 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-29 - The gates that read the shared buffer, hardened (I93)
+
+Mostly committed as `e1c5724`; the rest (the `shared-buffer` table's marks,
+these notes) on top of it. From a third review of the branch, which
+found no library defect (`formats` also passes under ASan and UBSan) but two
+gate checks that could pass without testing anything.
+
+- **The problems.**
+  - `formats`' failed-retry check catches an incomplete clear only where the
+    glow's window leaves texels outside it, and nothing checked that it did:
+    its first version, on `arcs`, passed with the defect in place.
+  - Only `formats` filled fresh textures, but `sequence` and `shared-buffer`
+    compare shared-buffer texels too - and on a Mac a texel nobody wrote reads
+    0 in every run alike. Measured with `BeginWrite`'s whole clear after a
+    reallocation removed: `sequence` caught it only with the fill;
+    `shared-buffer` passed even with it, since no check of its looked outside
+    the window.
+- **What changed.**
+  - `SharedBuffer::GetLastWriteWindow` (read-only; the whole buffer while it
+    is not known) says where the last write drew - every texel outside it is
+    0, which is what the windowed clear rests on.
+  - `formats`' failed-retry check requires every texel outside the window to
+    be 0, in both runs, and some to lie outside it, or fails as proving
+    nothing; `shared-buffer` requires the same in every cell (marked `s`),
+    each of which reallocates the buffer, and at least one cell to leave
+    texels outside. One counter for both (`CountNonZeroOutsideWindow`).
+  - `DrawTargetWatch::InstallFreshTextureFill`, the fill alone, installed by
+    `sequence` and `shared-buffer`.
+  - `.gitignore` ignores every `build*/` directory, not only `build/`.
+- **Measured.** Apple M2 Pro. With the whole clear after a reallocation
+  removed: `shared-buffer` fails nearly every cell with the fill and passes
+  without it; `sequence --sequences 6` fails 338 frames with the fill and
+  passes without it. With the failed-retry check moved back to `arcs`, it
+  fails as proving nothing. With `BeginWrite`'s old size-and-format test put
+  back, the frame differs from a run that never retried in a 4 px column at
+  the window's left edge, at 60 levels - the fill - so the blit reads two
+  texels past the window there: the README's "the blit reads only where the
+  write drew" was wrong, and a frame does show an uncleared texel there. On
+  the final tree `check`, `shared-buffer` (70 cells leave texels outside the
+  window, none of them non-zero), `formats` and `sequence` pass; the other
+  gates read nothing that changed. Not run on the AMD 5300M or the device.
+- **Open.** As in the entries below.
+
 ## 2026-10-29 - Three defects in the expiry, fixed (I93)
 
 Not committed; on top of `20b9e4e`. From a second code review of the branch;

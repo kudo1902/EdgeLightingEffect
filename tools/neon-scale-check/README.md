@@ -167,8 +167,8 @@ when:
   starts out 0x3C in every byte (`DrawTargetWatch::InstallFreshTextureFill`):
   a reallocation not cleared whole leaves that there, where the zeros a
   desktop GL hands back would pass. With `BeginWrite`'s whole clear after a
-  reallocation removed, this mode passed until this check was added, fill or
-  no fill;
+  reallocation removed, this mode passed before this check, fill or no fill;
+  with it, it fails nearly every cell - with the fill, and only with it;
 - after a rect that moves and shrinks at one scale, the buffer differs by a
   single texel from the moved rect's drawn on a fresh effect. Both on effects
   whose hue rate never moved: the hue's phase is the rate integrated over the

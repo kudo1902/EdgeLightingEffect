@@ -127,7 +127,9 @@ namespace NeonScaleCheck
     ///     `small_rect`, the shared buffer is not tried exactly twice - its
     ///     first allocation and its retry - or the frame after it, or any
     ///     texel of the shared buffer (read back), differs from a run whose
-    ///     failure is held, or a texel still holds DrawTargetWatch's fill;
+    ///     failure is held, or a texel outside its last write's window
+    ///     (SharedBuffer::GetLastWriteWindow) is not 0, or none lies outside
+    ///     it - then the check proves nothing;
     ///     and with every RGBA16F allocation failing over 40
     ///     frames 1 s apart, it is not tried exactly 5 times (0, 2, 6, 14,
     ///     30 s: one retry per expiry, each doubling the wait) or does not end
