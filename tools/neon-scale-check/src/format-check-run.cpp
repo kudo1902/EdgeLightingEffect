@@ -266,6 +266,36 @@ namespace NeonScaleCheck
             return at == std::string::npos ? line : line.substr(at + 2);
         }
 
+        /// The run's reader of the neon's shared buffer: what SharedBufferProbe
+        /// records, plus the texels of the Render after @ref ReadNext - read
+        /// there, while the buffer is still that frame's.
+        class TexelProbe : public SharedBufferProbe
+        {
+        public:
+            /// Read the texels in the next Render that is handed a ready buffer.
+            void ReadNext() { mReadNext = true; }
+            /// What that Render read, handed over; empty if it was not ready.
+            std::vector<float> TakeTexels()
+            {
+                mReadNext = false;
+                return std::move(mTexels);
+            }
+
+        protected:
+            void OnReady(const SharedBuffer &buffer) override
+            {
+                if (mReadNext)
+                {
+                    mTexels = ReadSharedTexels(buffer);
+                    mReadNext = false;
+                }
+            }
+
+        private:
+            bool mReadNext = false;
+            std::vector<float> mTexels;
+        };
+
         RunResult Run(const Hooks &hooks, bool bypassFields, const std::vector<Cell> &cells)
         {
             RunResult result;
@@ -288,7 +318,7 @@ namespace NeonScaleCheck
                     neon->SetBypass(static_cast<uint32_t>(NeonBypass::GLOW_FIELD) |
                                     static_cast<uint32_t>(NeonBypass::RING_FIELD));
                 }
-                const std::shared_ptr<SharedBufferProbe> probe = std::make_shared<SharedBufferProbe>();
+                const std::shared_ptr<TexelProbe> probe = std::make_shared<TexelProbe>();
                 effect.AddRenderer(neon);
                 effect.AddRenderer(RendererLayer::LENS_FLARE);
                 effect.AddRenderer(RendererLayer::SPOTLIGHT);
@@ -319,6 +349,10 @@ namespace NeonScaleCheck
                             std::fprintf(stderr, "neon-scale-check: the capture target failed\n");
                             std::exit(2);
                         }
+                        if (cell.readShared && f + 1 == frames)
+                        {
+                            probe->ReadNext();
+                        }
                         DrawTargetWatch::Begin();
                         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
                         glClear(GL_COLOR_BUFFER_BIT);
@@ -329,6 +363,7 @@ namespace NeonScaleCheck
                             CaptureUtil::Image image;
                             capture.Read(image);
                             result.frames.push_back(image.pixels);
+                            result.sharedTexels.push_back(probe->TakeTexels());
                         }
                         capture.End();
                         bool error = false;

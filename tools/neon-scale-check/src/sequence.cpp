@@ -644,24 +644,7 @@ namespace NeonScaleCheck
             const std::vector<float> &GetData() const { return mData; }
 
         protected:
-            void OnReady(const SharedBuffer &buffer) override
-            {
-                const glm::ivec2 texels = buffer.GetTexels();
-                mData.assign(size_t(texels.x) * size_t(texels.y) * 4, 0.0f);
-                GLint previous = 0;
-                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
-                GLuint fbo = 0;
-                glGenFramebuffers(1, &fbo);
-                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, buffer.GetTextureId(), 0);
-                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
-                {
-                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                    glReadPixels(0, 0, texels.x, texels.y, GL_RGBA, GL_FLOAT, mData.data());
-                }
-                glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
-                glDeleteFramebuffers(1, &fbo);
-            }
+            void OnReady(const SharedBuffer &buffer) override { mData = ReadSharedTexels(buffer); }
             void OnNotReady() override { mData.clear(); }
 
         private:

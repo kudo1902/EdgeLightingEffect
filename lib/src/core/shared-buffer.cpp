@@ -13,11 +13,13 @@ namespace EdgeLighting
 
     bool SharedBuffer::BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, RenderTargetFormats &targets)
     {
-        // What the buffer is before the resize: a reallocation leaves its
-        // texels undefined, so the clear below has to be whole.
-        const bool wasValid = mBuffer.IsValid();
-        const glm::ivec2 wasSize = GetTexels();
-        const GLint wasFormat = mBuffer.GetInternalFormat();
+        // How many allocations the buffer had made before the walk: any it
+        // makes leaves the texels undefined, so the clear below has to be
+        // whole. Counted, not read off the size and format: a retry of a
+        // better format that fails destroys the buffer, and the walk then
+        // allocates the format it had at the size it had - a fresh texture
+        // that looks like the old one, often under the same name.
+        const uint32_t allocationsBefore = mBuffer.GetAllocationCount();
 
         // The format walk (ResizeInBestFormat) starts at the best format this
         // context may render at this size - the probe's verdicts and every
@@ -36,7 +38,7 @@ namespace EdgeLighting
             mReady = false;
             return false;
         }
-        if (!wasValid || wasSize != GetTexels() || wasFormat != mBuffer.GetInternalFormat())
+        if (mBuffer.GetAllocationCount() != allocationsBefore)
         {
             mDirtyKnown = false;
         }

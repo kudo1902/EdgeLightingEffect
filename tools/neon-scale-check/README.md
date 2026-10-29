@@ -442,10 +442,11 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     passes, and out of memory that lasts. Passing, six ways: only the
     first allocation of one format fails (`ForcedFailure::count`); the cells
     are drawn, then a cell passes 3 s of frame time and lets the failure
-    expire, then the cells are drawn again, and each of those must match A's
-    byte for byte - every buffer moved back up (`IsBelowBestRow`), those a
-    still frame reuses included - with something drawn in the 8-bit row
-    meanwhile and the failure cleared, logged once.
+    expire, then the cells are drawn again, and the waiting cell's last
+    frame - the one after the buffers move back up - and each of those must
+    match A's byte for byte - every buffer moved back up (`IsBelowBestRow`),
+    those a still frame reuses included - with something drawn in the 8-bit
+    row meanwhile and the failure cleared, logged once.
     - RGBA16F, on `arcs`, `segments`, the flare and the spotlight: the
       emission table takes the failure, in `Initialize`, so the shared
       buffer (seen as RGBA8 and then RGBA16F), the gather, the four-channel
@@ -460,32 +461,60 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     - The same on the flare alone, on throughout: in the first way the neon
       cells switch it off, which gives its buffer back and hides its cache's
       check.
-    - RGBA16F at two attachments on `segments`: only the gather has two. In
-      the first way the emission table's move changes the gather's inputs
-      and re-runs it, which hides the gather cache's check.
+    - RGBA16F at two attachments on `segments` at scale 1/16: only the
+      gather has two, and at that scale its buffer - rounded up to whole
+      `REGION_ALLOC_STEP`s, with a footprint - outgrows the shared buffer
+      (96 x 64 x 2 texels against 80 x 45), so the gather falls alone, and
+      the shared buffer must stay RGBA16F throughout. At 0.5 the shared
+      buffer fell with it and its move re-ran the gather, which hid that a
+      reused still frame never asked about the gather; in the first way the
+      emission table's move re-runs the gather too.
+
+    A failed retry, on `small_rect`: every RGBA16F allocation from the
+    viewport's size fails, so once the failure expires the shared buffer's
+    retry runs out again, and the walk allocates RGBA8 again at the same
+    size - a fresh texture that looks like the old one. It must be tried
+    exactly twice, the frame after it and every texel of the shared buffer
+    (read back) must match a run whose failure is held for the run, which
+    never retries, and no texel may still hold the gate's fill. `small_rect`
+    because its glow leaves most of the buffer outside the window a write
+    clears; a 640 x 360 rect's glow covers all of it. With `BeginWrite`'s
+    whole clear after an allocation reverted, 86,400 of the 230,400 texels
+    were never written and the frame differed too; with the fill off as
+    well, the check passed.
 
     Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
     be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,
-    each doubling the wait) and end waiting 32 s until 62 s. Each of the seven
-    checks that move a buffer back up - the emission table's, the gather
-    cache's, the reused frame's (the shared buffer), the flare cache's, the
-    two coverage tables' and the fields' input check - was disabled in turn,
-    and the case failed every time; the last three ways exist because the
-    first three did not catch the shared buffer's, the flare's and the
-    gather's. The fields' check came from the second way, which failed before
-    it existed: the edge ring's field, baked from the 8-bit coverage table,
-    was still composited after the table moved up
-    (`LazyBake::DropIfInputsMoved`).
+    each doubling the wait) and end waiting 32 s until 62 s.
+
+    Each check the library makes for a passing shortage was disabled in turn,
+    and the case failed every time: the eight that move a buffer back up -
+    the emission table's, the gather cache's, the reused frame's two (the
+    shared buffer and, since 2026-10-29, the gather), the flare cache's, the
+    two coverage tables' and the fields' input check - plus a dropped field
+    baking again on the next frame and the shared buffer's whole clear after
+    an allocation. The viewport-sized and flare ways exist because the first
+    way did not catch the shared buffer's and the flare's; the gather way
+    runs at 1/16 because at 0.5 the shared buffer fell with the gather and
+    hid the reused frame's missing gather check. The fields' check came from
+    the second way, which failed before it existed: the edge ring's field,
+    baked from the 8-bit coverage table, was still composited after the table
+    moved up (`LazyBake::DropIfInputsMoved`).
   - **S**: the neon, the flare and the spotlight drawn outside an effect,
     each making its own `RenderTargetFormats`: five probes by the end of
     `Initialize` and none after, no GL error, and every frame byte for byte
     A's for the same cell.
 
 Every run must make exactly the report's probes less the formats a hook
-answers (5 for A, D, D2, D3, D4, both D7 runs, D5, D6 failing and both D8
-runs, 3 for D6 refused, 2 for B and E, 0 for C) and leave no GL error - the
+answers (5 for A, D, D2, D3, D4, both D7 runs, D5, D6 failing and every D8
+run, 3 for D6 refused, 2 for B and E, 0 for C) and leave no GL error - the
 scan of the textures alive at the end included, which looks up to the highest
-name `glGenTextures` returned (`DrawTargetWatch`). About 15 s; exits non-zero on any failure.
+name `glGenTextures` returned (`DrawTargetWatch`). Every texture a run
+allocates with no data starts out 0x3C in every byte (`DrawTargetWatch`
+wraps `glTexImage2D`): the GL leaves those texels undefined - a device's may
+hold another buffer's old contents - and a desktop GL hands back zeros, so
+without it a buffer that reads a texel it never cleared or drew would pass on
+every Mac. Every case passes with it, so no buffer the gate reaches does. About 15 s; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

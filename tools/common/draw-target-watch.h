@@ -15,9 +15,14 @@
 // channel, colour encoding), so it binds nothing, raises no GL error, and
 // sees a renderbuffer or a texture of any target alike. It wraps
 // glGenTextures the same way, only to keep the highest name made, so a scan
-// of the live textures knows where to stop. It chains to whatever the
-// pointers held when it was installed, so it can sit beside PassRecorder.
-// Static library only: the C ABI dylib carries its own glad.
+// of the live textures knows where to stop. And glTexImage2D: a texture
+// allocated with no data - every buffer the library allocates - starts out
+// 0x3C in every byte instead of whatever the driver hands back, which on a
+// desktop GL is zeros. The GL leaves those texels undefined, and a device's
+// may be another buffer's old contents; filled, a buffer that reads a texel
+// it never cleared or drew reads a value a run can see, on any GPU. It chains
+// to whatever the pointers held when it was installed, so it can sit beside
+// PassRecorder. Static library only: the C ABI dylib carries its own glad.
 
 #include "gl/gl-header.h"
 
@@ -28,9 +33,10 @@ namespace NeonTools
     class DrawTargetWatch
     {
     public:
-        /// Put the wrappers in front of glad_glDrawArrays and
-        /// glad_glGenTextures. Call once, after gladLoadGLLoader - loading GL
-        /// again replaces the pointers.
+        /// Put the wrappers in front of glad_glDrawArrays, glad_glGenTextures
+        /// and glad_glTexImage2D - from here on every texture allocated with
+        /// no data starts out filled (see above). Call once, after
+        /// gladLoadGLLoader - loading GL again replaces the pointers.
         static void Install();
 
         /// Watch every draw until @ref End. The framebuffer bound for drawing

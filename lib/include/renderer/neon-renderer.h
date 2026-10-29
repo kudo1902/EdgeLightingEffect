@@ -887,16 +887,21 @@ namespace EdgeLighting
 
             /// Whether a field held from an earlier frame may be composited
             /// over inputs in @p frameFormats: drop it - shade directly this
-            /// frame, bake again on the next, the config having held - when an
-            /// input moved rows since its bake. Call once the gather has run
-            /// or been skipped, before the composite; @p decision is this
-            /// frame's, and a frame that bakes reads @p frameFormats anyway.
+            /// frame, bake again on the next - when an input moved rows since
+            /// its bake. The config has held, so the next frame is
+            /// @c settled: a field used straight after its first-frame bake
+            /// never set that, and without it the next frame would shade
+            /// directly too, waiting out a config change there was none of.
+            /// Call once the gather has run or been skipped, before the
+            /// composite; @p decision is this frame's, and a frame that bakes
+            /// reads @p frameFormats anyway.
             void DropIfInputsMoved(Decision &decision, const FieldInputFormats &frameFormats)
             {
                 if (decision.use && !decision.bake && frameFormats != inputFormats)
                 {
                     decision.use = false;
                     current = false;
+                    settled = true;
                 }
             }
         } LazyBake;

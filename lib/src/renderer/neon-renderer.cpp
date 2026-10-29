@@ -2384,13 +2384,21 @@ namespace EdgeLighting
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
-        // either. Nor when the shared buffer fell back past a format it may
-        // have again (an out-of-memory failure that expired): pass 1b's walk
-        // moves it back up, or a still frame would keep it at 8 bits.
-        const bool reuseOffscreen = glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) &&
-                                    !emissionStale &&
-                                    !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight) &&
-                                    !mScaled->IsBelowBestFormat(GetRenderTargetFormats());
+        // either. Nor when either buffer fell back past a format it may have
+        // again (an out-of-memory failure that expired): the walks of passes
+        // 1a and 1b move them back up, or a still frame would keep them at 8
+        // bits. Both, each for itself: the gather's failure need not reach
+        // the shared buffer, whose move would re-run the gather too. At a
+        // scale at or below GATHER_MIN_SCALE the gather runs at the reduced
+        // buffer's own scale, so on a rect near the viewport's size its
+        // region - rounded up to whole REGION_ALLOC_STEPs, with a footprint,
+        // two attachments with segments - is the larger allocation (96 x 64
+        // x 2 texels against 80 x 45 at 0.0625 and 720p).
+        const bool reuseOffscreen =
+            glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) && !emissionStale &&
+            !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight) &&
+            !mScaled->IsBelowBestFormat(GetRenderTargetFormats()) &&
+            !IsBelowBestRow(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS, std::size(GATHER_FORMATS));
         // The shading factored into the hue-invariant field (1f) and its
         // composite (1c), in pass 1b's place where the config allows it, on
         // LazyBake's schedule. A frame that reuses its offscreen buffers has
@@ -2517,7 +2525,8 @@ namespace EdgeLighting
             const GatherInputs gatherInputs = getGatherInputs(config, viewportWidth, viewportHeight);
             // Nor a buffer that fell back past a format it may have again (an
             // out-of-memory failure that expired): the pass's walk moves it
-            // back up.
+            // back up. reuseOffscreen asks the same, since it skips this pass
+            // whatever this says.
             const bool gatherCurrent = !bypasses(NeonBypass::GATHER) && mGather.cache.drawn &&
                                        mGather.buffer.IsValid() &&
                                        gatherInputs == mGather.cache.inputs &&

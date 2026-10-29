@@ -5,9 +5,66 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-29 - Three defects in the expiry, fixed (I93)
+
+Not committed; on top of `20b9e4e`. From a second code review of the branch;
+the detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problems.** Each confirmed by a probe against `20b9e4e` before it was
+  fixed.
+  - A retry that ran out of memory again left the shared buffer's texels
+    undefined outside the glow's window. `BeginWrite` told a reallocation by
+    its size and format, but a failed retry destroys the buffer and the walk
+    allocates the format it had at the size it had: a fresh texture, cleared
+    only over the glow quad's window and the last write's, and never whole
+    after, since every later write clears windows. The probe saw the buffer
+    released, sized again to the same 256 x 128, and an 8 x 8 clear - and
+    the texture name came back the same, so no name check could tell either.
+    The shared buffer is the largest buffer, so the one a lasting shortage
+    hits and whose retries keep failing; any reader of it (the debug inset, a
+    host layer) saw what the driver handed back, and so did the neon's own
+    frame - with the fix reverted, the gate's check below finds 86,400 of the
+    buffer's 230,400 texels never written on `small_rect` at 0.5, and the
+    frame differing from a run that never retried.
+  - A reused still frame asked only the shared buffer whether it was below
+    its best format, so a gather that fell back alone stayed in RGBA8 until
+    the config changed. The gather's failure normally reaches the shared
+    buffer, the larger allocation, whose move re-runs the gather - which is
+    what hid this, from D8 too. At a scale at or below `GATHER_MIN_SCALE` on
+    a rect near the viewport, the gather's buffer outgrows the shared one
+    (96 x 64 x 2 texels against 80 x 45 at 0.0625 and 720p): every still frame
+    after the expiry was 124k channels up to 2 levels off.
+  - Found while checking the second: a field dropped for an input that moved
+    rows (`LazyBake::DropIfInputsMoved`) shaded directly for two frames, not
+    the one its comment promised - a field used straight after its
+    first-frame bake was never marked settled, so the frame after the drop
+    waited out a config change there was none of.
+- **What changed.**
+  - `Framebuffer::GetAllocationCount`, moved by every allocation (never by
+    the early-out) and by a move into it; `BeginWrite` clears the whole
+    buffer whenever it moved.
+  - The reused offscreen frame asks about the gather too.
+  - `DropIfInputsMoved` marks the schedule settled, so the next frame bakes.
+  - Gate: `DrawTargetWatch` fills every texture allocated with no data with
+    0x3C - the GL leaves those texels undefined, and a desktop GL hands back
+    zeros, which hid any buffer reading a texel it never wrote. Every
+    `formats` case passes with it unchanged. D8 compares the waiting cell's
+    last frame - the one after the move - with A's too; its gather way runs
+    at scale 1/16, where the gather falls alone, and requires the shared
+    buffer to stay RGBA16F; and a new check fails the shared buffer's retry
+    again and compares its frame and every texel (read back) with a run
+    whose failure is held. `ReadSharedTexels` is shared with `sequence`.
+- **Measured.** PENDING
+- **Open.** As in the entry below. And a trade-off rather than a defect: a retry destroys
+  the buffer that fell back before it tries the better format (`Resize`
+  frees the old allocation first). That gives the retry the most memory to
+  work with, but if the fallback's own allocation then fails too, the layer
+  loses its buffer until the next wait ends - the neon draws only the fill.
+
 ## 2026-10-28 - An out-of-memory failure expires (I93)
 
-Not committed; on top of `5be9a9b`. From a code review of the branch; the
+Committed as `20b9e4e`, on top of `5be9a9b`. From a code review of the branch; the
 detail is at the end of section 10 of
 [`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
 

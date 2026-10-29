@@ -113,14 +113,21 @@ namespace NeonScaleCheck
     ///     the spotlight), RG16F on `arcs` (the coverage table's), RG16F on
     ///     `segments` (the segment table's), RGBA16F from the viewport's size
     ///     on `arcs` (the shared buffer's) and on the flare (its buffer's),
-    ///     and RGBA16F at two attachments on `segments` (the gather's) - a
-    ///     cell drawn after 3 s of
-    ///     frame time differs by a byte from A's (every buffer must move back
-    ///     up once the out-of-memory failure expires, those a still frame
-    ///     reuses included, and a field baked from a buffer's 8-bit row must
-    ///     not be composited after it), nothing was drawn in the 8-bit row
-    ///     meanwhile, the shared buffer is not seen as RGBA8 and then RGBA16F
-    ///     (RGBA16F), the failure is not cleared or that is not logged once;
+    ///     and RGBA16F at two attachments on `segments` at scale 1/16 (the
+    ///     gather's, which falls alone there) - the frame after the 3 s of
+    ///     frame time that let it expire, or a cell drawn after it, differs
+    ///     by a byte from A's (every buffer must move back up, those a still
+    ///     frame reuses included, and a field baked from a buffer's 8-bit row
+    ///     must not be composited after it - and is baked again on the next
+    ///     frame), nothing was drawn in the 8-bit row meanwhile, the shared
+    ///     buffer is not seen as RGBA8 and then RGBA16F (the RGBA16F and
+    ///     viewport-sized ways) or leaves RGBA16F (the RG16F and gather
+    ///     ways), the failure is not cleared or that is not logged once;
+    ///     with every RGBA16F allocation from the viewport's size failing on
+    ///     `small_rect`, the shared buffer is not tried exactly twice - its
+    ///     first allocation and its retry - or the frame after it, or any
+    ///     texel of the shared buffer (read back), differs from a run whose
+    ///     failure is held, or a texel still holds DrawTargetWatch's fill;
     ///     and with every RGBA16F allocation failing over 40
     ///     frames 1 s apart, it is not tried exactly 5 times (0, 2, 6, 14,
     ///     30 s: one retry per expiry, each doubling the wait) or does not end

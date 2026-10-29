@@ -64,6 +64,10 @@ namespace NeonScaleCheck
             /// out-of-memory failure expires by; negative for its variant's
             /// (0 still, 1/60 moving).
             float deltaTime = -1.0f;
+            /// Read the neon's shared buffer back on its last frame
+            /// (RunResult::sharedTexels) - every texel, outside the glow's
+            /// window too, which no frame shows.
+            bool readShared = false;
         } Cell;
 
         /// What a run's RenderTargetFormats is told, through its verification
@@ -81,6 +85,10 @@ namespace NeonScaleCheck
         typedef struct RunResult
         {
             std::vector<RGBA> frames;             ///< Each cell's last frame, over transparent black.
+            /// Per cell, the shared buffer's texels on its last frame (RGBA
+            /// floats, bottom row first) - for a cell with readShared whose
+            /// buffer was ready; empty otherwise.
+            std::vector<std::vector<float>> sharedTexels;
             bool neonPresent = false;             ///< The neon survived Initialize.
             size_t probes = 0;                    ///< RenderTargetFormats::GetAnswers().size() at the end.
             std::vector<RenderTargetFormats::FailedAllocation> failedAllocations; ///< What it kept at the end.

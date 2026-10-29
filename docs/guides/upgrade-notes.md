@@ -337,13 +337,18 @@ both Macs - no pixel moves. What a host can see:
   parameter, `GLenum *failure`, saying why it failed; it fails on any GL error
   its allocation raises, not only on an incomplete framebuffer; and it unbinds
   the pixel-unpack buffer around its upload and puts it back. A host that uses
-  the wrapper compiles unchanged. `IsColorRenderable` is new.
+  the wrapper compiles unchanged. `IsColorRenderable` is new, and so is
+  `GetAllocationCount`, which moves on every allocation: compare it, not the
+  size or format, to know a buffer's contents were replaced.
 - **A host's own renderer** compiles unchanged. `BaseRenderer` gains private
   members and two protected methods, `GetRenderTargetFormats` and
   `AdvanceOwnRenderTargetFormats`, so rebuild it with the library. A host
   renderer with a buffer in a format a driver may refuse can allocate it
   through `ResizeInBestFormat` (`core/render-target-formats.h`), as the
-  library's do.
+  library's do. Drawn outside an effect, such a renderer gets an object of its
+  own from `GetRenderTargetFormats`, whose out-of-memory failures expire only
+  if its `Update` calls `AdvanceOwnRenderTargetFormats(deltaTime)`, as the
+  library's renderers do.
 - **`EdgeLightingEffect::GetRenderTargetFormats()`** is public, for reading
   the answers (`GetAnswers`). Its setters (`SetRefusedFormats`,
   `SetFailedAllocations`, `SetUnknownFormats`, `SetMaxTextureSize`,

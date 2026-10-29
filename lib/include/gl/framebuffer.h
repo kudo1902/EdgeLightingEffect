@@ -3,6 +3,7 @@
 
 #include "gl/gl-header.h"
 #include "util/log-util.h"
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -60,6 +61,7 @@ namespace EdgeLighting
               mHeight(other.mHeight),
               mInternalFormat(other.mInternalFormat),
               mFilter(other.mFilter),
+              mAllocations(other.mAllocations),
               mName(std::move(other.mName))
         {
             for (int i = 0; i < MAX_COLOR_ATTACHMENTS; ++i)
@@ -89,6 +91,9 @@ namespace EdgeLighting
                 mHeight = other.mHeight;
                 mInternalFormat = other.mInternalFormat;
                 mFilter = other.mFilter;
+                // What this object holds was replaced: an allocation, as far
+                // as anyone comparing the count can tell.
+                mAllocations = other.mAllocations + mAllocations + 1;
                 mName = std::move(other.mName);
                 other.mFbo = 0;
                 other.mAttachmentCount = 1;
@@ -319,6 +324,7 @@ namespace EdgeLighting
             mInternalFormat = internalFormat;
             mFilter = filter;
             mAttachmentCount = colorAttachments;
+            ++mAllocations;
             LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u, attachments=%d).",
                   mName.c_str(), mWidth, mHeight, mFbo, mTextures[0], mAttachmentCount);
             return true;
@@ -632,6 +638,15 @@ namespace EdgeLighting
         /// How many colour attachments the current allocation has: 1 unless a
         /// @ref Resize asked for more, and 1 again after @ref Release.
         int GetAttachmentCount() const { return mAttachmentCount; }
+        /// How many allocations this object has made: moved by every
+        /// @ref Resize that allocates (never by its early-out) and by a move
+        /// into it, so a caller that compares it before and after a call knows
+        /// whether the texels it holds were replaced - undefined, whatever
+        /// they held before. Size, format and texture name cannot tell: a
+        /// failed allocation destroys the attachment, so a fallback that
+        /// allocates the same size and format again is a fresh texture, and GL
+        /// may hand back the name it just deleted. Compared only for equality.
+        uint32_t GetAllocationCount() const { return mAllocations; }
         const char *GetName() const { return mName.c_str(); }
         void SetName(const char *name) { mName = name ? name : "unnamed"; }
 
@@ -666,6 +681,7 @@ namespace EdgeLighting
         int mHeight = 0;
         GLint mInternalFormat = GL_RGBA8; ///< Tracked so a format change forces a realloc.
         GLint mFilter = GL_LINEAR;        ///< Tracked for the same reason.
+        uint32_t mAllocations = 0;        ///< See @ref GetAllocationCount.
         std::string mName = "unnamed";
     };
 

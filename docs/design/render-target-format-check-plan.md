@@ -1215,3 +1215,52 @@ new D8), `check`, `shared-buffer`, `partition`, `clock`, `flare-reuse` and
 review: a failure other than out of memory is kept at every size, for good,
 which is right only if the driver reports a shortage as `GL_OUT_OF_MEMORY` -
 read step 6's log for "target unavailable ... (GL_FRAMEBUFFER_...)".
+
+**After a second code review, 2026-10-29: three defects in the expiry.** Each
+was confirmed by a probe against `20b9e4e` before it was fixed.
+
+- **A failed retry left the shared buffer undefined outside the glow's
+  window.** `SharedBuffer::BeginWrite` clears only this write's window and the
+  last write's, and the whole buffer only when its texels are undefined - which
+  it told by a change of size or format. A retry that runs out of memory again
+  destroys the buffer (`Resize` frees the old allocation first), and the walk
+  then allocates the format it had at the size it had: a fresh texture that
+  looks like the old one, and GL handed back the very same name. So the clear
+  stayed windowed, every other texel stayed whatever the driver gave, and every
+  later write kept them, clearing windows only. The shared buffer is the
+  largest buffer - the one a lasting shortage hits and whose retries keep
+  failing - and any reader of it saw those texels, the neon's own frame
+  included (reverted, the check below finds 86,400 of the buffer's 230,400
+  texels never written on `small_rect` at 0.5, and the frame differing from a
+  run that never retried). `Framebuffer::GetAllocationCount` now moves on every
+  allocation, and `BeginWrite` clears whole whenever it moved.
+- **A reused still frame never asked about the gather.** `reuseOffscreen`
+  skips passes 1a and 1b but asked only whether the shared buffer was below its
+  best format, so a gather that fell alone stayed in RGBA8 until the config
+  changed. Normally the gather's failure reaches the shared buffer - the larger
+  allocation, so blocked too - whose move re-runs the gather; that hid it, and
+  hid it from D8, whose gather way at 0.5 passed only because the shared buffer
+  fell with it. At a scale at or below `GATHER_MIN_SCALE` the gather runs at
+  the reduced buffer's own scale, and on a rect near the viewport its region -
+  rounded up to whole `REGION_ALLOC_STEP`s, with a footprint, two attachments
+  with segments - outgrows the shared buffer (96 x 64 x 2 texels against
+  80 x 45 at 0.0625 and 720p). The reused frame now asks about the gather too.
+- **A dropped field waited two frames to bake again.** A field used straight
+  after its first-frame bake was never marked `settled`, so after
+  `DropIfInputsMoved` the next frame took the "config just changed" row and
+  shaded directly again. The drop now marks it settled - the config held.
+
+The gate could see none of the three. A desktop GL hands back zeros for a
+texture allocated with no data, so the first was invisible on both Macs; the
+second needed a buffer to fall alone; the third cost one frame, and D8 compared
+only the cells drawn after the waiting one. Now `DrawTargetWatch` fills every
+texture allocated with no data with 0x3C in every byte - every `formats` case
+passes with it, so no buffer the gate reaches reads a texel it never wrote -
+D8's gather way runs at scale 1/16 and requires the shared buffer to stay
+RGBA16F, the waiting cell's last frame (the one after the move) must be A's
+too, and a new check, on `small_rect` - a 640 x 360 rect's glow covers the
+whole buffer, so every write clears it all - fails the shared buffer's retry
+again and compares its frame and every texel, read back, with a run whose
+failure is held for the run.
+
+PENDING-VERIFIED

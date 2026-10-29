@@ -1,6 +1,7 @@
 #include "draw-target-watch.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace NeonTools
 {
@@ -10,9 +11,16 @@ namespace NeonTools
         /// (the gather buffer with segments); Framebuffer allows three.
         const int WATCHED_ATTACHMENTS = 4;
 
+        /// Every byte of a texture allocated with no data: 60/255 in an 8-bit
+        /// channel, 1.06 in a half-float one, 0.0115 in a float one - finite,
+        /// and nothing a cleared or drawn texel holds by accident.
+        const unsigned char FRESH_TEXEL_BYTE = 0x3C;
+
         PFNGLDRAWARRAYSPROC gNextDrawArrays = nullptr;
         PFNGLGENTEXTURESPROC gNextGenTextures = nullptr;
+        PFNGLTEXIMAGE2DPROC gNextTexImage2D = nullptr;
         GLuint gHighestTexture = 0;
+        std::vector<unsigned char> gFreshTexels;
         bool gWatching = false;
         GLint gCallerFramebuffer = 0;
         std::map<GLint, long> gFormats;
@@ -108,6 +116,89 @@ namespace NeonTools
                 gHighestTexture = std::max(gHighestTexture, textures[i]);
             }
         }
+
+        /// Bytes per texel of a client upload in @p format and @p type; 0 for
+        /// a pair not listed - the library uploads no other.
+        size_t UploadTexelBytes(GLenum format, GLenum type)
+        {
+            size_t channels = 0;
+            switch (format)
+            {
+            case GL_RED:
+            {
+                channels = 1;
+                break;
+            }
+            case GL_RG:
+            {
+                channels = 2;
+                break;
+            }
+            case GL_RGB:
+            {
+                channels = 3;
+                break;
+            }
+            case GL_RGBA:
+            {
+                channels = 4;
+                break;
+            }
+            default:
+            {
+                return 0;
+            }
+            }
+            switch (type)
+            {
+            case GL_UNSIGNED_BYTE:
+            {
+                return channels;
+            }
+            case GL_HALF_FLOAT:
+            {
+                return channels * 2;
+            }
+            case GL_FLOAT:
+            {
+                return channels * 4;
+            }
+            default:
+            {
+                return 0;
+            }
+            }
+        }
+
+        /// An allocation with no data - every Framebuffer::Resize, every
+        /// format probe - is uploaded FRESH_TEXEL_BYTE throughout instead; any
+        /// other upload goes through untouched. Only reads state, so the
+        /// upload raises exactly what it would have.
+        void APIENTRY HookTexImage2D(GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height,
+                                     GLint border, GLenum format, GLenum type, const void *pixels)
+        {
+            const size_t texelBytes = UploadTexelBytes(format, type);
+            GLint unpackBuffer = 0;
+            glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+            if (pixels != nullptr || unpackBuffer != 0 || texelBytes == 0 || width <= 0 || height <= 0)
+            {
+                gNextTexImage2D(target, level, internalFormat, width, height, border, format, type, pixels);
+                return;
+            }
+            GLint alignment = 4;
+            GLint rowLength = 0;
+            glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+            glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
+            const size_t rowTexels = size_t(rowLength > 0 ? rowLength : width);
+            const size_t step = size_t(std::max(alignment, 1));
+            const size_t rowBytes = (rowTexels * texelBytes + step - 1) / step * step;
+            const size_t bytes = rowBytes * size_t(height);
+            if (gFreshTexels.size() < bytes)
+            {
+                gFreshTexels.assign(bytes, FRESH_TEXEL_BYTE);
+            }
+            gNextTexImage2D(target, level, internalFormat, width, height, border, format, type, gFreshTexels.data());
+        }
     }
 
     void DrawTargetWatch::Install()
@@ -121,6 +212,11 @@ namespace NeonTools
         {
             gNextGenTextures = glad_glGenTextures;
             glad_glGenTextures = HookGenTextures;
+        }
+        if (gNextTexImage2D == nullptr)
+        {
+            gNextTexImage2D = glad_glTexImage2D;
+            glad_glTexImage2D = HookTexImage2D;
         }
     }
 

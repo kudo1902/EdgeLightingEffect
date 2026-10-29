@@ -2,8 +2,8 @@
 #define _NEON_SCALE_CHECK_SHARED_BUFFER_PROBE_H_
 
 // The one reader of the neon's shared buffer the checks register: `shared-buffer`
-// as it is, `formats` for the formats it is handed, and `sequence`'s BufferProbe,
-// which reads the texels back, on top.
+// as it is, and `formats` (for the formats it is handed) and `sequence` with
+// the texels read back on top (ReadSharedTexels).
 
 #include "core/config.h"
 #include "core/shared-buffer-registry.h"
@@ -14,10 +14,38 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace NeonScaleCheck
 {
     using namespace EdgeLighting;
+
+    /// Every texel of @p buffer as RGBA floats, bottom row first, read
+    /// through a framebuffer of its own - so nothing the frame has bound is
+    /// touched. Empty when the buffer holds nothing.
+    inline std::vector<float> ReadSharedTexels(const SharedBuffer &buffer)
+    {
+        const glm::ivec2 texels = buffer.GetTexels();
+        if (buffer.GetTextureId() == 0 || texels.x <= 0 || texels.y <= 0)
+        {
+            return {};
+        }
+        std::vector<float> data(size_t(texels.x) * size_t(texels.y) * 4, 0.0f);
+        GLint previous = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
+        GLuint fbo = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, buffer.GetTextureId(), 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+        {
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, texels.x, texels.y, GL_RGBA, GL_FLOAT, data.data());
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+        glDeleteFramebuffers(1, &fbo);
+        return data;
+    }
 
     /// What a reader was handed of the shared buffer in one Render.
     typedef struct SharedBufferSeen
