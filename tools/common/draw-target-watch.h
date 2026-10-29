@@ -20,7 +20,9 @@
 // 0x3C in every byte instead of whatever the driver hands back, which on a
 // desktop GL is zeros. The GL leaves those texels undefined, and a device's
 // may be another buffer's old contents; filled, a buffer that reads a texel
-// it never cleared or drew reads a value a run can see, on any GPU. It chains
+// it never cleared or drew reads a value a run can see, on any GPU -
+// `sequence` and `shared-buffer` install that wrapper alone
+// (InstallFreshTextureFill), since they compare buffer texels too. It chains
 // to whatever the pointers held when it was installed, so it can sit beside
 // PassRecorder. Static library only: the C ABI dylib carries its own glad.
 
@@ -38,6 +40,14 @@ namespace NeonTools
         /// no data starts out filled (see above). Call once, after
         /// gladLoadGLLoader - loading GL again replaces the pointers.
         static void Install();
+
+        /// The glTexImage2D wrapper alone: every texture allocated with no
+        /// data starts out filled, and nothing is watched. For a check that
+        /// compares buffer texels exactly - `sequence`, `shared-buffer` -
+        /// where a texel nobody wrote would otherwise read the zeros a
+        /// desktop GL hands back in every run alike. Safe to call more than
+        /// once, and before or after @ref Install.
+        static void InstallFreshTextureFill();
 
         /// Watch every draw until @ref End. The framebuffer bound for drawing
         /// at this moment is taken as the caller's, so a draw onto it is not

@@ -13,6 +13,8 @@
 #include "core/render-target-formats.h"
 #include "gl/gl-header.h"
 
+#include <glm/glm.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -65,10 +67,18 @@ namespace NeonScaleCheck
             /// (0 still, 1/60 moving).
             float deltaTime = -1.0f;
             /// Read the neon's shared buffer back on its last frame
-            /// (RunResult::sharedTexels) - every texel, outside the glow's
+            /// (RunResult::sharedReads) - every texel, outside the glow's
             /// window too, which no frame shows.
             bool readShared = false;
         } Cell;
+
+        /// The neon's shared buffer as a cell's last frame left it.
+        typedef struct SharedRead
+        {
+            std::vector<float> texels; ///< RGBA floats, bottom row first; empty when not read or not ready.
+            glm::ivec2 size{0};        ///< Its texels across and down.
+            glm::ivec4 window{0};      ///< SharedBuffer::GetLastWriteWindow: every texel outside it should be 0.
+        } SharedRead;
 
         /// What a run's RenderTargetFormats is told, through its verification
         /// hooks.
@@ -85,10 +95,9 @@ namespace NeonScaleCheck
         typedef struct RunResult
         {
             std::vector<RGBA> frames;             ///< Each cell's last frame, over transparent black.
-            /// Per cell, the shared buffer's texels on its last frame (RGBA
-            /// floats, bottom row first) - for a cell with readShared whose
-            /// buffer was ready; empty otherwise.
-            std::vector<std::vector<float>> sharedTexels;
+            /// Per cell, the shared buffer on its last frame - read for a
+            /// cell with readShared whose buffer was ready; empty otherwise.
+            std::vector<SharedRead> sharedReads;
             bool neonPresent = false;             ///< The neon survived Initialize.
             size_t probes = 0;                    ///< RenderTargetFormats::GetAnswers().size() at the end.
             std::vector<RenderTargetFormats::FailedAllocation> failedAllocations; ///< What it kept at the end.

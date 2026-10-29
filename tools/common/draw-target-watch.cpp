@@ -213,6 +213,11 @@ namespace NeonTools
             gNextGenTextures = glad_glGenTextures;
             glad_glGenTextures = HookGenTextures;
         }
+        InstallFreshTextureFill();
+    }
+
+    void DrawTargetWatch::InstallFreshTextureFill()
+    {
         if (gNextTexImage2D == nullptr)
         {
             gNextTexImage2D = glad_glTexImage2D;

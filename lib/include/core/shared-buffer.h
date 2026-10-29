@@ -89,6 +89,16 @@ namespace EdgeLighting
         /// Writes so far. Compared only for equality.
         uint32_t GetVersion() const { return mVersion; }
 
+        /// Where the last write drew, as x0, y0, x1, y1 texels ([x0, x1) x
+        /// [y0, y1)): every texel outside it is 0 - what @ref BeginWrite's
+        /// windowed clear rests on. The whole buffer while that is not known
+        /// (no write yet, or the last one failed or was released). For
+        /// verification: a reader needs the texels, not this.
+        glm::ivec4 GetLastWriteWindow() const
+        {
+            return mDirtyKnown ? mDirty : glm::ivec4(0, 0, mBuffer.GetWidth(), mBuffer.GetHeight());
+        }
+
         // --- Write: the producer alone ---------------------------------------
 
         /// Size the buffer to @p texels in the best format left, bind it, and

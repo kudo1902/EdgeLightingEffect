@@ -1,5 +1,6 @@
 #include "shared-buffer.h"
 
+#include "draw-target-watch.h"
 #include "harness.h"
 #include "scenes.h"
 #include "shared-buffer-probe.h"
@@ -242,6 +243,10 @@ namespace NeonScaleCheck
         }
 
         const GLSession gl;
+        // Every texture allocated with no data starts out filled: the runs
+        // compare buffer texels exactly, and a texel nobody wrote would
+        // otherwise read the zeros a desktop GL hands back in all of them.
+        NeonTools::DrawTargetWatch::InstallFreshTextureFill();
         // One effect, reused across every scene as `check` reuses its one,
         // with a probe after the neon and one moved before it.
         EdgeLightingEffect effect;
@@ -272,6 +277,14 @@ namespace NeonScaleCheck
         // Cells whose buffer the field's composite filled (pass 1c): the hue
         // variant exists to cover them, so it has to reach some.
         int fieldCells = 0;
+        // Cells with a texel outside the last write's window that is not 0,
+        // and cells whose window leaves any texel outside it - what the
+        // windowed clear rests on, and whether a cell tests it. Every cell
+        // changes the scale, so every one reallocates the buffer: one whose
+        // reallocation was not cleared whole holds DrawTargetWatch's fill
+        // there.
+        int staleCells = 0;
+        int windowedCells = 0;
         for (const Variant &variant : VARIANTS)
         {
             for (const Scene &scene : SCENES)
@@ -308,6 +321,10 @@ namespace NeonScaleCheck
                         continue;
                     }
                     const std::vector<float> texels = ReadBuffer(seen);
+                    size_t outside = 0;
+                    const size_t stale = CountNonZeroOutsideWindow(texels, seen.texels, seen.window, outside);
+                    staleCells += stale != 0;
+                    windowedCells += outside != 0;
 
                     // A frame that changes nothing, at the held time. A still
                     // config reuses the offscreen buffers, so its version must
@@ -317,8 +334,8 @@ namespace NeonScaleCheck
                     // version also says which path ran.
                     RenderOnce(effect, FRAME_WIDTH, FRAME_HEIGHT);
                     const bool moved = probe->Last().version != seen.version;
-                    bool bad = false;
-                    char held = ' ';
+                    bool bad = stale != 0;
+                    char held = stale != 0 ? 's' : ' ';
                     if (variant.hueRotationRate == 0.0f && moved)
                     {
                         held = 'v';
@@ -358,6 +375,11 @@ namespace NeonScaleCheck
         }
         std::printf("field composite (f) in %d of the hue variant's cells\n", fieldCells);
         failures += fieldCells == 0;
+        std::printf("a texel outside the last write's window not 0 (s): %d cell(s)%s, of %d whose window leaves any "
+                    "outside it%s\n",
+                    staleCells, staleCells != 0 ? "!" : "", windowedCells,
+                    windowedCells == 0 ? " - none, so this proves nothing!" : "");
+        failures += windowedCells == 0;
         std::printf("reader before the neon saw another image than the reader after it: %d frame(s)\n", orderMisses);
         failures += orderMisses != 0;
 
@@ -379,8 +401,10 @@ namespace NeonScaleCheck
         // reallocated and only the clear of the last write's window keeps the
         // old glow out of it. The scenes above never reach that case - every
         // cell changes the scale, which reallocates the buffer and clears it
-        // whole - and no frame shows a stale texel, since the blit reads only
-        // where this write drew: only a reader sees one. Measured against the
+        // whole (checked there: nothing outside the window) - and a frame
+        // shows a stale texel only within the blit's reach past this write's
+        // window, two texels on `small_rect` at 0.5: a reader sees the rest.
+        // Measured against the
         // moved rect drawn on a fresh effect, texel for texel. Still frames
         // only: the hue's would compare two effects' clocks.
         //
@@ -419,7 +443,8 @@ namespace NeonScaleCheck
 
         if (failures)
         {
-            std::printf("FAIL: %d value(s) out of bounds (marked !; v = a held still frame moved the version). "
+            std::printf("FAIL: %d value(s) out of bounds (marked !; v = a held still frame moved the version, s = a "
+                        "texel outside the last write's window is not 0). "
                         "See tools/neon-scale-check/README.md.\n",
                         failures);
             return 1;

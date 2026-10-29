@@ -1,5 +1,6 @@
 #include "sequence.h"
 
+#include "draw-target-watch.h"
 #include "harness.h"
 #include "scenes.h"
 #include "shared-buffer-probe.h"
@@ -850,6 +851,10 @@ namespace NeonScaleCheck
         }
 
         const GLSession gl;
+        // Every texture allocated with no data starts out filled: the runs
+        // compare buffer texels exactly, and a texel nobody wrote would
+        // otherwise read the zeros a desktop GL hands back in all of them.
+        NeonTools::DrawTargetWatch::InstallFreshTextureFill();
         std::printf("%s\n", RendererName().c_str());
 
         // forced first: every other run is compared against it.

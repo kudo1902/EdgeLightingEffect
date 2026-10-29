@@ -11,6 +11,7 @@
 #include "renderer/base-renderer.h"
 
 #include <glm/glm.hpp>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -19,6 +20,33 @@
 namespace NeonScaleCheck
 {
     using namespace EdgeLighting;
+
+    /// Of @p texels - RGBA floats, bottom row first, @p size across and down -
+    /// how many lie outside @p window (x0, y0, x1, y1:
+    /// SharedBuffer::GetLastWriteWindow), in @p outside, and how many of those
+    /// are not 0, returned. The windowed clear rests on that being none; and
+    /// it proves something only where @p outside is not 0.
+    inline size_t CountNonZeroOutsideWindow(const std::vector<float> &texels, const glm::ivec2 &size,
+                                            const glm::ivec4 &window, size_t &outside)
+    {
+        outside = 0;
+        size_t nonZero = 0;
+        for (int y = 0; y < size.y; ++y)
+        {
+            for (int x = 0; x < size.x; ++x)
+            {
+                const size_t at = (size_t(y) * size_t(size.x) + size_t(x)) * 4;
+                if ((x >= window.x && x < window.z && y >= window.y && y < window.w) || at + 3 >= texels.size())
+                {
+                    continue;
+                }
+                ++outside;
+                nonZero += texels[at] != 0.0f || texels[at + 1] != 0.0f || texels[at + 2] != 0.0f ||
+                           texels[at + 3] != 0.0f;
+            }
+        }
+        return nonZero;
+    }
 
     /// Every texel of @p buffer as RGBA floats, bottom row first, read
     /// through a framebuffer of its own - so nothing the frame has bound is
@@ -56,6 +84,7 @@ namespace NeonScaleCheck
         glm::ivec2 texels{0};
         GLuint texture = 0;
         GLint internalFormat = 0;
+        glm::ivec4 window{0}; ///< SharedBuffer::GetLastWriteWindow: every texel outside it should be 0.
     } SharedBufferSeen;
 
     /// An internal reader of the neon's shared buffer, as a library renderer
@@ -75,8 +104,10 @@ namespace NeonScaleCheck
             mSeen = SharedBufferSeen{};
             if (buffer)
             {
-                mSeen = SharedBufferSeen{buffer->IsReady(),   buffer->GetVersion(),   buffer->GetViewport(),
-                                         buffer->GetTexels(), buffer->GetTextureId(), buffer->GetInternalFormat()};
+                mSeen = SharedBufferSeen{buffer->IsReady(),       buffer->GetVersion(),
+                                         buffer->GetViewport(),   buffer->GetTexels(),
+                                         buffer->GetTextureId(),  buffer->GetInternalFormat(),
+                                         buffer->GetLastWriteWindow()};
             }
             if (mSeen.ready)
             {

@@ -160,6 +160,15 @@ when:
   over the pixels within the filament's half-width of the edge);
 - the hue variant never reaches the field's composite, or the buffer is ready
   while the neon is off, or not ready once it is on again;
+- in any cell, a texel outside the last write's window
+  (`SharedBuffer::GetLastWriteWindow`) is not 0 (marked `s`), or no cell's
+  window leaves a texel outside it. Every cell changes the scale, so every one
+  reallocates the buffer, and every texture the run allocates with no data
+  starts out 0x3C in every byte (`DrawTargetWatch::InstallFreshTextureFill`):
+  a reallocation not cleared whole leaves that there, where the zeros a
+  desktop GL hands back would pass. With `BeginWrite`'s whole clear after a
+  reallocation removed, this mode passed until this check was added, fill or
+  no fill;
 - after a rect that moves and shrinks at one scale, the buffer differs by a
   single texel from the moved rect's drawn on a fresh effect. Both on effects
   whose hue rate never moved: the hue's phase is the rate integrated over the
@@ -168,9 +177,12 @@ when:
 
 The last is the windowed clear (`SharedBuffer::BeginWrite`: this write's
 window and the last write's). The scenes never reach it - every cell changes
-the scale, which reallocates the buffer and clears it whole - and no frame
-shows a stale texel, since the blit reads only where the write drew, so
-neither `check` nor the `cover` set can catch one. A scratch build that cleared
+the scale, which reallocates the buffer and clears it whole, which the check
+before it holds them to - and a frame shows a stale texel only within the
+blit's reach past the write's window: two texels on `small_rect` at 0.5
+(measured with the whole clear after a reallocation reverted, which put the
+fill in a 4 px column of the frame at 60 levels). So neither `check` nor the
+`cover` set can catch most of one. A scratch build that cleared
 only this write's window left 2790-218880 stale texels (scales 0.125-1.0, up
 to 47/255) and passed everything else; this check fails it at every scale.
 
@@ -269,6 +281,13 @@ that misses one field is hidden on any frame another field it does read moved
 with it. Each frame is drawn by every effect at the same clock (`Update(1/60)`)
 over transparent black, and compared with its alpha; each effect's shared
 buffer is read by a probe renderer after the neon and compared as floats.
+Every texture the run allocates with no data starts out 0x3C in every byte
+(`DrawTargetWatch::InstallFreshTextureFill`), so a skip that leaves a texel
+unwritten shows against `forced`, which clears the shared buffer whole on
+every write, instead of matching it on the zeros a desktop GL hands back:
+with `BeginWrite`'s whole clear after a reallocation removed, 6 sequences
+failed 338 frames of `exact` and `normal` with the fill and passed without
+it.
 
 Each failing frame prints the run, the sequence and frame, the worst level and
 the pixel count, the frame's events and its config; the exit code is 1 if
@@ -291,7 +310,8 @@ every frame). On this tree it found V28 and I76 in
 and with V28's one-line fix applied, V29 in a 100 x 150 run (`exact` failed 1
 frame of 15,000; `normal` only on I76). Apple M2 Pro: the default run takes
 about 14 s; 100 x 150 with `--isolate` (16 effects per frame) took most of an
-hour.
+hour. On 2026-10-29 the default run took 4.5-6.5 minutes on the same machine,
+the range a busy one gave.
 
 Run it after adding an input to any offscreen pass, after touching a skip key
 or a gate in `OnConfigChanged`, or a `LazyBake` schedule. A new skip belongs in
@@ -476,12 +496,14 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     size - a fresh texture that looks like the old one. It must be tried
     exactly twice, the frame after it and every texel of the shared buffer
     (read back) must match a run whose failure is held for the run, which
-    never retries, and no texel may still hold the gate's fill. `small_rect`
-    because its glow leaves most of the buffer outside the window a write
-    clears; a 640 x 360 rect's glow covers all of it. With `BeginWrite`'s
-    whole clear after an allocation reverted, 86,400 of the 230,400 texels
-    were never written and the frame differed too; with the fill off as
-    well, the check passed.
+    never retries, and every texel outside the last write's window
+    (`SharedBuffer::GetLastWriteWindow`) must be 0 in both - with some there
+    to check: the case fails if the window covers the whole buffer, as a
+    640 x 360 rect's glow does. `small_rect` leaves 86,400 of the 230,400
+    texels outside it; the first version of this check ran on `arcs` and
+    passed with the defect in place. With `BeginWrite`'s whole clear after
+    an allocation reverted, all 86,400 held the gate's fill and the frame
+    differed too; with the fill off as well, the check passed.
 
     Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
     be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,

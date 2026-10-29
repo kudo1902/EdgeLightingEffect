@@ -267,18 +267,20 @@ namespace NeonScaleCheck
         }
 
         /// The run's reader of the neon's shared buffer: what SharedBufferProbe
-        /// records, plus the texels of the Render after @ref ReadNext - read
-        /// there, while the buffer is still that frame's.
+        /// records, plus the buffer as the Render after @ref ReadNext found
+        /// it - read there, while the buffer is still that frame's.
         class TexelProbe : public SharedBufferProbe
         {
         public:
-            /// Read the texels in the next Render that is handed a ready buffer.
+            /// Read the buffer in the next Render that is handed a ready one.
             void ReadNext() { mReadNext = true; }
             /// What that Render read, handed over; empty if it was not ready.
-            std::vector<float> TakeTexels()
+            SharedRead TakeRead()
             {
                 mReadNext = false;
-                return std::move(mTexels);
+                SharedRead read = std::move(mRead);
+                mRead = SharedRead{};
+                return read;
             }
 
         protected:
@@ -286,14 +288,14 @@ namespace NeonScaleCheck
             {
                 if (mReadNext)
                 {
-                    mTexels = ReadSharedTexels(buffer);
+                    mRead = SharedRead{ReadSharedTexels(buffer), buffer.GetTexels(), buffer.GetLastWriteWindow()};
                     mReadNext = false;
                 }
             }
 
         private:
             bool mReadNext = false;
-            std::vector<float> mTexels;
+            SharedRead mRead;
         };
 
         RunResult Run(const Hooks &hooks, bool bypassFields, const std::vector<Cell> &cells)
@@ -363,7 +365,7 @@ namespace NeonScaleCheck
                             CaptureUtil::Image image;
                             capture.Read(image);
                             result.frames.push_back(image.pixels);
-                            result.sharedTexels.push_back(probe->TakeTexels());
+                            result.sharedReads.push_back(probe->TakeRead());
                         }
                         capture.End();
                         bool error = false;

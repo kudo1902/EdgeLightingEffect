@@ -1,4 +1,5 @@
 #include "format-check-run.h"
+#include "shared-buffer-probe.h"
 
 #include "core/render-target-formats.h"
 #include "gl/gl-header.h"
@@ -8,7 +9,6 @@
 #include "util/capture-util.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <limits>
@@ -431,13 +431,15 @@ namespace NeonScaleCheck
             /// the old one. Drawn with the library's retry and with the
             /// failure held for the run (SetOutOfMemoryRetry, infinity), which
             /// never retries; the two must leave the same frame and the same
-            /// shared buffer, every texel - those outside the glow's window,
-            /// which no frame shows, included. DrawTargetWatch fills every
-            /// fresh texture, so a reallocation that is not cleared whole
-            /// leaves its fill there - on @p cell, whose glow must leave
-            /// texels of the buffer outside its window (`small_rect`: at
-            /// 640 x 360 the glow's window is the whole buffer, and every
-            /// write clears it all). Returns the failures.
+            /// shared buffer, every texel, and every texel outside the last
+            /// write's window must be 0 - which no frame shows, and which a
+            /// reallocation not cleared whole leaves holding DrawTargetWatch's
+            /// fill. That proves something only where the window leaves texels
+            /// outside it, so the check requires some: on @p cell
+            /// (`small_rect`) it does, where a 640 x 360 rect's glow covers the
+            /// whole buffer and every write clears it all - the first version
+            /// of this check, on `arcs`, passed with the defect in place.
+            /// Returns the failures.
             int CheckFailedRetry(const Cell &cell, bool verbose)
             {
                 Cell during = cell;
@@ -462,32 +464,32 @@ namespace NeonScaleCheck
                 const int tries = CountLines(run.errors, "shared target unavailable", "SetFailedAllocations");
                 const int heldTries = CountLines(heldRun.errors, "shared target unavailable", "SetFailedAllocations");
                 const bool sameFrame = SameFrame(run, after.name, heldRun, after.name, "the held run's", cells);
-                const std::vector<float> &texels = run.sharedTexels.back();
-                const std::vector<float> &heldTexels = heldRun.sharedTexels.back();
+                const SharedRead &read = run.sharedReads.back();
+                const SharedRead &heldRead = heldRun.sharedReads.back();
                 size_t differing = 0;
-                for (size_t i = 0; i < texels.size() && i < heldTexels.size(); ++i)
+                for (size_t i = 0; i < read.texels.size() && i < heldRead.texels.size(); ++i)
                 {
-                    differing += texels[i] != heldTexels[i];
+                    differing += read.texels[i] != heldRead.texels[i];
                 }
-                // Texels still holding DrawTargetWatch's fill, every channel
-                // 0x3C of an 8-bit buffer: what no clear or draw wrote.
-                const float fill = float(0x3C) / 255.0f;
-                size_t filled = 0;
-                for (size_t i = 0; i + 3 < texels.size(); i += 4)
-                {
-                    filled += std::abs(texels[i] - fill) < 1.0e-4f && std::abs(texels[i + 1] - fill) < 1.0e-4f &&
-                              std::abs(texels[i + 2] - fill) < 1.0e-4f && std::abs(texels[i + 3] - fill) < 1.0e-4f;
-                }
-                const bool sameShared = !texels.empty() && texels.size() == heldTexels.size() && differing == 0;
+                const bool sameShared =
+                    !read.texels.empty() && read.texels.size() == heldRead.texels.size() && differing == 0;
+                size_t outside = 0;
+                size_t heldOutside = 0;
+                const size_t nonZero = CountNonZeroOutsideWindow(read.texels, read.size, read.window, outside);
+                const size_t heldNonZero =
+                    CountNonZeroOutsideWindow(heldRead.texels, heldRead.size, heldRead.window, heldOutside);
                 const bool only8 = SharedOnlyIn(run, GL_RGBA8);
                 std::printf("  shared target tries that failed %d (expected 2: the first and its retry)%s, held "
                             "%d (expected 1)%s, shared buffer only RGBA8 %s, frame after it as held %s, shared "
-                            "buffer after it as held %s (%zu channel(s) differ, %zu texel(s) never written)\n",
+                            "buffer after it as held %s (%zu channel(s) differ); outside the last write's window "
+                            "%zu texel(s)%s, not 0 %zu%s (held %zu%s)\n",
                             tries, tries == 2 ? "" : "!", heldTries, heldTries == 1 ? "" : "!",
                             only8 ? "yes" : "NO!", sameFrame ? "yes" : "NO!", sameShared ? "yes" : "NO!",
-                            differing, filled);
+                            differing, outside,
+                            outside == 0 ? " - the window covers the whole buffer, so this check proves nothing!" : "",
+                            nonZero, nonZero == 0 ? "" : "!", heldNonZero, heldNonZero == 0 ? "" : "!");
                 return failures + (tries != 2) + (heldTries != 1) + !only8 + !sameFrame + !sameShared +
-                       (filled != 0);
+                       (outside == 0) + (nonZero != 0) + (heldNonZero != 0);
             }
 
             /// D8: out of memory that passes - what a failure's expiry is for.

@@ -34,8 +34,9 @@
 *.out
 *.app
 
-# CMake build directory
-/build/
+# CMake build directories: build/, and the sanitizer builds beside it
+# (build-asan/, build-san/, build-tsan/)
+/build*/
 /cmake-build-debug/
 /cmake-build-release/
 CMakeFiles/
