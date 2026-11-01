@@ -193,10 +193,10 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   that composited instead of shading deferred the shading program's own
   first-draw stall to the first config change - keep all three first draws on
   that frame. R16F at half the reduced buffer's size (0.84 MB at 0.5 for a
-  960 x 540 rect at 1080p), RG16F with segments (`GetFieldFormat`, 1.7 MB) -
+  960 x 540 rect at 1080p), RG16F with segments (`GetFieldFormats`, 1.7 MB) -
   the composite's `uFieldSegments` follows the same test; no 8-bit fallback - a driver that cannot render
   half float shades directly, decided BEFORE the field's programs are built: both gates ask the effect's
-  `FormatAvailability` about `GetFieldFormat` ahead of `ensureFieldPrograms` / `ensureRingFieldPrograms`,
+  `FormatAvailability` about `GetFieldFormats` (`MayAllocate` over the list) ahead of `ensureFieldPrograms` / `ensureRingFieldPrograms`,
   every frame, since the format follows the segments - and with the field's size (`MayAllocate`), so a bake
   whose allocation failed keeps that field off at that size or larger and tries again below it
   (`LazyBake::unavailable` is left for a program that fails to build). That schedule is

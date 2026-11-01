@@ -129,6 +129,25 @@ Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
     class apart from a Framebuffer - its format adapts, down a list when an
     allocation fails and back up when it may, as an adaptive bitrate does. The
     bullets above and the entries below keep the old name.
+  - A third architecture review that day (2026-11-01) found the policy
+    testable only through `formats` - a GPU, ~70 s, 33 log-text matches - with
+    the verification hooks branching inside `Ask` and the walk (open: an
+    injected driver for probe, allocate and size limit would replace four of
+    the five hooks), the docs restating the subsystem (CLAUDE.md's paragraph
+    is 8,870 characters; each rename touched seven or eight documents), and
+    three small things, fixed:
+    - "May any row of this list allocate?" was written out twice in the
+      neon (the segment table's loop, the fields' single-format ask). It is
+      `MayAllocate(const FormatList &, ...)`, the walk's own rule, and the
+      fields walk and ask one `GetFieldFormats`.
+    - The class comment said one object per effect meant one per GL context.
+      Two effects on one context each have their own - each probes once, and
+      a failure one keeps is unknown to the other - which the comment now
+      says.
+    - A host list's format outside `LIBRARY_FORMAT_LISTS` is probed by the
+      first walk that reaches it, mid-frame, clearing the frame's pending GL
+      errors; `SharedBuffer`'s constructor, `AdaptiveFormatTarget::Ensure` and
+      the upgrade notes now say to ask it from `Initialize`.
   - Gate: D8 gains a way with the emission table falling alone on `arcs`,
     whose config holds across the move, and a failed retry on the flare's
     buffer; both added because removing the guard they cover passed

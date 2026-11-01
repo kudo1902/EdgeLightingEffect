@@ -53,6 +53,12 @@ namespace EdgeLighting
         /// order, best first: each allocation walks them from the best one the
         /// driver has not yet refused. @p fallbackCost says, in the log line a
         /// fallback writes, what the next format costs. Creates no GL object.
+        ///
+        /// A format of @p formats outside the library's lists
+        /// (LIBRARY_FORMAT_LISTS) has no answer from the startup report, so the
+        /// first walk that reaches it probes it - mid-frame, where the probe
+        /// clears the frame's pending GL errors. A producer that lists one asks
+        /// it from its Initialize instead (FormatAvailability::Ask).
         SharedBuffer(const char *name, std::vector<Format> formats, const char *fallbackCost);
 
         SharedBuffer(const SharedBuffer &) = delete;

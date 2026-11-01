@@ -102,10 +102,13 @@ namespace EdgeLighting
     /// What one effect's GL context can render to. Each format asked about is
     /// probed once (@c Framebuffer::IsColorRenderable: a 4 x 4 texture, a
     /// framebuffer, @c glCheckFramebufferStatus) and its answer kept, so every
-    /// later ask is a lookup. Owned by @ref EdgeLightingEffect - one per effect,
-    /// so one per GL context - and handed to every renderer it registers
+    /// later ask is a lookup. Owned by @ref EdgeLightingEffect - one per
+    /// effect - and handed to every renderer it registers
     /// (@ref BaseRenderer::GetFormatAvailability), the way the
-    /// @ref SharedBufferRegistry is.
+    /// @ref SharedBufferRegistry is. Two effects on one GL context each have
+    /// their own: each probes the formats once, and an allocation failure one
+    /// of them keeps is not known to the other, which only costs it the
+    /// failed allocation of its own.
     ///
     /// Asked where a format is used: every buffer with a list of formats is
     /// an AdaptiveFormatTarget (core/adaptive-format-target.h), sized by
@@ -259,15 +262,22 @@ namespace EdgeLighting
         /// allocation decides - and no allocation it would repeat has failed
         /// (see the class comment: out of memory at this total size or
         /// smaller, anything else at this many attachments or fewer, at any
-        /// size). What a buffer asks before it
-        /// commits to a format - the neon's fields ask it before they build
-        /// their programs, the segment coverage table before it changes mode;
-        /// the walk asks the same of each row.
+        /// size). The walk asks it of each row.
         bool MayAllocate(GLint internalFormat, GLenum format, GLenum type, int width, int height, int attachments)
         {
             return !isPastSizeLimit(width, height) &&
                    Ask(internalFormat, format, type).result != ProbeResult::REFUSED &&
                    failedReason(internalFormat, width, height, attachments) == nullptr;
+        }
+
+        /// Whether a walk over @p formats at @p width x @p height x
+        /// @p attachments has a row to try: @ref MayAllocate of any of them,
+        /// by the walk's own rule. What a buffer asks before it commits to a
+        /// list - the neon's fields before they build their programs, the
+        /// segment coverage table before it changes mode. Logs nothing.
+        bool MayAllocate(const FormatList &formats, int width, int height, int attachments)
+        {
+            return getBestRow(formats, width, height, attachments) < formats.count;
         }
 
         // --- Frame time: what an out-of-memory failure expires by ------------

@@ -112,6 +112,11 @@ namespace EdgeLighting
         /// failure expires. A buffer already holding the row the walk lands
         /// on costs Resize's early-out: HELD. Keeps @p formats - the pointer,
         /// not the list - for @ref Refresh.
+        ///
+        /// A list of the host's own: ask its formats from the renderer's
+        /// Initialize (FormatAvailability::Ask), or the first walk probes them
+        /// mid-frame, clearing the frame's pending GL errors - the startup
+        /// report asks only the library's lists (LIBRARY_FORMAT_LISTS).
         EnsureResult Ensure(FormatAvailability &availability, const FormatList &formats, int width, int height,
                             int attachments = 1);
 

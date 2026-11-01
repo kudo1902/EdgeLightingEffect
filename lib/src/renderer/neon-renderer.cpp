@@ -1207,7 +1207,7 @@ namespace EdgeLighting
         /// segColHue moving with time - what both fields rest on
         /// (IsFieldEligible, IsRingFieldEligible). Segments are no bar: their
         /// hue is the second product, and the field carries Fs in a second
-        /// channel (GetFieldFormat, D3). Not when time can move the
+        /// channel (GetFieldFormats, D3). Not when time can move the
         /// colour-stop alpha neon.frag reads pointwise - the base ring's, which
         /// a stop-less segment inherits too: a rotating hue over a ring that is
         /// not opaque at every texel (@p ringOpaque, as uploaded).
@@ -1222,12 +1222,13 @@ namespace EdgeLighting
         constexpr auto &FIELD_FORMATS_R = R16F_ONLY;
         constexpr auto &FIELD_FORMATS_RG = RG16F_ONLY;
 
-        /// The fields' format: Fa alone (R16F) without segments, Fa and Fs
-        /// (RG16F, twice the memory) with them - the composite's
-        /// uFieldSegments has to agree, so both read @p effectiveSegments.
-        inline const TextureFormat &GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
+        /// The fields' list, one format long: Fa alone (R16F) without
+        /// segments, Fa and Fs (RG16F, twice the memory) with them - the
+        /// composite's uFieldSegments has to agree, so both read
+        /// @p effectiveSegments. What both fields walk and both gates ask.
+        inline FormatList GetFieldFormats(const std::vector<SegmentBoost> &effectiveSegments)
         {
-            return effectiveSegments.empty() ? FIELD_FORMATS_R[0] : FIELD_FORMATS_RG[0];
+            return effectiveSegments.empty() ? FormatList(FIELD_FORMATS_R) : FormatList(FIELD_FORMATS_RG);
         }
 
         /// Whether this config's shading can be factored into the hue-invariant
@@ -2374,7 +2375,7 @@ namespace EdgeLighting
         const BufferRegion fieldRegion = GetWindowRegion(scaledRegion, glowWindow);
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
         // Whether a field of @p texels may be allocated in its half-float
-        // format (GetFieldFormat: R16F, RG16F with segments), asked of the
+        // format (GetFieldFormats: R16F, RG16F with segments), asked of the
         // effect's FormatAvailability - a lookup, the startup report having
         // probed both. MayAllocate, not IsRenderable: a format the probe could
         // not judge is the allocation's to decide, as in every walk. And with
@@ -2386,9 +2387,7 @@ namespace EdgeLighting
         // format follows the segments, the size the rect.
         const auto fieldTargetAllowed = [this](const glm::ivec2 &texels)
         {
-            const TextureFormat &fieldFormat = GetFieldFormat(mEffectiveSegments);
-            return GetFormatAvailability().MayAllocate(fieldFormat.internalFormat, fieldFormat.format,
-                                                        fieldFormat.type, texels.x, texels.y, 1);
+            return GetFormatAvailability().MayAllocate(GetFieldFormats(mEffectiveSegments), texels.x, texels.y, 1);
         };
         if (glowReady && !mGlowField.schedule.unavailable && !bypasses(NeonBypass::GLOW_FIELD) &&
             IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
@@ -3418,13 +3417,7 @@ namespace EdgeLighting
     bool NeonRenderer::segmentTableMayAllocate()
     {
         const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
-        FormatAvailability &availability = GetFormatAvailability();
-        return std::any_of(std::begin(GLOW_COVER_FORMATS_RG), std::end(GLOW_COVER_FORMATS_RG),
-                           [&](const TextureFormat &candidate)
-                           {
-                               return availability.MayAllocate(candidate.internalFormat, candidate.format,
-                                                               candidate.type, segLayout.width, GLOW_COVER_HEIGHT, 1);
-                           });
+        return GetFormatAvailability().MayAllocate(GLOW_COVER_FORMATS_RG, segLayout.width, GLOW_COVER_HEIGHT, 1);
     }
 
     void NeonRenderer::rebuildLoopSamples(const Config &config)
@@ -4532,14 +4525,13 @@ namespace EdgeLighting
         // here - see renderShadePass.
         GLUtils::NoScissorScope noScissor(true);
 
-        // Half float: Fa, and Fs beside it with segments (GetFieldFormat). No
+        // Half float: Fa, and Fs beside it with segments (GetFieldFormats). No
         // 8-bit fallback: Fa runs well past 1 and the tone map is steep near 0,
         // so 8 bits would move whole levels - a driver that cannot render to
         // half float shades directly instead. NEAREST: the composite reads one
         // texel per fragment, its own.
-        const FormatList formats =
-            mEffectiveSegments.empty() ? FormatList(FIELD_FORMATS_R) : FormatList(FIELD_FORMATS_RG);
-        if (mGlowField.buffer.Ensure(GetFormatAvailability(), formats, texels.x, texels.y) ==
+        if (mGlowField.buffer.Ensure(GetFormatAvailability(), GetFieldFormats(mEffectiveSegments), texels.x,
+                                     texels.y) ==
             AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the hue-invariant field's half-float target failed to allocate - the glow is "
@@ -4648,9 +4640,8 @@ namespace EdgeLighting
         // Half float, one channel or two, NEAREST - as the shading's field,
         // for its reasons (renderFieldPass).
         const RingFieldLayout &layout = mRingField.layout;
-        const FormatList formats =
-            mEffectiveSegments.empty() ? FormatList(FIELD_FORMATS_R) : FormatList(FIELD_FORMATS_RG);
-        if (mRingField.buffer.Ensure(GetFormatAvailability(), formats, layout.atlas.x, layout.atlas.y) ==
+        if (mRingField.buffer.Ensure(GetFormatAvailability(), GetFieldFormats(mEffectiveSegments), layout.atlas.x,
+                                     layout.atlas.y) ==
             AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the edge ring's field's half-float target failed to allocate - the ring is "

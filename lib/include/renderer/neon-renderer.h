@@ -1191,7 +1191,7 @@ namespace EdgeLighting
         typedef struct GlowField
         {
             /// The hue-invariant field (pass 1f): Fa, R16F - or Fa and Fs, RG16F,
-            /// with segments (GetFieldFormat, D3) - over a region of its own, the
+            /// with segments (GetFieldFormats, D3) - over a region of its own, the
             /// glow quad's box as whole texels of the reduced buffer's grid
             /// (GetFieldRegion): the reduced buffer covers the whole viewport,
             /// and a field that size would fail FIELD_MIN_FILL for any rect
@@ -1719,7 +1719,7 @@ namespace EdgeLighting
         /// window of the reduced buffer's grid, which pass 1c reads it over -
         /// reading the gather through
         /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
-        /// with segments (GetFieldFormat). Leaves the buffer bound;
+        /// with segments (GetFieldFormats). Leaves the buffer bound;
         /// @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is

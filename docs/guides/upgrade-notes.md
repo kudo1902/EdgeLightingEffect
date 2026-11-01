@@ -348,7 +348,10 @@ both Macs - no pixel moves. What a host can see:
   do - named, filtered and given its fallback cost at construction, sized by
   `Ensure` with a `FormatList` (one of `LIBRARY_FORMAT_LISTS`, or its own
   array), moved back up by `Refresh` once a frame before it decides to skip a
-  write, and any cache over it keyed on `GetGeneration`.
+  write, and any cache over it keyed on `GetGeneration`. A format of its own
+  outside the library's lists is not in the startup report: ask it from the
+  renderer's `Initialize` (`FormatAvailability::Ask`), or the first walk
+  probes it mid-frame and clears the frame's pending GL errors.
   `SharedBuffer::Format` is now a typedef of `TextureFormat`, what every
   format list holds, so a host's list still compiles. Drawn outside an effect, such a renderer gets an object of its
   own from `GetFormatAvailability`, whose out-of-memory failures expire only
