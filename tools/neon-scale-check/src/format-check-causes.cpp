@@ -1,7 +1,7 @@
 #include "format-check-run.h"
 #include "shared-buffer-probe.h"
 
-#include "core/render-target-formats.h"
+#include "core/format-availability.h"
 #include "gl/gl-header.h"
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/neon-renderer.h"
@@ -27,13 +27,13 @@ namespace NeonScaleCheck
         namespace
         {
             /// A renderer drawn outside an effect, which makes its own
-            /// RenderTargetFormats (BaseRenderer::GetRenderTargetFormats) -
+            /// FormatAvailability (BaseRenderer::GetFormatAvailability) -
             /// exposed here to count its probes.
             template <typename Renderer>
             class Standalone : public Renderer
             {
             public:
-                const RenderTargetFormats &Formats() { return this->GetRenderTargetFormats(); }
+                const FormatAvailability &Formats() { return this->GetFormatAvailability(); }
             };
 
             /// What one standalone renderer left: the probes its own object
@@ -148,7 +148,8 @@ namespace NeonScaleCheck
                         ++differing;
                     }
                 }
-                const int fallbacks = CountLines(run.errors, "gather target unavailable", "SetFailedAllocations");
+                const int fallbacks =
+                    CountLines(run.errors, "NeonRenderer.Gather: target unavailable", "SetFailedAllocations");
                 const bool shared = SharedOnlyIn(run, GL_RGBA16F);
                 std::printf("  gather fallbacks logged %d%s, cells without segments as A %d / %d%s, shared buffer "
                             "only RGBA16F %s\n",
@@ -199,8 +200,8 @@ namespace NeonScaleCheck
                 failures += Summarise("  incomplete", kept, Unprobed(incomplete), verbose);
                 failures += Summarise("  out of memory", memory, Unprobed(outOfMemory), verbose);
 
-                const int keptTries = CountLines(kept.errors, "gather target unavailable");
-                const int memoryTries = CountLines(memory.errors, "gather target unavailable");
+                const int keptTries = CountLines(kept.errors, "NeonRenderer.Gather: target unavailable");
+                const int memoryTries = CountLines(memory.errors, "NeonRenderer.Gather: target unavailable");
                 std::printf("  gather allocations that failed: incomplete %d (expected 1: kept at every size)%s, out "
                             "of memory %d (expected more than 1: kept by size, tried again below)%s\n",
                             keptTries, keptTries == 1 ? "" : "!", memoryTries, memoryTries > 1 ? "" : "!");
@@ -297,7 +298,7 @@ namespace NeonScaleCheck
                         Compare(a.frames[i], run.frames[i], maxLevels, over1);
                         worstLevels = std::max(worstLevels, maxLevels);
                     }
-                    const int tries = CountLines(run.errors, "segment coverage target unavailable");
+                    const int tries = CountLines(run.errors, "NeonRenderer.GlowCoverSegments: target unavailable");
                     const int fills = CountLines(run.infos, fillLinked, " linked");
                     const int blocked = CountLines(run.warnings, "segment coverage table cannot be allocated");
                     const bool shared = SharedOnlyIn(run, GL_RGBA16F);
@@ -423,6 +424,38 @@ namespace NeonScaleCheck
                        (passed != 1) + !run.failedAllocations.empty();
             }
 
+            /// The cells a failed retry is drawn on: @p cell " during", again
+            /// " wait" for 3 s of frame time - the failure expires and the
+            /// retry runs out again - and " after", read back when
+            /// @p readShared.
+            std::vector<Cell> FailedRetryCells(const Cell &cell, bool readShared)
+            {
+                Cell during = cell;
+                during.name += " during";
+                Cell wait = cell;
+                wait.name += " wait";
+                wait.deltaTime = 3.0f;
+                Cell after = cell;
+                after.name += " after";
+                after.readShared = readShared;
+                return {during, wait, after};
+            }
+
+            /// Every RGBA16F allocation from the viewport's size failing -
+            /// retried at the library's wait, or held for the run when
+            /// @p held (SetOutOfMemoryRetry, infinity), which never retries.
+            Hooks FailedRetryHooks(bool held)
+            {
+                Hooks hooks;
+                hooks.failed.formats = {GL_RGBA16F};
+                hooks.failed.fromTexels = RetryThreshold();
+                if (held)
+                {
+                    hooks.outOfMemoryRetry = std::numeric_limits<double>::infinity();
+                }
+                return hooks;
+            }
+
             /// A retry that runs out of memory again, on the shared buffer:
             /// every RGBA16F allocation from the viewport's size fails, so the
             /// shared buffer falls to RGBA8, and its retry once the failure
@@ -442,27 +475,17 @@ namespace NeonScaleCheck
             /// Returns the failures.
             int CheckFailedRetry(const Cell &cell, bool verbose)
             {
-                Cell during = cell;
-                during.name += " during";
-                Cell wait = cell;
-                wait.name += " wait";
-                wait.deltaTime = 3.0f;
-                Cell after = cell;
-                after.name += " after";
-                after.readShared = true;
-                const std::vector<Cell> cells = {during, wait, after};
-
-                Hooks retrying;
-                retrying.failed.formats = {GL_RGBA16F};
-                retrying.failed.fromTexels = RetryThreshold();
-                Hooks held = retrying;
-                held.outOfMemoryRetry = std::numeric_limits<double>::infinity();
-                const RunResult heldRun = Run(held, false, cells);
+                const std::vector<Cell> cells = FailedRetryCells(cell, true);
+                const Cell &after = cells.back();
+                const Hooks retrying = FailedRetryHooks(false);
+                const RunResult heldRun = Run(FailedRetryHooks(true), false, cells);
                 const RunResult run = Run(retrying, false, cells);
                 int failures = Summarise("  a failed retry - the shared buffer", run, Unprobed(retrying), verbose);
 
-                const int tries = CountLines(run.errors, "shared target unavailable", "SetFailedAllocations");
-                const int heldTries = CountLines(heldRun.errors, "shared target unavailable", "SetFailedAllocations");
+                const int tries =
+                    CountLines(run.errors, "NeonRenderer.Scaled: target unavailable", "SetFailedAllocations");
+                const int heldTries =
+                    CountLines(heldRun.errors, "NeonRenderer.Scaled: target unavailable", "SetFailedAllocations");
                 const bool sameFrame = SameFrame(run, after.name, heldRun, after.name, "the held run's", cells);
                 const SharedRead &read = run.sharedReads.back();
                 const SharedRead &heldRead = heldRun.sharedReads.back();
@@ -492,20 +515,52 @@ namespace NeonScaleCheck
                        (outside == 0) + (nonZero != 0) + (heldNonZero != 0);
             }
 
+            /// The same failed retry on the flare's scaled buffer, the flare
+            /// drawn alone: its retry runs out again and the walk allocates
+            /// RGBA8 again at the same size - the format the cache's key
+            /// already holds (FlareInputs::dither), so only the buffer's
+            /// generation tells the cache that its texels are undefined. The
+            /// frame after it must be the held run's: a cache that reused the
+            /// buffer blits DrawTargetWatch's fill. Returns the failures.
+            int CheckFlareFailedRetry(bool verbose)
+            {
+                const std::vector<Cell> cells = FailedRetryCells(FlareCell(SCALE_500), false);
+                const Hooks retrying = FailedRetryHooks(false);
+                const RunResult heldRun = Run(FailedRetryHooks(true), false, cells);
+                const RunResult run = Run(retrying, false, cells);
+                int failures =
+                    Summarise("  a failed retry - the flare's buffer", run, Unprobed(retrying), verbose);
+                const int tries =
+                    CountLines(run.errors, "LensFlare.Scaled: target unavailable", "SetFailedAllocations");
+                const int heldTries =
+                    CountLines(heldRun.errors, "LensFlare.Scaled: target unavailable", "SetFailedAllocations");
+                const bool sameFrame =
+                    SameFrame(run, cells.back().name, heldRun, cells.back().name, "the held run's", cells);
+                std::printf("  flare target tries that failed %d (expected 2: the first and its retry)%s, held %d "
+                            "(expected 1)%s, frame after it as held %s\n",
+                            tries, tries == 2 ? "" : "!", heldTries, heldTries == 1 ? "" : "!",
+                            sameFrame ? "yes" : "NO!");
+                return failures + (tries != 2) + (heldTries != 1) + !sameFrame;
+            }
+
             /// D8: out of memory that passes - what a failure's expiry is for.
-            ///   - Passing, six ways (PassingShortage): only the first
+            ///   - Passing, seven ways (PassingShortage): only the first
             ///     allocation of one format fails (ForcedFailure::count), which
             ///     keeps that format off every buffer at least that large. A
             ///     cell that passes 3 s of frame time lets it expire, and every
             ///     buffer must move back up - those that never resize and
-            ///     those a still frame reuses included, each asking
-            ///     IsBelowBestRow - so that cell's last frame, the one after
-            ///     the move, and the cells drawn again after it are A's, byte
-            ///     for byte, the failure is cleared and that is said once.
+            ///     those a still frame reuses included (each renderer's
+            ///     AdaptiveFormatTarget::Refresh) - so that cell's last frame,
+            ///     the one after the move, and the cells drawn again after it
+            ///     are A's, byte for byte, the failure is cleared and that is
+            ///     said once.
             ///     RGBA16F: the emission table takes the failure, in
             ///     Initialize, and the shared buffer, the gather, the flare's
             ///     and the spotlight's scaled buffers and - on `segments` - the
-            ///     four-channel coverage table fall to RGBA8. RG16F on `arcs`:
+            ///     four-channel coverage table fall to RGBA8. The same on
+            ///     `arcs` alone: there the config holds across the move, so
+            ///     only the bake's generation key re-bakes the emission table -
+            ///     in the first way the change of cell re-bakes it anyway. RG16F on `arcs`:
             ///     the two-channel coverage table takes it and falls to RG8.
             ///     RG16F on `segments`: the segment coverage table does.
             ///     RGBA16F from the viewport's size (RetryThreshold) on `arcs`:
@@ -525,7 +580,9 @@ namespace NeonScaleCheck
             ///     the way no longer tests what it is for.
             ///   - A failed retry (CheckFailedRetry), on `small_rect`: the
             ///     shared buffer's retry runs out again, and the buffer it
-            ///     reallocates must be cleared whole.
+            ///     reallocates must be cleared whole. And on the flare's
+            ///     buffer (CheckFlareFailedRetry), whose cache must not reuse
+            ///     the reallocation: its format is the one the key holds.
             ///   - Lasting: every RGBA16F allocation fails, over 40 frames 1 s
             ///     apart. Each expiry costs one retry - the emission table's,
             ///     the smallest and first asked - which fails again and doubles
@@ -554,6 +611,8 @@ namespace NeonScaleCheck
                 const PassingShortage ways[] = {
                     {"  passing, RGBA16F", GL_RGBA16F, 0, 1, GL_RGBA8, {arcsCell, segmentsCell, flareCell, spotlightCell},
                      SharedSeen::FALLS_AND_RETURNS},
+                    {"  passing, RGBA16F on `arcs` alone - the emission table, its config held", GL_RGBA16F, 0, 1,
+                     GL_RGBA8, {arcsCell}, SharedSeen::FALLS_AND_RETURNS},
                     {"  passing, RG16F - the coverage table", GL_RG16F, 0, 1, GL_RG8, {arcsCell},
                      SharedSeen::ONLY_HALF_FLOAT},
                     {"  passing, RG16F - the segment table", GL_RG16F, 0, 1, GL_RG8, {segmentsCell},
@@ -573,6 +632,7 @@ namespace NeonScaleCheck
                 if (const Scene *small = FindScene("small_rect"))
                 {
                     failures += CheckFailedRetry(NeonCell(*small, Variant::STILL, SCALE_500), verbose);
+                    failures += CheckFlareFailedRetry(verbose);
                 }
                 else
                 {
@@ -588,7 +648,7 @@ namespace NeonScaleCheck
                 const RunResult kept = Run(lasting, false, {held});
                 failures += Summarise("  lasting", kept, Unprobed(lasting), verbose);
                 const auto record = std::find_if(kept.failedAllocations.begin(), kept.failedAllocations.end(),
-                                                 [](const RenderTargetFormats::FailedAllocation &failed)
+                                                 [](const FormatAvailability::FailedAllocation &failed)
                                                  { return failed.internalFormat == GL_RGBA16F && failed.outOfMemory; });
                 const bool found = record != kept.failedAllocations.end();
                 const double waitSeconds = found ? record->wait : 0.0;
@@ -603,13 +663,13 @@ namespace NeonScaleCheck
             }
 
             /// S: the neon, the flare and the spotlight drawn outside an
-            /// effect, each making its own RenderTargetFormats. Each must have
+            /// effect, each making its own FormatAvailability. Each must have
             /// probed the report's five formats by the end of Initialize and
             /// none after - no probe mid-frame - leave no GL error, and draw
             /// what A draws for the same cell, byte for byte.
             int CheckStandalone(const std::vector<Cell> &cells, const RunResult &a)
             {
-                std::printf("S - renderers outside an effect, each with its own RenderTargetFormats\n");
+                std::printf("S - renderers outside an effect, each with its own FormatAvailability\n");
                 std::ostringstream log;
                 std::streambuf *previous = std::cout.rdbuf(log.rdbuf());
                 const auto find = [&cells](const std::string &name)

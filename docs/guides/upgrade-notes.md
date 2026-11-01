@@ -297,7 +297,7 @@ marked **source break** stop a host compiling until it follows them.
 ## 8. Render-target formats are asked about first, and the GL error queue is read
 
 The library now asks the driver which formats it can render to before it
-allocates anything (`RenderTargetFormats`, I93), and keeps what each full-size
+allocates anything (`FormatAvailability`, I93), and keeps what each full-size
 allocation that failed says. On a GPU that renders every format it asks for -
 both Macs - no pixel moves. What a host can see:
 
@@ -341,15 +341,20 @@ both Macs - no pixel moves. What a host can see:
   `GetAllocationCount`, which moves on every allocation: compare it, not the
   size or format, to know a buffer's contents were replaced.
 - **A host's own renderer** compiles unchanged. `BaseRenderer` gains private
-  members and two protected methods, `GetRenderTargetFormats` and
-  `AdvanceOwnRenderTargetFormats`, so rebuild it with the library. A host
-  renderer with a buffer in a format a driver may refuse can allocate it
-  through `ResizeInBestFormat` (`core/render-target-formats.h`), as the
-  library's do. Drawn outside an effect, such a renderer gets an object of its
-  own from `GetRenderTargetFormats`, whose out-of-memory failures expire only
-  if its `Update` calls `AdvanceOwnRenderTargetFormats(deltaTime)`, as the
+  members and two protected methods, `GetFormatAvailability` and
+  `AdvanceOwnFormatAvailability`, so rebuild it with the library. A host
+  renderer with a buffer in a format a driver may refuse can hold it as an
+  `AdaptiveFormatTarget` (`core/adaptive-format-target.h`), as the library's
+  do - named, filtered and given its fallback cost at construction, sized by
+  `Ensure` with a `FormatList` (one of `LIBRARY_FORMAT_LISTS`, or its own
+  array), moved back up by `Refresh` once a frame before it decides to skip a
+  write, and any cache over it keyed on `GetGeneration`.
+  `SharedBuffer::Format` is now a typedef of `TextureFormat`, what every
+  format list holds, so a host's list still compiles. Drawn outside an effect, such a renderer gets an object of its
+  own from `GetFormatAvailability`, whose out-of-memory failures expire only
+  if its `Update` calls `AdvanceOwnFormatAvailability(deltaTime)`, as the
   library's renderers do.
-- **`EdgeLightingEffect::GetRenderTargetFormats()`** is public, for reading
+- **`EdgeLightingEffect::GetFormatAvailability()`** is public, for reading
   the answers (`GetAnswers`). Its setters (`SetRefusedFormats`,
   `SetFailedAllocations`, `SetUnknownFormats`, `SetMaxTextureSize`,
   `SetOutOfMemoryRetry`) are verification hooks for `neon-scale-check

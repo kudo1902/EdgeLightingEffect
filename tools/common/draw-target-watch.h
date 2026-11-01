@@ -3,7 +3,7 @@
 
 // Which formats the library's offscreen draws write, seen from the outside -
 // for neon-scale-check `formats`, which has to know that no draw lands in a
-// format RenderTargetFormats refused.
+// format FormatAvailability refused.
 //
 // The same trick as PassRecorder: GLAD reaches glDrawArrays (the only draw
 // call the library makes) through a global function pointer, and this puts a

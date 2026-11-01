@@ -8,10 +8,10 @@
 namespace EdgeLighting
 {
     // Declared, not included: this header reaches every host through
-    // edge-lighting.h, and render-target-formats.h brings the GL loader with
+    // edge-lighting.h, and format-availability.h brings the GL loader with
     // it - which collides with a host's own GL headers. A renderer that asks
-    // it a question includes core/render-target-formats.h itself.
-    class RenderTargetFormats;
+    // it a question includes core/format-availability.h itself.
+    class FormatAvailability;
 
     /// Which visual layer a renderer draws - its identity in
     /// @ref EdgeLightingEffect's layer calls (@ref EdgeLightingEffect::AddRenderer
@@ -143,24 +143,24 @@ namespace EdgeLighting
         }
 
         /// What this renderer's GL context can render to: the
-        /// @ref RenderTargetFormats of the effect it is registered with, set
+        /// @ref FormatAvailability of the effect it is registered with, set
         /// before @ref Initialize. Every buffer with a list of formats asks it
-        /// at its allocation, by allocating through @c ResizeInBestFormat
-        /// (core/render-target-formats.h). Never null: a renderer no effect holds makes
-        /// a private one on its first ask, and probes the library's formats
-        /// into it then - so a renderer that uses it calls this from its
-        /// Initialize, keeping that probe off the frame. Defined in
+        /// at its allocation, by being an AdaptiveFormatTarget
+        /// (core/adaptive-format-target.h), sized by
+        /// AdaptiveFormatTarget::Ensure. Never null: a renderer no effect holds
+        /// makes a private one on its first ask, and probes the library's
+        /// formats into it then - so a renderer that uses it calls this from
+        /// its Initialize, keeping that probe off the frame. Defined in
         /// base-renderer.cpp, since this header only declares the class.
-        RenderTargetFormats &GetRenderTargetFormats();
+        FormatAvailability &GetFormatAvailability();
 
         /// Move the frame time of the object this renderer made for itself
-        /// (@ref GetRenderTargetFormats, outside an effect) on by
+        /// (@ref GetFormatAvailability, outside an effect) on by
         /// @p deltaTime, so its out-of-memory failures expire as an effect's
-        /// do (RenderTargetFormats::Advance); a no-op on the effect's object,
+        /// do (FormatAvailability::Advance); a no-op on the effect's object,
         /// which the effect advances once a frame for all its renderers. A
-        /// renderer that allocates through ResizeInBestFormat calls this from
-        /// its Update.
-        void AdvanceOwnRenderTargetFormats(float deltaTime);
+        /// renderer with an AdaptiveFormatTarget calls this from its Update.
+        void AdvanceOwnFormatAvailability(float deltaTime);
 
     private:
         /// Only the effect hands a renderer its registry, once, as it registers
@@ -179,20 +179,20 @@ namespace EdgeLighting
         /// Called by @ref EdgeLightingEffect::AddRenderer, before Initialize,
         /// beside @ref setSharedBufferRegistry: one object per effect, so the
         /// effect's renderers share one answer per format.
-        void setRenderTargetFormats(const std::shared_ptr<RenderTargetFormats> &formats)
+        void setFormatAvailability(const std::shared_ptr<FormatAvailability> &availability)
         {
-            mRenderTargetFormats = formats;
-            mOwnsRenderTargetFormats = false;
+            mFormatAvailability = availability;
+            mOwnsFormatAvailability = false;
         }
 
     private:
         std::shared_ptr<SharedBufferRegistry> mSharedBufferRegistry; ///< See @ref GetSharedBufferRegistry.
-        /// See @ref GetRenderTargetFormats. A shared_ptr to a declared-only
+        /// See @ref GetFormatAvailability. A shared_ptr to a declared-only
         /// type is fine here: its deleter is captured where it is made.
-        std::shared_ptr<RenderTargetFormats> mRenderTargetFormats;
-        /// @c mRenderTargetFormats is one this renderer made, outside an
-        /// effect - see @ref AdvanceOwnRenderTargetFormats.
-        bool mOwnsRenderTargetFormats = false;
+        std::shared_ptr<FormatAvailability> mFormatAvailability;
+        /// @c mFormatAvailability is one this renderer made, outside an
+        /// effect - see @ref AdvanceOwnFormatAvailability.
+        bool mOwnsFormatAvailability = false;
     };
 
 } // namespace EdgeLighting

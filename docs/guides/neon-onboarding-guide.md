@@ -302,7 +302,7 @@ Things to know:
   RGBA16F needs an extension on GLES 3.0 (`EXT_color_buffer_half_float` or
   `EXT_color_buffer_float`; GLES 3.2 and desktop GL have it in core, with no
   extension listed). So the library asks before it allocates: the effect's
-  `RenderTargetFormats` probes each format once - a 4 x 4 texture, an FBO, the
+  `FormatAvailability` probes each format once - a 4 x 4 texture, an FBO, the
   status - and every buffer with a list of formats starts at the first one the
   driver renders. `Framebuffer::Resize` still returns false if a full-size
   allocation fails anyway, and the walk then tries the next format in its list.
@@ -1381,7 +1381,7 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormat`); no 8-bit fallback - where the driver cannot render it, the field is never built and the glow is shaded directly | only on configs the field serves (Part 5.5) |
 | `mRingField.buffer` | the edge ring's four strips, packed (`RingFieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
 
-Every "else" in that table is the effect's `RenderTargetFormats` deciding:
+Every "else" in that table is the effect's `FormatAvailability` deciding:
 each buffer with a list of formats asks it when it allocates and starts at the
 first format this driver renders, and the two fields ask it before their
 programs are built. On both development Macs every format renders, so the
@@ -1401,8 +1401,8 @@ names in their constructors, so a GL context must be current when a
 
 1. `ensureProgram` builds `mEmissionShader`, the one program every frame uses.
    Every other program, the fill's included, is built on first use.
-2. `ResizeInBestFormat`: allocate the 128x2 emission table, RGBA16F or
-   RGBA8 - the first the effect's `RenderTargetFormats` says this driver
+2. `AdaptiveFormatTarget::Ensure` (`ensureEmissionBuffer`): allocate the 128x2 emission table, RGBA16F or
+   RGBA8 - the first the effect's `FormatAvailability` says this driver
    renders (the effect's startup report probed both already, so this is a
    lookup). Fails `Initialize` only if neither format renders or allocates. The 1024x128
    coverage table is NOT allocated here: at 1 MB it is most of what the

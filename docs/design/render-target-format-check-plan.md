@@ -2,7 +2,9 @@
 
 Status: **built 2026-10-27 but for step 6** (reading the report on the Tizen
 device), not committed; **section 10 is what was built and measured.** Revised
-the same day to one central `RenderTargetFormats`. Steps 1-3 were built
+the same day to one central `RenderTargetFormats` - since 2026-10-31
+`FormatAvailability` (`core/format-availability.h`); this plan keeps the name
+it was written with. Steps 1-3 were built
 first in the FIRST design - each renderer probing its own lists in its
 `Initialize`, and a process-wide refusal hook on `Framebuffer` - and step 3R
 reworked them into the design below the same day; steps 4-7 follow it. Section 4.0 says why
@@ -1290,3 +1292,73 @@ a reallocation removed, `shared-buffer` fails nearly every cell and
 correction to the reasoning above: the blit reads two texels past the window
 on `small_rect` at 0.5, so an uncleared texel does show in the frame there,
 at the window's edge.
+
+**After an architecture review, 2026-10-31: one type owns a buffer and its
+format list.** The review traced the week's four defects to two obligations
+every buffer's owner met by hand: moving back up its list (7 skips of a walk,
+each asking `IsBelowBestRow` with its own list) and knowing its texels had been
+replaced (4 mechanisms - the emission bake's flag, the coverage tables' dirty
+masks, `BeginWrite`'s allocation count, the fields' recorded formats). Every
+buffer with a format list is now a `FormatTarget` (`core/format-target.h`): a
+Framebuffer sized only by `Ensure`, with a `Spec` - its list, filter and log
+names, one constant per list - which returns HELD, ALLOCATED or FAILED;
+`Refresh`, which moves it back up at the size it holds when a better row may be
+allocated now, and is the only caller of `IsBelowBestRow`; and
+`GetGeneration`, which moves with every allocation. Each renderer refreshes
+its buffers in one place, once a frame, before any skip is decided
+(`NeonRenderer::refreshTargets`, the top of the flare's `RenderOffscreen`), and
+every cache over a buffer's texels keys on its generation - the emission bake,
+the gather cache, the reused offscreen frame, the flare's cache, the shared
+buffer's clear (the generation its last write drew into); the coverage tables
+mark every piece dirty on ALLOCATED. The fields alone key on the format
+(`FieldInputFormats`), since a same-format reallocation recomputes the same
+texels. One type, `TextureFormat`, replaces four row types, and whether a format keeps
+values between 8-bit levels is `HoldsSubLevels(internalFormat)`.
+
+The review proposed a global epoch in `RenderTargetFormats` instead of the
+generations; not built, since an epoch cannot see a retry that fails and
+reallocates the same size and format - the shared buffer's defect - and a
+generation can, under the rule the caches already follow. Every gate passes,
+`formats`' output line for line unchanged. Removing each of the 6 refresh
+calls and 8 generation keys in turn fails `formats`, once D8 gained two
+checks: the emission table falling alone on `arcs`, whose config holds across
+the move (in the existing way a change of cell re-baked the table anyway), and
+a failed retry on the flare's buffer (a move to another format changes the
+cache's `dither` key, so only a same-format reallocation needs the
+generation). Not run on the AMD 5300M or the device.
+
+A second review of that, the same day, found the type easy to misuse and not
+yet enforced. It kept the address of the `Spec` it was handed, so a temporary
+or local one compiled cleanly and left `Refresh` with a dead object; it now
+copies it, and only the rows and strings the spec points at must outlive the
+target. And the walk - `ResizeInBestFormat`, `IsBelowBestRow`, `GetBestRow`,
+public templates over a row type with one instantiation - could still size a
+raw Framebuffer from a list; it is now private to `FormatTarget`, which
+`RenderTargetFormats` befriends for its private `firstToTry` / `getBestRow`,
+and `render-target-formats.h` shrank from 671 lines to 479. Every gate passes,
+`formats`' output unchanged.
+
+Last, a rename, the owner's call: `RenderTargetFormats` is now
+`FormatAvailability` (`core/format-availability.h` / `.cpp`), with
+`BaseRenderer::GetFormatAvailability` / `AdvanceOwnFormatAvailability`,
+`EdgeLightingEffect::GetFormatAvailability` and the walk's parameter
+`availability`. The object holds no target - it keeps which formats a driver
+can render and which allocations failed - and beside `FormatTarget`, a buffer
+with a format list, the old name read as a second kind of target. Its
+`Verdict` is now `ProbeResult`, and `Answer::verdict` is `Answer::result`: the
+name says the value is the probe's, as against the failed allocations kept
+beside it, and UNKNOWN - no conclusion - read oddly as a verdict. No behaviour
+moves; the sections above keep the old names.
+
+Then a review of `FormatTarget`: a target is named, filtered and given its
+fallback cost at construction and walks a `FormatList` (the `Spec` mixed the
+buffer's identity with its list, so every buffer had two names in the log);
+the walk itself is `FormatAvailability::allocateInBestFormat`, private, with
+`FormatTarget` its only way in; its "already held" test is
+`Framebuffer::Holds`, which `Resize`'s early-out asks too (the walk's copy
+left out the filter); `Ensured` is `EnsureResult`; and the library's lists are
+named once, in `LIBRARY_FORMAT_LISTS`, from which the startup report takes its
+rows - closing open item (5) of section 10, the report's hand-kept copy.
+`FormatTarget` is since called `AdaptiveFormatTarget`
+(`core/adaptive-format-target.h`): its format adapts, down its list and back
+up; this plan keeps the name it was written with.

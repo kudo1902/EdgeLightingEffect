@@ -4,7 +4,7 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "gl/framebuffer.h"
+#include "core/adaptive-format-target.h"
 
 #include <vector>
 
@@ -191,8 +191,7 @@ namespace EdgeLighting
 
         /// Allocate @c mScaledBuffer at @p width x @p height in the best
         /// format this context may render at that size - half float, else
-        /// RGBA8 - and leave @c mScaledFormat on it. See SCALED_FORMATS in the
-        /// .cpp.
+        /// RGBA8. See SCALED_FORMATS in the .cpp.
         /// @return false only if no format allocated, in which case there is
         ///         no attachment and nothing may be bound or cleared - Render
         ///         then draws at 1.0.
@@ -237,7 +236,7 @@ namespace EdgeLighting
         /// y-flipped ortho over the @p viewportWidth x @p viewportHeight app
         /// viewport, whatever the target's size - the viewport transform alone
         /// carries the scale. @p scaled says the target is the scaled buffer,
-        /// which picks @c uDither (see @c mScaledFormat). The caller sets the
+        /// whose format picks @c uDither (HoldsSubLevels). The caller sets the
         /// target and the blend (UseScreenBlend in the .cpp).
         void drawLamps(int viewportWidth, int viewportHeight, bool scaled, const Config &config);
 
@@ -254,12 +253,10 @@ namespace EdgeLighting
         /// a config stops asking for it. Half float where the driver renders
         /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer. Drawn by
         /// @ref RenderOffscreen, read by @ref Render.
-        Framebuffer mScaledBuffer{"Spotlight.Scaled"};
-        /// Index into SCALED_FORMATS (the .cpp) of the row @c mScaledBuffer
-        /// was last allocated in - what it holds, not where a walk resumes:
-        /// the walk keeps nothing (ResizeInBestFormat). Picks spotlight.frag's
-        /// @c uDither on the scaled path: 0 in half float, 1 in RGBA8.
-        size_t mScaledFormat = 0;
+        /// Its format picks spotlight.frag's @c uDither on the scaled path: 0
+        /// in half float, 1 in RGBA8.
+        AdaptiveFormatTarget mScaledBuffer{"Spotlight.Scaled", GL_LINEAR,
+                                           "The dark tail is rounded to 8 bits before the blit reads it."};
         /// The last frame that wanted the scaled path drew at 1.0, because no
         /// scaled buffer could be allocated: for logging the switch, both
         /// ways, once each.

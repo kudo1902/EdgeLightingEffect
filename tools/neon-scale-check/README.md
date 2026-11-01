@@ -40,7 +40,7 @@ The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 `EL_ROOT` and `EL_ROOT/build` so they match the library. A mode whose library
 API a checkout lacks is left out of that build: `sequence` (`NeonBypass`),
 `flare-reuse` (`LensFlareRenderer::SetBypass`) and `formats`
-(`core/render-target-formats.h`).
+(`core/format-availability.h`).
 
 ## `check`
 
@@ -357,7 +357,7 @@ that the script reaches the key.
 The library on a driver that refuses render-target formats - the 8-bit
 fallback rows, which neither Mac reaches, since both render every format the
 library asks for. The refusal is forced through the effect's
-`RenderTargetFormats` (`SetRefusedFormats`, a verification hook), on a fresh
+`FormatAvailability` (`SetRefusedFormats`, a verification hook), on a fresh
 effect per run, before `Initialize`; see
 [`docs/design/render-target-format-check-plan.md`](../../docs/design/render-target-format-check-plan.md)
 sections 4 and 6. It prints the GPU and the startup report, then draws 112
@@ -459,19 +459,24 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     frames stay within 2 levels of A's (1 on the M2 Pro) and the shared
     buffer RGBA16F; A must build the fill program.
   - **D8**, on cells of its own beside their own A: out of memory that
-    passes, and out of memory that lasts. Passing, six ways: only the
+    passes, and out of memory that lasts. Passing, seven ways: only the
     first allocation of one format fails (`ForcedFailure::count`); the cells
     are drawn, then a cell passes 3 s of frame time and lets the failure
     expire, then the cells are drawn again, and the waiting cell's last
     frame - the one after the buffers move back up - and each of those must
-    match A's byte for byte - every buffer moved back up (`IsBelowBestRow`),
-    those a still frame reuses included - with something drawn in the 8-bit
-    row meanwhile and the failure cleared, logged once.
+    match A's byte for byte - every buffer moved back up
+    (`AdaptiveFormatTarget::Refresh`), those a still frame reuses included, and
+    nothing read from the allocation the move left undefined - with
+    something drawn in the 8-bit row meanwhile and the failure cleared,
+    logged once.
     - RGBA16F, on `arcs`, `segments`, the flare and the spotlight: the
       emission table takes the failure, in `Initialize`, so the shared
       buffer (seen as RGBA8 and then RGBA16F), the gather, the four-channel
       coverage table and the flare's and the spotlight's scaled buffers draw
       in RGBA8.
+    - The same on `arcs` alone: the config holds across the move, so only
+      the emission bake's generation key re-bakes the table - in the first
+      way the change of cell re-bakes it anyway.
     - RG16F on `arcs`: the two-channel coverage table takes it, RG8.
     - RG16F on `segments`: the segment coverage table takes it, RG8.
     - RGBA16F from the viewport's size (D2's threshold) on `arcs`: only the
@@ -503,27 +508,35 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     texels outside it; the first version of this check ran on `arcs` and
     passed with the defect in place. With `BeginWrite`'s whole clear after
     an allocation reverted, all 86,400 held the gate's fill and the frame
-    differed too; with the fill off as well, the check passed.
+    differed too; with the fill off as well, the check passed. The same
+    failed retry on the flare's buffer, the flare alone: the walk lands on
+    the RGBA8 it had, the format the cache's key already holds, so only the
+    buffer's generation keeps the cache from blitting the fill - the frame
+    after it must be the held run's.
 
     Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
     be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,
     each doubling the wait) and end waiting 32 s until 62 s.
 
-    Each check the library makes for a passing shortage was disabled in turn,
-    and the case failed every time: the eight that move a buffer back up -
-    the emission table's, the gather cache's, the reused frame's two (the
-    shared buffer and, since 2026-10-29, the gather), the flare cache's, the
-    two coverage tables' and the fields' input check - plus a dropped field
-    baking again on the next frame and the shared buffer's whole clear after
-    an allocation. The viewport-sized and flare ways exist because the first
-    way did not catch the shared buffer's and the flare's; the gather way
-    runs at 1/16 because at 0.5 the shared buffer fell with the gather and
-    hid the reused frame's missing gather check. The fields' check came from
-    the second way, which failed before it existed: the edge ring's field,
-    baked from the 8-bit coverage table, was still composited after the table
-    moved up (`LazyBake::DropIfInputsMoved`).
+    Each guard the library keeps for a passing shortage was removed in turn
+    (2026-10-31, with every buffer a `FormatTarget`, now an
+    `AdaptiveFormatTarget`), and the case failed every time: the six refreshes that move a buffer back up (the emission
+    table, both coverage tables, the gather, the shared buffer, the flare's
+    buffer) and the eight generation keys that keep a cache from reading
+    the allocation a move leaves undefined (the emission bake, the two
+    coverage tables' dirty marks, the gather cache, the reused frame's two,
+    the flare's cache, the shared buffer's whole clear). The emission way on
+    `arcs` alone and the flare's failed retry exist because those two keys
+    passed without them. Before that, the viewport-sized and flare ways
+    came from the first way missing the shared buffer's and the flare's
+    move, and the gather way runs at 1/16 because at 0.5 the shared buffer
+    fell with the gather and hid the reused frame's missing gather check.
+    The fields' input check came from the RG16F-on-`arcs` way, which failed
+    before it existed: the edge ring's field, baked from the 8-bit coverage
+    table, was still composited after the table moved up
+    (`LazyBake::DropIfInputsMoved`).
   - **S**: the neon, the flare and the spotlight drawn outside an effect,
-    each making its own `RenderTargetFormats`: five probes by the end of
+    each making its own `FormatAvailability`: five probes by the end of
     `Initialize` and none after, no GL error, and every frame byte for byte
     A's for the same cell.
 
@@ -540,7 +553,7 @@ every Mac. Every case passes with it, so no buffer the gate reaches does. About 
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without
-asking `RenderTargetFormats` fails B, which is the point - built with the gather
+asking `FormatAvailability` fails B, which is the point - built with the gather
 buffer's walk not asking, or with the half-float fields' gate removed, it
 fails. A buffer or gate that takes an unknown answer for "no" fails E - built
 with the fields' gate asking `IsRenderable` instead of `MayAllocate`, or with

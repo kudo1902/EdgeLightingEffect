@@ -89,12 +89,12 @@ if(_el_flare_has_bypass)
     target_compile_definitions(neon-scale-check PRIVATE NEON_SCALE_CHECK_FLARE_REUSE=1)
 endif()
 
-# `formats` needs the effect's RenderTargetFormats, which a checkout from
+# `formats` needs the effect's FormatAvailability, which a checkout from
 # before it does not have, likewise.
 if(EL_ROOT)
-    set(_el_formats_header "${EL_ROOT}/lib/include/core/render-target-formats.h")
+    set(_el_formats_header "${EL_ROOT}/lib/include/core/format-availability.h")
 else()
-    set(_el_formats_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/core/render-target-formats.h")
+    set(_el_formats_header "${CMAKE_CURRENT_SOURCE_DIR}/../../lib/include/core/format-availability.h")
 endif()
 if(EXISTS "${_el_formats_header}")
     target_sources(neon-scale-check PRIVATE src/format-check.cpp src/format-check-run.cpp

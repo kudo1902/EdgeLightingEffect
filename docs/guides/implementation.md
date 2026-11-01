@@ -49,12 +49,12 @@ Concretely it holds:
 - a `vector<shared_ptr<BaseRenderer>>`, registered by the host.
 - two objects it hands to every renderer it registers, before the renderer's
   `Initialize`: the `SharedBufferRegistry`, through which a layer shares an
-  offscreen image (§3), and `RenderTargetFormats`
-  ([`core/render-target-formats.h`](../../lib/include/core/render-target-formats.h)) -
+  offscreen image (§3), and `FormatAvailability`
+  ([`core/format-availability.h`](../../lib/include/core/format-availability.h)) -
   what this GL context can render to. Each format is probed once (a 4 x 4
   texture and `glCheckFramebufferStatus`) and the answer kept; every buffer
   that has a list of formats, best first, asks it at its allocation and starts
-  at the first one the driver renders. `GetRenderTargetFormats()` exposes it,
+  at the first one the driver renders. `GetFormatAvailability()` exposes it,
   for its answers and for the verification hook `neon-scale-check formats`
   refuses formats through.
 

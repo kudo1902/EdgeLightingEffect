@@ -3,7 +3,7 @@
 
 #include "draw-target-watch.h"
 
-#include "core/render-target-formats.h"
+#include "core/format-availability.h"
 #include "gl/gl-header.h"
 
 #include <cstdio>
@@ -38,7 +38,7 @@ namespace NeonScaleCheck
         {
             std::ostringstream log;
             std::streambuf *previous = std::cout.rdbuf(log.rdbuf());
-            RenderTargetFormats report;
+            FormatAvailability report;
             report.LogReport();
             std::cout.rdbuf(previous);
             std::istringstream lines(log.str());

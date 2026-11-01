@@ -61,7 +61,7 @@
 //
 //   neon-scale-check formats
 //       A gate for the 8-bit fallback rows: the scenes drawn with formats
-//       refused through the effect's RenderTargetFormats (half float, then
+//       refused through the effect's FormatAvailability (half float, then
 //       everything) against nothing refused. No refused format may be drawn
 //       or alive, no field program may build, the frames must stay within
 //       their measured bounds, and refusing everything must drop the neon.

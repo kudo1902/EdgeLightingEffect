@@ -3,14 +3,14 @@
 
 // What `formats`' cases share (format-check.cpp, format-check-causes.cpp):
 // the cells a run draws, the hooks it sets on the effect's
-// RenderTargetFormats, one run on a fresh effect, and the helpers that judge
+// FormatAvailability, one run on a fresh effect, and the helpers that judge
 // what it left. See format-check.h for the cases themselves.
 
 #include "harness.h"
 #include "scenes.h"
 
 #include "core/config.h"
-#include "core/render-target-formats.h"
+#include "core/format-availability.h"
 #include "gl/gl-header.h"
 
 #include <glm/glm.hpp>
@@ -30,7 +30,7 @@ namespace NeonScaleCheck
         inline const std::vector<GLint> HALF_FLOAT = {GL_RGBA16F, GL_RG16F, GL_R16F};
         /// Every format the library allocates: nothing renders.
         inline const std::vector<GLint> EVERYTHING = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
-        /// The startup report's rows (RenderTargetFormats::LogReport): what a
+        /// The startup report's rows (FormatAvailability::LogReport): what a
         /// run probes, less what a hook answers instead.
         inline constexpr GLint REPORT_ROWS[] = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
 
@@ -80,12 +80,12 @@ namespace NeonScaleCheck
             glm::ivec4 window{0};      ///< SharedBuffer::GetLastWriteWindow: every texel outside it should be 0.
         } SharedRead;
 
-        /// What a run's RenderTargetFormats is told, through its verification
+        /// What a run's FormatAvailability is told, through its verification
         /// hooks.
         typedef struct Hooks
         {
             std::vector<GLint> refused;                  ///< SetRefusedFormats.
-            RenderTargetFormats::ForcedFailure failed;   ///< SetFailedAllocations: fails nothing by default.
+            FormatAvailability::ForcedFailure failed;   ///< SetFailedAllocations: fails nothing by default.
             std::vector<GLint> unknown;                  ///< SetUnknownFormats.
             int maxTextureSize = 0;                      ///< SetMaxTextureSize: 0 lowers nothing.
             double outOfMemoryRetry = -1.0;              ///< SetOutOfMemoryRetry; negative keeps the library's.
@@ -99,8 +99,8 @@ namespace NeonScaleCheck
             /// cell with readShared whose buffer was ready; empty otherwise.
             std::vector<SharedRead> sharedReads;
             bool neonPresent = false;             ///< The neon survived Initialize.
-            size_t probes = 0;                    ///< RenderTargetFormats::GetAnswers().size() at the end.
-            std::vector<RenderTargetFormats::FailedAllocation> failedAllocations; ///< What it kept at the end.
+            size_t probes = 0;                    ///< FormatAvailability::GetAnswers().size() at the end.
+            std::vector<FormatAvailability::FailedAllocation> failedAllocations; ///< What it kept at the end.
             int glErrorFrames = 0;                ///< Frames after which glGetError was not GL_NO_ERROR.
             std::map<GLint, long> drawFormats;    ///< Offscreen draws by the format they wrote.
             std::map<GLint, int> aliveFormats;    ///< Textures alive at the end, by format.

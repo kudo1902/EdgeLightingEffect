@@ -5,6 +5,146 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-31 - One type owns a buffer and its format list (I93)
+
+Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
+2026-10-31; the detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problem.** Moving a buffer back up its format list, and knowing its
+  texels had been replaced, were each owner's to get right at sites placed by
+  hand: 7 skips of a walk, each asking `IsBelowBestRow` with its own list, and
+  4 ways of saying "contents stale" - the emission bake's flag, the coverage
+  tables' dirty masks, `BeginWrite`'s allocation count, the fields' recorded
+  formats. Four defects in a week came from them: the ring field composited
+  after its input moved, the reused frame never asking about the gather,
+  `BeginWrite` missing a same-format reallocation, a dropped field waiting two
+  frames.
+- **What changed.**
+  - `FormatTarget` (`core/format-target.h`): a Framebuffer sized only through
+    the walk, by `Ensure` with a `Spec` - the list, filter and log names, one
+    constant per list - which says HELD, ALLOCATED or FAILED; `Refresh`, which
+    moves it back up at the size it holds when a better row may be allocated
+    now (`IsBelowBestRow`, asked only there); and `GetGeneration`, which moves
+    with every allocation. All nine buffers are one.
+  - Moving back up happens in one place per renderer, once a frame, before any
+    skip is decided: `NeonRenderer::refreshTargets` (the emission table, both
+    coverage tables, the gather, the shared buffer) and the top of the flare's
+    `RenderOffscreen`. The spotlight and the fields walk on every frame they
+    draw.
+  - Every cache over a buffer's texels keys on its generation: the emission
+    bake (`EmissionBake::generation`, for the `baked` flag), the gather cache,
+    the reused offscreen frame (`OffscreenState`), the flare's cache
+    (`FlareInputs::bufferGeneration`) and the shared buffer's whole clear - the
+    generation its last write drew into, so a Refresh earlier in the frame
+    counts too. The coverage tables mark every piece dirty on ALLOCATED. The
+    fields keep keying on the FORMAT (`FieldInputFormats`): a same-format
+    reallocation recomputes the same texels, which a field may keep reading.
+  - One type, `TextureFormat`, for every list's entries - the neon's
+    `TargetFormat` and the flare's and the spotlight's `ScaledFormat` are
+    gone, and so is the startup report's `ReportRow`, a fifth copy;
+    `SharedBuffer::Format` is its typedef, so a host's list still compiles.
+    "Row" stays the word for a position in a list (`getBestRow`,
+    `isBelowBestRow`, "the RGBA8 row"): a list is `formats` (`Spec::formats`),
+    one entry a `candidate`, a format's log name `name`.
+    Whether a format keeps values between 8-bit levels is the format's own
+    property (`HoldsSubLevels`), so `mScaledFormat` is gone too.
+  - Not built: the global epoch the review proposed. It cannot see a retry
+    that fails and reallocates the same size and format - what the shared
+    buffer's defect was - and the generation can; the rule the caches already
+    follow, "a key holds every input", then covers the move.
+  - Then, from a second architecture review the same day: `FormatTarget`
+    COPIES the `Spec` it is handed - it kept its address, so a temporary or
+    local `Spec` compiled without a warning (`-Wall -Wextra -Wdangling`) and
+    left `Refresh` reading a dead object; a probe that walks a function-local
+    `Spec` again after its stack is overwritten is clean under ASan and UBSan
+    and moves the buffer back up. And the walk is private to it, no longer a
+    template: `ResizeInBestFormat`, `IsBelowBestRow` and `GetBestRow` were
+    public templates over a row type with one instantiation, callable on a
+    raw Framebuffer; they are now `FormatTarget`'s own and
+    `RenderTargetFormats`' private `firstToTry` / `getBestRow`, with
+    `FormatTarget` its friend - so the compiler holds every buffer with a
+    format list to the type. `render-target-formats.h` went from 671 lines to
+    479, and no longer pulls in the GL wrappers or the log macros.
+  - Last, a rename, the owner's call: `RenderTargetFormats` is now
+    `FormatAvailability` (`core/format-availability.h` / `.cpp`), with
+    `BaseRenderer::GetFormatAvailability` / `AdvanceOwnFormatAvailability`,
+    `EdgeLightingEffect::GetFormatAvailability` and the walk's parameter
+    `availability`. It holds no target - which formats a driver can render
+    and which allocations failed - and beside `FormatTarget` the old name read
+    as a second kind of target. Its `Verdict` is now `ProbeResult`, and
+    `Answer::verdict` is `Answer::result`: the name says the value is the
+    probe's, as against the failed allocations kept beside it, and UNKNOWN
+    read oddly as a verdict. No behaviour moves: all seven gates pass, and
+    `formats`' output differs from the run before only in case S's heading,
+    which names the class. The bullets above and the entries below keep the
+    old names.
+  - Then its header was laid out the way the library's others are: nested
+    types first in each section - `FailedAllocation` and `ForcedFailure` had
+    sat among the hooks, `LoggedSkip` among the private methods - the methods
+    under group markers, and `FormatTarget`'s private methods and members
+    under separate labels, as AGENTS.md asks. Four private names said the
+    wrong thing: `isNewSkip` recorded the skip (now `recordSkip`),
+    `onAllocated` read as an event callback (`recordAllocation`), `IsRefused`
+    was public for the class's own use (`isForcedRefused`, beside
+    `isForcedUnknown`), and `mFailedSizes` held failed allocations
+    (`mFailedAllocations`). `FailedAllocation`'s fields are initialised, as
+    the other two structs' are.
+  - Then a review of `FormatTarget` itself, and six changes from it:
+    - The walk's "already held" test left out the filter, which `Resize`'s
+      early-out compares: a target whose filter changed would have
+      reallocated with the walk believing nothing had - no recovery recorded,
+      a forced failure skipped. Both now ask `Framebuffer::Holds`. No target
+      changes its filter today.
+    - A target is named, filtered and given what falling back costs it at
+      construction, and walks a `FormatList`: the `Spec` mixed the buffer's
+      identity with the list, so three pairs repeated their strings and
+      every buffer had two names that disagreed ("LensFlare.Scaled" from
+      `Framebuffer`, "LensFlareRenderer ... reduced-scale" from the walk). One
+      name now, in every line: "NeonRenderer.Gather: target unavailable in
+      RGBA16F at ...". `formats`' needles follow it.
+    - The walk lives in `FormatAvailability` (`allocateInBestFormat`, with
+      `isBelowBestRow` for `Refresh`), private, `FormatTarget` its only way
+      in: two friend calls where there were ten, and every decision and log
+      line in one class. Nothing else can size a buffer from a list, as
+      before.
+    - `Ensured` is `EnsureResult` (`Ensured::FAILED` read as a contradiction),
+      matching `ProbeResult`; `consequence` is `fallbackCost`.
+    - A list's length is counted from the array (`FormatList`'s constructor),
+      never written: the fields wrote `1` by hand.
+    - The library's lists are named once, in `core/format-availability.h`
+      (`RGBA16F_THEN_RGBA8`, `RG16F_THEN_RG8`, `R16F_ONLY`, `RG16F_ONLY`,
+      gathered in `LIBRARY_FORMAT_LISTS`), each buffer giving one a name of
+      its own that says why; the same two-entry list had been defined five
+      times in three files. The startup report's rows come from them - the
+      hand-kept copy that was open since the first architecture review is
+      gone, and a new list is reported without a second edit. Same rows, same
+      order.
+    - All seven gates pass, and `formats`' output is what it was before the
+      six, timings aside - every fallback line it counts found under its new
+      needle.
+  - Last, `FormatTarget` is now `AdaptiveFormatTarget`
+    (`core/adaptive-format-target.h` / `.cpp`), the owner's call: "format
+    target" read as "the format aimed at" and said nothing of what sets the
+    class apart from a Framebuffer - its format adapts, down a list when an
+    allocation fails and back up when it may, as an adaptive bitrate does. The
+    bullets above and the entries below keep the old name.
+  - Gate: D8 gains a way with the emission table falling alone on `arcs`,
+    whose config holds across the move, and a failed retry on the flare's
+    buffer; both added because removing the guard they cover passed
+    `formats` before them.
+- **Measured.** Apple M2 Pro: `formats`, `check`, `shared-buffer`,
+  `partition`, `clock`, `flare-reuse` and `sequence` pass, and `formats`'
+  output is line for line what it was before the change, timings aside.
+  Removing each of the 6 refresh calls and the 8 generation keys in turn fails
+  `formats` every time - 12 of 14 at first; the emission bake's key and the
+  flare cache's passed, which is what the two new D8 checks are for, and with
+  them both fail. Not run on the AMD 5300M or the device.
+- **Open.** The other five findings of that review: each invariant restated in
+  five to eight documents, the gate reading log text, the verification hooks
+  in the production class, the cross-buffer policy, a renderer outside an
+  effect advancing its own clock.
+
 ## 2026-10-29 - The gates that read the shared buffer, hardened (I93)
 
 Mostly committed as `e1c5724`; the rest (the `shared-buffer` table's marks,

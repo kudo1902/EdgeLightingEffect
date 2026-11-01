@@ -306,13 +306,13 @@ namespace NeonScaleCheck
             DrawTargetWatch::Reset();
             {
                 EdgeLightingEffect effect;
-                effect.GetRenderTargetFormats()->SetRefusedFormats(hooks.refused);
-                effect.GetRenderTargetFormats()->SetFailedAllocations(hooks.failed);
-                effect.GetRenderTargetFormats()->SetUnknownFormats(hooks.unknown);
-                effect.GetRenderTargetFormats()->SetMaxTextureSize(hooks.maxTextureSize);
+                effect.GetFormatAvailability()->SetRefusedFormats(hooks.refused);
+                effect.GetFormatAvailability()->SetFailedAllocations(hooks.failed);
+                effect.GetFormatAvailability()->SetUnknownFormats(hooks.unknown);
+                effect.GetFormatAvailability()->SetMaxTextureSize(hooks.maxTextureSize);
                 if (hooks.outOfMemoryRetry >= 0.0)
                 {
-                    effect.GetRenderTargetFormats()->SetOutOfMemoryRetry(hooks.outOfMemoryRetry);
+                    effect.GetFormatAvailability()->SetOutOfMemoryRetry(hooks.outOfMemoryRetry);
                 }
                 const std::shared_ptr<NeonRenderer> neon = std::make_shared<NeonRenderer>();
                 if (bypassFields)
@@ -402,8 +402,8 @@ namespace NeonScaleCheck
                     scanError = true;
                 }
                 result.glErrorFrames += scanError;
-                result.probes = effect.GetRenderTargetFormats()->GetAnswers().size();
-                result.failedAllocations = effect.GetRenderTargetFormats()->GetFailedAllocations();
+                result.probes = effect.GetFormatAvailability()->GetAnswers().size();
+                result.failedAllocations = effect.GetFormatAvailability()->GetFailedAllocations();
                 result.sharedReadyFrames = probe->GetReadyFrames();
                 result.sharedFormats = probe->GetFormats();
             }

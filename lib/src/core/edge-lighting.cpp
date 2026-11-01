@@ -1,6 +1,6 @@
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
-#include "core/render-target-formats.h"
+#include "core/format-availability.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
@@ -17,7 +17,7 @@ namespace EdgeLighting
     EdgeLightingEffect::EdgeLightingEffect()
         : mAnimationManager(std::make_unique<AnimationManager>()),
           mSharedBufferRegistry(std::make_shared<SharedBufferRegistry>()),
-          mRenderTargetFormats(std::make_shared<RenderTargetFormats>())
+          mFormatAvailability(std::make_shared<FormatAvailability>())
     {
     }
 
@@ -29,7 +29,7 @@ namespace EdgeLighting
         GLUtils::LogCaps();
         // Before any renderer's Initialize, so the report's probes are the
         // effect's: every format walk then finds its answer kept.
-        mRenderTargetFormats->LogReport();
+        mFormatAvailability->LogReport();
 
         bool allOk = true;
         for (auto it = mRenderers.begin(); it != mRenderers.end();)
@@ -55,7 +55,7 @@ namespace EdgeLighting
     {
         // The frame delta itself, not the clock's: an out-of-memory failure
         // expires in real time, and a paused clock must not keep it.
-        mRenderTargetFormats->Advance(deltaTime);
+        mFormatAvailability->Advance(deltaTime);
         mAnimationManager->Update(mClock.Update(deltaTime));
         refreshActiveConfig();
 
@@ -114,7 +114,7 @@ namespace EdgeLighting
         renderer->setSharedBufferRegistry(mSharedBufferRegistry);
         // And what this context renders to, for the same reason: a walk asks
         // it at its first allocation, which may be in Initialize.
-        renderer->setRenderTargetFormats(mRenderTargetFormats);
+        renderer->setFormatAvailability(mFormatAvailability);
 
         // Registering after Initialize used to leave the renderer with no
         // shaders: Initialize walks the list exactly once, so nothing would

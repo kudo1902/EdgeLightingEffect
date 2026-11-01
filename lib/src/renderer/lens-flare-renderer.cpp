@@ -1,13 +1,14 @@
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-tuning.h"
 #include "animation/clock.h"
-#include "core/render-target-formats.h"
+#include "core/adaptive-format-target.h"
 #include "shaders.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace EdgeLighting
@@ -23,19 +24,6 @@ namespace EdgeLighting
         /// this takes its own rather than sharing one with a renderer that may
         /// be enabled alongside it.
         constexpr GLuint GHOST_BLOCK_BINDING = 3;
-
-        /// One candidate format for @c mScaledBuffer.
-        typedef struct ScaledFormat
-        {
-            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
-            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
-            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
-            /// Whether this format holds the haze unrounded, so the flare draws
-            /// into it undithered and the blit alone dithers. False for RGBA8,
-            /// where lens-flare.frag has to dither into the buffer too.
-            bool holdsSubLevels;
-            const char *name; ///< For the fallback log line.
-        } ScaledFormat;
 
         /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
         /// pair the neon and the spotlight use, for the same reason (V32 in
@@ -68,14 +56,15 @@ namespace EdgeLighting
         /// Twice the memory: 960 x 540 texels at 1080p and 0.5 is 4.1 MB
         /// instead of 2.1.
         ///
-        /// resizeScaledBuffer asks the effect's RenderTargetFormats and starts
-        /// at the first row this driver renders. A format added here gets a
-        /// row in RenderTargetFormats::LogReport, the startup report.
-        constexpr ScaledFormat SCALED_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, true, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false, "RGBA8"},
-        };
-        constexpr size_t SCALED_FORMAT_COUNT = sizeof(SCALED_FORMATS) / sizeof(SCALED_FORMATS[0]);
+        /// Whether a row holds the haze unrounded - the flare then draws into
+        /// it undithered and the blit alone dithers - is the format's own
+        /// property (HoldsSubLevels): RGBA16F does, RGBA8 does not, and there
+        /// lens-flare.frag dithers into the buffer too.
+        ///
+        /// resizeScaledBuffer asks the effect's FormatAvailability and starts
+        /// at the first row this driver renders. One of the library's lists
+        /// (LIBRARY_FORMAT_LISTS), which the startup report asks.
+        constexpr auto &SCALED_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// CPU mirror of the shader's GhostBlock. std140 gives a vec4 array a
         /// 16-byte stride, which is glm::vec4's own size, so the array maps
@@ -267,7 +256,7 @@ namespace EdgeLighting
         // What this context renders to, asked now rather than on the first
         // scaled frame: outside an effect this makes the renderer's own object
         // and probes the library's formats into it here, not mid-frame.
-        GetRenderTargetFormats();
+        GetFormatAvailability();
         // mCurrentFlare is whatever the last OnConfigChanged left - the effect
         // calls it on registration, so by here it is usually the host's real
         // config rather than the defaults. Either way the block is filled from
@@ -279,9 +268,9 @@ namespace EdgeLighting
 
     void LensFlareRenderer::Update(float deltaTime, double time, const Config &config)
     {
-        // Outside an effect, the frame time its own RenderTargetFormats'
+        // Outside an effect, the frame time its own FormatAvailability's
         // out-of-memory failures expire by.
-        AdvanceOwnRenderTargetFormats(deltaTime);
+        AdvanceOwnFormatAvailability(deltaTime);
         // The rays' rotation, every frame, so a rate that moves while the
         // layer is off is integrated as it moved; drawFlare reads it again.
         mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate);
@@ -306,18 +295,20 @@ namespace EdgeLighting
         const float scale = GetClampedFlareScale(config);
         const glm::ivec2 target = GetFlareTargetSize(viewportWidth, viewportHeight, scale);
 
+        // A buffer that fell back past a format it may have again (an
+        // out-of-memory failure that expired) moves back up here, before the
+        // cache below is asked - or a still sun would keep it at 8 bits. The
+        // move is an allocation, which the key's generation sees.
+        mScaledBuffer.Refresh(GetFormatAvailability());
+
         // Nothing the pass reads has moved since the buffer was drawn: it
         // already holds this frame's flare, so Render blits it as it stands.
         // Byte-identical - the buffer is a pure function of FlareInputs, and
         // nothing else writes it. The common case is a still sun with the
         // rays not spinning (rotationRate 0, the default). No capture, no
         // bind, no draw: the caller's target is never left.
-        // Not when the buffer fell back past a format it may have again (an
-        // out-of-memory failure that expired): the walk below moves it back
-        // up, or a still sun would keep it at 8 bits.
         FlareInputs inputs = getFlareInputs(target, scale, viewportWidth, viewportHeight, time, config);
-        if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid() &&
-            !IsBelowBestRow(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT))
+        if (!mBypass && mScaledCache.drawn && mScaledCache.inputs == inputs && mScaledBuffer.IsValid())
         {
             mFrame.scaledReady = true;
             // The blend state a drawn frame leaves, so a reused one leaves the
@@ -364,9 +355,11 @@ namespace EdgeLighting
         {
             return;
         }
-        // The format the buffer now has, which a fallback above may have just
-        // changed: the draw and the key it is recorded under read the same.
+        // The allocation the buffer now holds, which the walk above may have
+        // just changed - format and generation: the draw and the key it is
+        // recorded under read the same.
         inputs.dither = scaledPassDithers();
+        inputs.bufferGeneration = mScaledBuffer.GetGeneration();
         // Bind, then clear to transparent black. Keep the two adjacent:
         // ClearBuffer acts on whatever is BOUND, so the bind is its
         // precondition rather than a nicety - see Framebuffer::ClearBuffer,
@@ -427,7 +420,7 @@ namespace EdgeLighting
         // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
         // no buffer: the flare shader is scale invariant, so this is exactly
         // the 1.0 path's frame. The walk remembers the failure with its size
-        // (RenderTargetFormats), so the frames after this try nothing until
+        // (FormatAvailability), so the frames after this try nothing until
         // the size drops below it. Logged when it starts and when it ends.
         const bool fellBack = scaled && !scaledReady;
         if (fellBack != mScaledFellBack)
@@ -584,19 +577,18 @@ namespace EdgeLighting
 
     bool LensFlareRenderer::resizeScaledBuffer(int width, int height)
     {
-        // Walk SCALED_FORMATS from the best row this context may render at
-        // this size (ResizeInBestFormat). The walk keeps nothing here: a
+        // Walk SCALED_FORMATS from the best row this context may render at this
+        // size (AdaptiveFormatTarget::Ensure). The walk keeps nothing here: a
         // refused format, or one whose allocation failed this large, is the
-        // effect's RenderTargetFormats' to remember, so a refusal is never
+        // effect's FormatAvailability's to remember, so a refusal is never
         // asked for again although the buffer is released between uses.
-        return ResizeInBestFormat(mScaledBuffer, GetRenderTargetFormats(), SCALED_FORMATS, SCALED_FORMAT_COUNT, width,
-                                  height, GL_LINEAR, 1, "LensFlareRenderer", "reduced-scale",
-                                  "The haze is rounded to 8 bits before the blit reads it.", &mScaledFormat);
+        return mScaledBuffer.Ensure(GetFormatAvailability(), SCALED_FORMATS, width, height) !=
+               AdaptiveFormatTarget::EnsureResult::FAILED;
     }
 
     bool LensFlareRenderer::scaledPassDithers() const
     {
-        return !SCALED_FORMATS[mScaledFormat].holdsSubLevels;
+        return !HoldsSubLevels(mScaledBuffer.GetInternalFormat());
     }
 
     void LensFlareRenderer::bakeGhostBlock(const LensFlareConfig &flare)
@@ -708,6 +700,7 @@ namespace EdgeLighting
         inputs.rotationTurns = getRotationTurns(time, config);
         inputs.ghostUploads = mGhostBlock.GetUploadCount();
         inputs.dither = scaledPassDithers();
+        inputs.bufferGeneration = mScaledBuffer.GetGeneration();
         return inputs;
     }
 

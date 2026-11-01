@@ -103,6 +103,16 @@ namespace EdgeLighting
             return *this;
         }
 
+        /// Whether the buffer already holds exactly this allocation - what
+        /// @ref Resize compares for its early-out, which allocates nothing.
+        /// A caller that has to know before calling Resize whether it will
+        /// allocate asks this, so the two cannot disagree.
+        bool Holds(int width, int height, GLint internalFormat, GLint filter, int colorAttachments) const
+        {
+            return mFbo != 0 && width == mWidth && height == mHeight && internalFormat == mInternalFormat &&
+                   filter == mFilter && colorAttachments == mAttachmentCount;
+        }
+
         /// Allocates or resizes the colour attachment(s) to @p width × @p height.
         /// No-op when the FBO already exists at the requested size **and** the
         /// same format / filter / attachment count - safe to call every frame
@@ -149,7 +159,7 @@ namespace EdgeLighting
         ///       incomplete framebuffer: after GL_OUT_OF_MEMORY the spec leaves
         ///       the GL's state undefined, completeness included, and that
         ///       error is the full-size failure a format walk falls back on
-        ///       (ResizeInBestFormat). So on the allocation path - never on the
+        ///       (AdaptiveFormatTarget::Ensure). So on the allocation path - never on the
         ///       early-out - it drains the errors pending on entry first, each
         ///       logged as a warning, since they are the caller's; and it
         ///       unbinds the pixel-unpack buffer for the uploads, as
@@ -162,7 +172,7 @@ namespace EdgeLighting
         ///        before allocating, or GL_FRAMEBUFFER_UNSUPPORTED for more
         ///        attachments than the driver allows - and GL_NO_ERROR on
         ///        success. A format walk keeps a failure by its cause
-        ///        (RenderTargetFormats): out of memory by size, anything else
+        ///        (FormatAvailability): out of memory by size, anything else
         ///        by format and attachment count.
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
@@ -194,9 +204,7 @@ namespace EdgeLighting
                 return fail(GL_INVALID_VALUE);
             }
 
-            if (mFbo != 0 && width == mWidth && height == mHeight &&
-                internalFormat == mInternalFormat && filter == mFilter &&
-                colorAttachments == mAttachmentCount)
+            if (Holds(width, height, internalFormat, filter, colorAttachments))
             {
                 return true;
             }
@@ -373,15 +381,15 @@ namespace EdgeLighting
         /// status - 0 when there is none: the upload failed (then
         /// @p uploadError, if given, receives the error @c glTexImage2D raised -
         /// a format or pair this GL does not know, or GL_OUT_OF_MEMORY), or the
-        /// status query itself raised an error. RenderTargetFormats reads the
-        /// two together into one verdict (RenderTargetFormats::Verdict): an
+        /// status query itself raised an error. FormatAvailability reads the
+        /// two together into one result (FormatAvailability::ProbeResult): an
         /// upload that raised GL_INVALID_ENUM or GL_INVALID_VALUE - the
         /// internal format itself rejected - is a "no"; any other status of 0
         /// is no answer about the format, kept as unknown, and the walk lets
         /// the full-size allocation decide that format.
         ///
         /// The raw, uncached check: the library asks it through the effect's
-        /// @c RenderTargetFormats, which probes each format once and keeps the
+        /// @c FormatAvailability, which probes each format once and keeps the
         /// answer (and holds the verification hook that refuses formats), so
         /// call that rather than this from a renderer.
         ///
@@ -401,7 +409,7 @@ namespace EdgeLighting
         ///
         /// @pre A GL context is current. Not per frame: ~0.03 ms, and a texture
         ///      and a framebuffer created and deleted (AMD 5300M) - which is
-        ///      why RenderTargetFormats calls it once per format.
+        ///      why FormatAvailability calls it once per format.
         /// @note Leaves the DRAW framebuffer binding, the active unit's 2D
         ///       texture binding and the pixel-unpack buffer binding as it
         ///       found them; the read binding is never touched. The unpack
@@ -414,7 +422,7 @@ namespace EdgeLighting
         ///       misread as its own: those are drained first, each logged as a
         ///       warning naming the format being probed, since they are the
         ///       caller's. GL keeps no way to raise them again - which is why
-        ///       RenderTargetFormats probes the formats the library uses at
+        ///       FormatAvailability probes the formats the library uses at
         ///       Initialize and keeps every answer, so none is probed
         ///       mid-frame.
         static bool IsColorRenderable(GLint internalFormat, GLenum format, GLenum type, GLenum *status = nullptr,

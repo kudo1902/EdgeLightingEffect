@@ -64,7 +64,7 @@ Built plans:
 | [`neon-glow-cover-resolution-plan.md`](design/neon-glow-cover-resolution-plan.md) | The glow coverage table sized per light type, and what it measured. |
 | [`neon-shader-cleanup-plan.md`](design/neon-shader-cleanup-plan.md) | The neon's program slots and shader variants before the cleanup, and why each was kept or cut. |
 | [`spotlight-renderer-plan.md`](design/spotlight-renderer-plan.md) | The spotlight's design and the offscreen verification behind it. |
-| [`render-target-format-check-plan.md`](design/render-target-format-check-plan.md) | Asking the driver which render-target formats it can draw into before allocating: a probe, cached per effect in one `RenderTargetFormats` that the startup report, every format walk and the half-float fields ask, and `neon-scale-check formats`, which refuses formats so the 8-bit fallbacks run. Built but for step 6 (the device); section 10 is what was measured. |
+| [`render-target-format-check-plan.md`](design/render-target-format-check-plan.md) | Asking the driver which render-target formats it can draw into before allocating: a probe, cached per effect in one `FormatAvailability` that the startup report, every format walk and the half-float fields ask, and `neon-scale-check formats`, which refuses formats so the 8-bit fallbacks run. Built but for step 6 (the device); section 10 is what was measured. |
 
 Studies of specific mechanisms:
 

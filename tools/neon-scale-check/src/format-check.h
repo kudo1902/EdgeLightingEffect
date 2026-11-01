@@ -5,7 +5,7 @@ namespace NeonScaleCheck
 {
     /// `neon-scale-check formats [--verbose]`: the library on a driver that
     /// refuses render-target formats, forced through the effect's
-    /// RenderTargetFormats (SetRefusedFormats) on the GPU it runs on - the
+    /// FormatAvailability (SetRefusedFormats) on the GPU it runs on - the
     /// 8-bit fallback rows that no Mac reaches otherwise.
     ///
     /// Prints the GPU and the startup report, then draws every `check` scene
@@ -47,7 +47,7 @@ namespace NeonScaleCheck
     ///     coverage table's RG16F and RG8 refused, then failing every
     ///     allocation;
     ///   - S: the neon, the flare and the spotlight drawn outside an effect,
-    ///     each with its own RenderTargetFormats.
+    ///     each with its own FormatAvailability.
     /// It fails if:
     ///   - a run probes other than the report's five formats less the ones a
     ///     hook answers (5, 2, 2, 0, 5, 2, 5, 5, 5, 5, 5, 5, 3, 5 for A, B, B
@@ -57,7 +57,7 @@ namespace NeonScaleCheck
     ///     its Initialize, or any after;
     ///   - in B, any offscreen draw writes a refused format, or any texture
     ///     alive at the end has one - what a buffer allocated without asking
-    ///     RenderTargetFormats does - or the shared buffer is ever ready in
+    ///     FormatAvailability does - or the shared buffer is ever ready in
     ///     anything but RGBA8;
     ///   - in B, a field program links (A must link all three), or any frame
     ///     differs by a byte from the fields-bypassed run's;
@@ -110,7 +110,7 @@ namespace NeonScaleCheck
     ///     fill program, the proof that check can fail;
     ///   - in D8, with only the first allocation of one format failing -
     ///     RGBA16F (the emission table's; on `arcs`, `segments`, the flare and
-    ///     the spotlight), RG16F on `arcs` (the coverage table's), RG16F on
+    ///     the spotlight, and on `arcs` alone), RG16F on `arcs` (the coverage table's), RG16F on
     ///     `segments` (the segment table's), RGBA16F from the viewport's size
     ///     on `arcs` (the shared buffer's) and on the flare (its buffer's),
     ///     and RGBA16F at two attachments on `segments` at scale 1/16 (the
@@ -129,12 +129,14 @@ namespace NeonScaleCheck
     ///     texel of the shared buffer (read back), differs from a run whose
     ///     failure is held, or a texel outside its last write's window
     ///     (SharedBuffer::GetLastWriteWindow) is not 0, or none lies outside
-    ///     it - then the check proves nothing;
+    ///     it - then the check proves nothing; the same failure on the
+    ///     flare alone, the flare's frame after its failed retry differs
+    ///     from the held run's;
     ///     and with every RGBA16F allocation failing over 40
     ///     frames 1 s apart, it is not tried exactly 5 times (0, 2, 6, 14,
     ///     30 s: one retry per expiry, each doubling the wait) or does not end
     ///     waiting 32 s until 62 s. D and D6 failing hold their failure for
-    ///     the run (RenderTargetFormats::SetOutOfMemoryRetry, infinity);
+    ///     the run (FormatAvailability::SetOutOfMemoryRetry, infinity);
     ///   - in S, a frame differs by a byte from A's frame of the same cell,
     ///     or leaves a GL error.
     /// Returns the process exit code. See docs/design/render-target-format-check-plan.md,

@@ -1,7 +1,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-tuning.h"
 #include "animation/clock.h"
-#include "core/render-target-formats.h"
+#include "core/format-availability.h"
 #include "util/geometry-utils.h"
 #include "util/segment-utils.h"
 #include "shaders.h"
@@ -199,19 +199,13 @@ namespace EdgeLighting
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1; ///< LoopSamplesBlock: the gather only.
         constexpr GLuint ARC_BLOCK_BINDING = 2;          ///< ArcBlock: neon.frag and both bakes.
 
-        /// One candidate texture format for a buffer that walks a list - the
-        /// emission table, the glow coverage table and the gather buffer (see
-        /// ResizeInBestFormat). Each walk asks the effect's RenderTargetFormats
-        /// at its allocation and starts at the first row this driver renders.
-        /// A format added to any list below gets a row in
-        /// RenderTargetFormats::LogReport, the startup report.
-        typedef struct TargetFormat
-        {
-            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
-            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
-            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
-            const char *name;     ///< For the fallback log line.
-        } TargetFormat;
+        // Every buffer below with a format list is an AdaptiveFormatTarget,
+        // walking the list named here (AdaptiveFormatTarget::Ensure) - each a
+        // name for one of the library's lists (LIBRARY_FORMAT_LISTS,
+        // core/format-availability.h), which the startup report asks. Each walk
+        // asks the effect's FormatAvailability and starts at the first row this
+        // driver renders. A buffer's filter and what falling back costs it are
+        // its own, at its member (neon-renderer.h).
 
         /// Emission-table formats in PREFERENCE ORDER, best first.
         ///
@@ -221,8 +215,8 @@ namespace EdgeLighting
         /// through an extension, so RGBA8 follows for drivers that refuse it -
         /// the picture is otherwise identical, but highlights above 1.0 clamp.
         ///
-        /// Adding a candidate is adding a row; ResizeInBestFormat walks whatever
-        /// is here.
+        /// A different list is a new one among the library's
+        /// (LIBRARY_FORMAT_LISTS), so the startup report asks its formats too.
         ///
         /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS, GATHER_FORMATS AND
         /// SCALED_FORMATS HAVE A LIST. They are the only ones that ask for a
@@ -238,10 +232,7 @@ namespace EdgeLighting
         /// pass re-amplifies; the reduced buffer stores output, in [0, 1], but
         /// output the blit dithers on its way out (R7), which 8 bits of storage
         /// would already have rounded - see SCALED_FORMATS.
-        constexpr TargetFormat EMISSION_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
-        };
+        constexpr auto &EMISSION_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// Glow-coverage-table formats in PREFERENCE ORDER, best first - walked
         /// by @ref NeonRenderer::ensureGlowCoverBuffer. Float for the same
@@ -250,19 +241,13 @@ namespace EdgeLighting
         /// c / (1 + c), as the gather buffer is, so the RGBA8 row loses
         /// precision rather than clamping. Half float is texture-filterable in
         /// GLES 3.0 core, which the consumer's linear fetch needs.
-        constexpr TargetFormat GLOW_COVER_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
-        };
+        constexpr auto &GLOW_COVER_FORMATS = RGBA16F_THEN_RGBA8;
         /// The same list with two channels: the table of a config with no
         /// segments, whose .b / .a (the segments' halo and bloom coverage) are
         /// zero at every texel - half the memory, and half the bytes per fetch
         /// - and the segment table's. Each walk over it starts where this
         /// context renders at that table's size, on its own.
-        constexpr TargetFormat GLOW_COVER_FORMATS_RG[] = {
-            {GL_RG16F, GL_RG, GL_HALF_FLOAT, "RG16F"},
-            {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, "RG8"},
-        };
+        constexpr auto &GLOW_COVER_FORMATS_RG = RG16F_THEN_RG8;
 
         /// How long, in seconds of frame time, the glow coverage table may go
         /// unread before Update releases it. Long enough that an arc animation
@@ -271,7 +256,8 @@ namespace EdgeLighting
         constexpr float GLOW_COVER_RELEASE_SECONDS = 5.0f;
 
         /// Gather-buffer formats in PREFERENCE ORDER, best first - walked by
-        /// ResizeInBestFormat, from @ref NeonRenderer::renderGatherPass.
+        /// AdaptiveFormatTarget::Ensure, from
+        /// @ref NeonRenderer::renderGatherPass.
         ///
         /// RGBA16F leads because the gather's results are DATA that pass 1 and
         /// the edge ring shade from - multiplied by intensity, the falloffs and
@@ -286,10 +272,7 @@ namespace EdgeLighting
         /// (1.1 MB for a 120 x 80 rect at 0.5). Half float is texture-filterable
         /// in GLES 3.0 core; only RENDERING to it needs an extension, which is
         /// what the RGBA8 row is for.
-        constexpr TargetFormat GATHER_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
-        };
+        constexpr auto &GATHER_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// The reduced buffer's formats in PREFERENCE ORDER, best first - walked
         /// by SharedBuffer::BeginWrite (@c mScaled).
@@ -308,19 +291,9 @@ namespace EdgeLighting
         /// texels) - 4.1 MB at 1080p and 0.5 now that the buffer is the whole
         /// viewport.
         ///
-        /// SharedBuffer::BeginWrite asks the effect's RenderTargetFormats and
-        /// starts at the first row this driver renders. A format added here
-        /// gets a row in RenderTargetFormats::LogReport, the startup report.
-        constexpr SharedBuffer::Format SCALED_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
-        };
-
-        /// GL_NEAREST because the consumer reads the table with texelFetch:
-        /// adjacent texels are unrelated perimeter samples (and the two rows
-        /// are different quantities entirely), so filtering across them is
-        /// meaningless.
-        constexpr GLint EMISSION_FILTER = GL_NEAREST;
+        /// SharedBuffer::BeginWrite asks the effect's FormatAvailability and
+        /// starts at the first row this driver renders.
+        constexpr auto &SCALED_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// Smallest resolution scale the passes will honour. Not a taste
         /// judgement about how blurry is too blurry - it keeps the scaled
@@ -1244,31 +1217,17 @@ namespace EdgeLighting
             return config.neon.enable && (!rotating || ringOpaque);
         }
 
-        /// A field's render-target format.
-        typedef struct FieldFormat
-        {
-            GLint internalFormat; ///< GL_R16F or GL_RG16F.
-            GLenum format;        ///< GL_RED or GL_RG.
-        } FieldFormat;
+        /// The fields' formats as lists of one, for their walks and for the
+        /// gates' question. Half float alone: no 8-bit row (renderFieldPass).
+        constexpr auto &FIELD_FORMATS_R = R16F_ONLY;
+        constexpr auto &FIELD_FORMATS_RG = RG16F_ONLY;
 
         /// The fields' format: Fa alone (R16F) without segments, Fa and Fs
         /// (RG16F, twice the memory) with them - the composite's
-        /// uFieldSegments has to agree, so both read @p effectiveSegments. A
-        /// format added here gets a row in RenderTargetFormats::LogReport, the
-        /// startup report.
-        inline FieldFormat GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
+        /// uFieldSegments has to agree, so both read @p effectiveSegments.
+        inline const TextureFormat &GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
         {
-            return effectiveSegments.empty() ? FieldFormat{GL_R16F, GL_RED} : FieldFormat{GL_RG16F, GL_RG};
-        }
-
-        /// The fields' format as a list of one for ResizeInBestFormat - the
-        /// walk every buffer with a format allocates through - and for the
-        /// gates' question. Half float alone: no 8-bit row (renderFieldPass).
-        inline TargetFormat GetFieldTarget(const std::vector<SegmentBoost> &effectiveSegments)
-        {
-            const FieldFormat format = GetFieldFormat(effectiveSegments);
-            return TargetFormat{format.internalFormat, format.format, GL_HALF_FLOAT,
-                                format.internalFormat == GL_R16F ? "R16F" : "RG16F"};
+            return effectiveSegments.empty() ? FIELD_FORMATS_R[0] : FIELD_FORMATS_RG[0];
         }
 
         /// Whether this config's shading can be factored into the hue-invariant
@@ -2193,9 +2152,9 @@ namespace EdgeLighting
         // be integrated as it moved. RenderOffscreen reads it again for the
         // same time, which moves nothing.
         mHuePhase.AdvanceCyclePhase(time, config.neon.hueRotationRate);
-        // Outside an effect, the frame time its own RenderTargetFormats'
+        // Outside an effect, the frame time its own FormatAvailability's
         // out-of-memory failures expire by.
-        AdvanceOwnRenderTargetFormats(deltaTime);
+        AdvanceOwnFormatAvailability(deltaTime);
 
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // without any config change to announce it. Nothing here has to say
@@ -2314,6 +2273,12 @@ namespace EdgeLighting
             return;
         }
 
+        // Every buffer a frame may skip writing, moved back up its format
+        // list if a format it fell back past may be allocated again - before
+        // anything below decides to skip, so each skip needs only the
+        // buffer's generation in its key.
+        refreshTargets();
+
         // The programs the glow draws with, compiled on the first frame -
         // see ensureGlowPrograms. A failure is logged once and the
         // frame degrades to the fill: no glow, nothing stale. The glow
@@ -2384,21 +2349,17 @@ namespace EdgeLighting
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
-        // either. Nor when either buffer fell back past a format it may have
-        // again (an out-of-memory failure that expired): the walks of passes
-        // 1a and 1b move them back up, or a still frame would keep them at 8
-        // bits. Both, each for itself: the gather's failure need not reach
-        // the shared buffer, whose move would re-run the gather too. At a
-        // scale at or below GATHER_MIN_SCALE the gather runs at the reduced
-        // buffer's own scale, so on a rect near the viewport's size its
-        // region - rounded up to whole REGION_ALLOC_STEPs, with a footprint,
-        // two attachments with segments - is the larger allocation (96 x 64
-        // x 2 texels against 80 x 45 at 0.0625 and 720p).
-        const bool reuseOffscreen =
-            glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) && !emissionStale &&
-            !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight) &&
-            !mScaled->IsBelowBestFormat(GetRenderTargetFormats()) &&
-            !IsBelowBestRow(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS, std::size(GATHER_FORMATS));
+        // either. Nor when either buffer was allocated since it was drawn -
+        // by refreshTargets above, moving it back up its format list, above
+        // all: its texels are undefined. Both, each for itself: at a scale at
+        // or below GATHER_MIN_SCALE the gather's buffer can be the larger
+        // allocation (96 x 64 x 2 texels against 80 x 45 at 0.0625 and 720p),
+        // so one can move without the other.
+        const bool reuseOffscreen = glowReady && mOffscreen.reusable && !bypasses(NeonBypass::OFFSCREEN) &&
+                                    !emissionStale && !glowCoverStale &&
+                                    mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight) &&
+                                    mOffscreen.scaledGeneration == mScaled->GetGeneration() &&
+                                    mOffscreen.gatherGeneration == mGather.buffer.GetGeneration();
         // The shading factored into the hue-invariant field (1f) and its
         // composite (1c), in pass 1b's place where the config allows it, on
         // LazyBake's schedule. A frame that reuses its offscreen buffers has
@@ -2414,7 +2375,7 @@ namespace EdgeLighting
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
         // Whether a field of @p texels may be allocated in its half-float
         // format (GetFieldFormat: R16F, RG16F with segments), asked of the
-        // effect's RenderTargetFormats - a lookup, the startup report having
+        // effect's FormatAvailability - a lookup, the startup report having
         // probed both. MayAllocate, not IsRenderable: a format the probe could
         // not judge is the allocation's to decide, as in every walk. And with
         // the size: a bake whose allocation failed is recorded there, so the
@@ -2425,9 +2386,9 @@ namespace EdgeLighting
         // format follows the segments, the size the rect.
         const auto fieldTargetAllowed = [this](const glm::ivec2 &texels)
         {
-            const TargetFormat target = GetFieldTarget(mEffectiveSegments);
-            return GetRenderTargetFormats().MayAllocate(target.internalFormat, target.format, target.type, texels.x,
-                                                        texels.y, 1);
+            const TextureFormat &fieldFormat = GetFieldFormat(mEffectiveSegments);
+            return GetFormatAvailability().MayAllocate(fieldFormat.internalFormat, fieldFormat.format,
+                                                        fieldFormat.type, texels.x, texels.y, 1);
         };
         if (glowReady && !mGlowField.schedule.unavailable && !bypasses(NeonBypass::GLOW_FIELD) &&
             IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
@@ -2523,16 +2484,13 @@ namespace EdgeLighting
             // and no texel of it: the quad settles on the widest one the
             // animation reaches, and the gather stops running.
             const GatherInputs gatherInputs = getGatherInputs(config, viewportWidth, viewportHeight);
-            // Nor a buffer that fell back past a format it may have again (an
-            // out-of-memory failure that expired): the pass's walk moves it
-            // back up. reuseOffscreen asks the same, since it skips this pass
-            // whatever this says.
+            // Nor a buffer allocated since it was drawn (refreshTargets moving
+            // it back up its format list): its texels are undefined.
             const bool gatherCurrent = !bypasses(NeonBypass::GATHER) && mGather.cache.drawn &&
                                        mGather.buffer.IsValid() &&
+                                       mGather.cache.generation == mGather.buffer.GetGeneration() &&
                                        gatherInputs == mGather.cache.inputs &&
-                                       AnnulusCovers(mGather.cache.bounds, mGatherBounds) &&
-                                       !IsBelowBestRow(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS,
-                                                       std::size(GATHER_FORMATS));
+                                       AnnulusCovers(mGather.cache.bounds, mGatherBounds);
             const BufferRegion gatherRegion =
                 gatherCurrent ? mGather.cache.region
                               : GetBufferRegion(mGatherBounds.outer, centerFull, viewportWidth, viewportHeight,
@@ -2546,7 +2504,8 @@ namespace EdgeLighting
                 glDisable(GL_BLEND);
                 glowReady =
                     renderGatherPass(GetRegionProjection(gatherRegion, scale), gatherRegion.texels, scale, config);
-                mGather.cache = GatherCache{glowReady, gatherInputs, mGatherBounds, gatherRegion};
+                mGather.cache =
+                    GatherCache{glowReady, gatherInputs, mGatherBounds, gatherRegion, mGather.buffer.GetGeneration()};
             }
 
             // A field held from an earlier frame is composited only over
@@ -2635,6 +2594,8 @@ namespace EdgeLighting
         // exactly.
         mOffscreen.reusable = glowReady && !field.use;
         mOffscreen.viewport = glm::ivec2(viewportWidth, viewportHeight);
+        mOffscreen.scaledGeneration = mScaled->GetGeneration();
+        mOffscreen.gatherGeneration = mGather.buffer.GetGeneration();
 
         // The shared buffer holds this frame's image now - drawn, or reused,
         // which keeps its version - unless a pass failed. Every frame that has
@@ -3288,23 +3249,42 @@ namespace EdgeLighting
                              PROGRAM_FILL, 0, "opaque mode will draw no fill");
     }
 
+    void NeonRenderer::refreshTargets()
+    {
+        // A move is an allocation: its texels are undefined. The emission
+        // table, the gather and the shared buffer are told by the generation
+        // their caches key on (isEmissionTableStale, GatherCache,
+        // OffscreenState); the coverage tables are re-baked by piece, so
+        // every piece is marked here. A move that fails leaves a buffer
+        // without one, which its ensure function or walk allocates afresh.
+        FormatAvailability &availability = GetFormatAvailability();
+        mEmission.buffer.Refresh(availability);
+        if (mGlowCover.buffer.Refresh(availability) == AdaptiveFormatTarget::EnsureResult::ALLOCATED)
+        {
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
+        if (mGlowCover.segBuffer.Refresh(availability) == AdaptiveFormatTarget::EnsureResult::ALLOCATED)
+        {
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
+        mGather.buffer.Refresh(availability);
+        mScaled->Refresh(availability);
+    }
+
     bool NeonRenderer::ensureEmissionBuffer()
     {
-        // Every frame, and free while the table holds its best row: the
-        // common case, decided by one comparison in IsBelowBestRow.
-        RenderTargetFormats &targets = GetRenderTargetFormats();
-        if (mEmission.buffer.IsValid() &&
-            !IsBelowBestRow(mEmission.buffer, targets, EMISSION_FORMATS, std::size(EMISSION_FORMATS)))
+        // Every frame that draws the glow, and a lookup while the table
+        // holds: it moves only in refreshTargets. A fresh allocation holds
+        // undefined texels, which isEmissionTableStale sees by the
+        // generation - the table is baked again before anything reads it,
+        // which moves its version and so re-runs the gather too.
+        if (mEmission.buffer.IsValid())
         {
             return true;
         }
-        // A fresh allocation holds undefined texels: the table is baked again
-        // before anything reads it (isEmissionTableStale), which moves its
-        // version and so re-runs the gather too.
-        mEmission.bake.baked = false;
-        return ResizeInBestFormat(mEmission.buffer, targets, EMISSION_FORMATS, std::size(EMISSION_FORMATS),
-                                  NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1, "NeonRenderer", "emission",
-                                  "Arc intensities and stacked segment boosts above 1.0 will clamp.");
+        return mEmission.buffer.Ensure(GetFormatAvailability(), EMISSION_FORMATS, NEON_MAX_LOOP_SAMPLES, 2) !=
+               AdaptiveFormatTarget::EnsureResult::FAILED;
     }
 
     bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
@@ -3331,33 +3311,23 @@ namespace EdgeLighting
         {
             const GLint format = mGlowCover.buffer.GetInternalFormat();
             const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
-            // Nor when it fell back past a format that may be tried again
-            // now (an out-of-memory failure that expired): the walk below
-            // moves it back up.
-            const bool belowBest =
-                twoChannel ? IsBelowBestRow(mGlowCover.buffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
-                                            std::size(GLOW_COVER_FORMATS_RG))
-                           : IsBelowBestRow(mGlowCover.buffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS,
-                                            std::size(GLOW_COVER_FORMATS));
-            mainHolds = (!segments || !twoChannel) && !belowBest &&
-                        widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
+            // A table that fell back past a format it may have again is moved
+            // back up by refreshTargets, not here.
+            mainHolds = (!segments || !twoChannel) && widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
             fourChannel = segments || !twoChannel;
         }
         if (!mainHolds)
         {
             const GlowCoverLayout layout = MakeGlowCoverLayout(mGlowCover.wantedWidth);
 
-            // Over GLOW_COVER_FORMATS (or its RG twin), with a linear filter:
-            // the consumer interpolates between neighbouring positions round
-            // each piece. The walk keeps nothing here: the verdicts and any
-            // failed allocation are the effect's RenderTargetFormats', so a
-            // buffer released with the layer, or when it goes unread, loses
-            // nothing.
-            const TargetFormat *formats = fourChannel ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG;
-            const size_t formatCount = fourChannel ? std::size(GLOW_COVER_FORMATS) : std::size(GLOW_COVER_FORMATS_RG);
-            if (!ResizeInBestFormat(mGlowCover.buffer, GetRenderTargetFormats(), formats, formatCount, layout.width,
-                                    GLOW_COVER_HEIGHT, GL_LINEAR, 1, "NeonRenderer", "glow coverage",
-                                    "The halo and bloom coverage will be stored at 8 bits."))
+            // Over GLOW_COVER_FORMATS or its RG twin, by channel count. The
+            // walk keeps nothing here: the probe results and any failed
+            // allocation are the effect's FormatAvailability's, so a buffer
+            // released with the layer, or when it goes unread, loses nothing.
+            const FormatList formats =
+                fourChannel ? FormatList(GLOW_COVER_FORMATS) : FormatList(GLOW_COVER_FORMATS_RG);
+            if (mGlowCover.buffer.Ensure(GetFormatAvailability(), formats, layout.width, GLOW_COVER_HEIGHT) ==
+                AdaptiveFormatTarget::EnsureResult::FAILED)
             {
                 return false;
             }
@@ -3379,7 +3349,7 @@ namespace EdgeLighting
         //
         // A segment table this context cannot allocate at the size it needs -
         // every row of its list refused, or already failed that large
-        // (RenderTargetFormats keeps both) - keeps the segments in the main
+        // (FormatAvailability keeps both) - keeps the segments in the main
         // table's bake. Asked BEFORE the mode moves, so a frame whose config
         // wants the table does not flip into its mode only to flip straight
         // back, re-baking every segment piece twice; and asked on every such
@@ -3388,9 +3358,7 @@ namespace EdgeLighting
         // fill program that will not build, which no size changes.
         bool direct = !segments || mGlowCover.segWantedDirect;
         const bool segHolds =
-            mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width) &&
-            !IsBelowBestRow(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
-                            std::size(GLOW_COVER_FORMATS_RG));
+            mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width);
         if (!direct && !segHolds)
         {
             direct = !segmentTableMayAllocate();
@@ -3432,12 +3400,11 @@ namespace EdgeLighting
         // Two channels, in the best of the RG list this context may render at
         // the segment table's own size. Should the allocation fail anyway, the
         // segments go back into the main table for this frame; the failure is
-        // RenderTargetFormats' to remember, so the check above keeps them
+        // FormatAvailability's to remember, so the check above keeps them
         // there at this size or larger and lets the table try again below it.
         const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
-        if (!ResizeInBestFormat(mGlowCover.segBuffer, GetRenderTargetFormats(), GLOW_COVER_FORMATS_RG,
-                                std::size(GLOW_COVER_FORMATS_RG), segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
-                                "NeonRenderer", "segment coverage", "The segments' coverage will be stored at 8 bits."))
+        if (mGlowCover.segBuffer.Ensure(GetFormatAvailability(), GLOW_COVER_FORMATS_RG, segLayout.width,
+                                        GLOW_COVER_HEIGHT) == AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             mGlowCover.segDirect = true;
             mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
@@ -3451,12 +3418,12 @@ namespace EdgeLighting
     bool NeonRenderer::segmentTableMayAllocate()
     {
         const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
-        RenderTargetFormats &targets = GetRenderTargetFormats();
+        FormatAvailability &availability = GetFormatAvailability();
         return std::any_of(std::begin(GLOW_COVER_FORMATS_RG), std::end(GLOW_COVER_FORMATS_RG),
-                           [&](const TargetFormat &row)
+                           [&](const TextureFormat &candidate)
                            {
-                               return targets.MayAllocate(row.internalFormat, row.format, row.type, segLayout.width,
-                                                          GLOW_COVER_HEIGHT, 1);
+                               return availability.MayAllocate(candidate.internalFormat, candidate.format,
+                                                               candidate.type, segLayout.width, GLOW_COVER_HEIGHT, 1);
                            });
     }
 
@@ -4124,7 +4091,8 @@ namespace EdgeLighting
 
     bool NeonRenderer::isEmissionTableStale(float huePhase, const Config &config) const
     {
-        if (!mEmission.bake.baked || getEmissionInputs(config) != mEmission.bake.inputs)
+        if (mEmission.bake.generation != mEmission.buffer.GetGeneration() ||
+            getEmissionInputs(config) != mEmission.bake.inputs)
         {
             return true;
         }
@@ -4169,7 +4137,7 @@ namespace EdgeLighting
 
     NeonRenderer::FieldInputFormats NeonRenderer::getFieldInputFormats(const Config &config) const
     {
-        const auto formatOf = [](const Framebuffer &buffer)
+        const auto formatOf = [](const AdaptiveFormatTarget &buffer)
         { return buffer.IsValid() ? buffer.GetInternalFormat() : GLint(0); };
         FieldInputFormats formats;
         formats.emission = formatOf(mEmission.buffer);
@@ -4340,7 +4308,7 @@ namespace EdgeLighting
         // What the buffer now holds. Recorded by the only writer of it, so the
         // staleness test upstream can never describe a bake that did not run.
         mEmission.bake.inputs = getEmissionInputs(config);
-        mEmission.bake.baked = true;
+        mEmission.bake.generation = mEmission.buffer.GetGeneration();
         mEmission.bake.huePhase = huePhase;
         ++mEmission.bake.version;
     }
@@ -4530,11 +4498,10 @@ namespace EdgeLighting
         // In the best format this context may render at this size
         // (GATHER_FORMATS). The buffer is released whenever the glow has
         // nothing to draw (OnConfigChanged), which loses nothing: what the walk
-        // learned is kept by the effect's RenderTargetFormats.
+        // learned is kept by the effect's FormatAvailability.
         const int attachments = mEffectiveSegments.empty() ? 1 : 2;
-        if (!ResizeInBestFormat(mGather.buffer, GetRenderTargetFormats(), GATHER_FORMATS, std::size(GATHER_FORMATS),
-                                texels.x, texels.y, GL_LINEAR, attachments, "NeonRenderer", "gather",
-                                "Below resolutionScale 1.0 the glow reads up to ~2/255 further from 1.0."))
+        if (mGather.buffer.Ensure(GetFormatAvailability(), GATHER_FORMATS, texels.x, texels.y, attachments) ==
+            AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             return false;
         }
@@ -4570,9 +4537,10 @@ namespace EdgeLighting
         // so 8 bits would move whole levels - a driver that cannot render to
         // half float shades directly instead. NEAREST: the composite reads one
         // texel per fragment, its own.
-        const TargetFormat target = GetFieldTarget(mEffectiveSegments);
-        if (!ResizeInBestFormat(mGlowField.buffer, GetRenderTargetFormats(), &target, 1, texels.x, texels.y,
-                                GL_NEAREST, 1, "NeonRenderer", "hue-invariant field", ""))
+        const FormatList formats =
+            mEffectiveSegments.empty() ? FormatList(FIELD_FORMATS_R) : FormatList(FIELD_FORMATS_RG);
+        if (mGlowField.buffer.Ensure(GetFormatAvailability(), formats, texels.x, texels.y) ==
+            AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the hue-invariant field's half-float target failed to allocate - the glow is "
                   "shaded directly.");
@@ -4613,7 +4581,7 @@ namespace EdgeLighting
         {
             mScaled->ForgetContents();
         }
-        if (!mScaled->BeginWrite(texels, window, GetRenderTargetFormats()))
+        if (!mScaled->BeginWrite(texels, window, GetFormatAvailability()))
         {
             return false;
         }
@@ -4644,7 +4612,7 @@ namespace EdgeLighting
         {
             mScaled->ForgetContents();
         }
-        if (!mScaled->BeginWrite(texels, window, GetRenderTargetFormats()))
+        if (!mScaled->BeginWrite(texels, window, GetFormatAvailability()))
         {
             return false;
         }
@@ -4680,9 +4648,10 @@ namespace EdgeLighting
         // Half float, one channel or two, NEAREST - as the shading's field,
         // for its reasons (renderFieldPass).
         const RingFieldLayout &layout = mRingField.layout;
-        const TargetFormat target = GetFieldTarget(mEffectiveSegments);
-        if (!ResizeInBestFormat(mRingField.buffer, GetRenderTargetFormats(), &target, 1, layout.atlas.x,
-                                layout.atlas.y, GL_NEAREST, 1, "NeonRenderer", "edge ring field", ""))
+        const FormatList formats =
+            mEffectiveSegments.empty() ? FormatList(FIELD_FORMATS_R) : FormatList(FIELD_FORMATS_RG);
+        if (mRingField.buffer.Ensure(GetFormatAvailability(), formats, layout.atlas.x, layout.atlas.y) ==
+            AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the edge ring's field's half-float target failed to allocate - the ring is "
                   "shaded directly.");
