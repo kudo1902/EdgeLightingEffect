@@ -3309,7 +3309,7 @@ namespace EdgeLighting
         if (mGlowCover.buffer.IsValid())
         {
             const GLint format = mGlowCover.buffer.GetInternalFormat();
-            const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
+            const bool twoChannel = FormatList(GLOW_COVER_FORMATS_RG).Contains(format);
             // A table that fell back past a format it may have again is moved
             // back up by refreshTargets, not here.
             mainHolds = (!segments || !twoChannel) && widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
@@ -4530,8 +4530,8 @@ namespace EdgeLighting
         // so 8 bits would move whole levels - a driver that cannot render to
         // half float shades directly instead. NEAREST: the composite reads one
         // texel per fragment, its own.
-        if (mGlowField.buffer.Ensure(GetFormatAvailability(), GetFieldFormats(mEffectiveSegments), texels.x,
-                                     texels.y) ==
+        const FormatList formats = GetFieldFormats(mEffectiveSegments);
+        if (mGlowField.buffer.Ensure(GetFormatAvailability(), formats, texels.x, texels.y) ==
             AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the hue-invariant field's half-float target failed to allocate - the glow is "
@@ -4640,8 +4640,8 @@ namespace EdgeLighting
         // Half float, one channel or two, NEAREST - as the shading's field,
         // for its reasons (renderFieldPass).
         const RingFieldLayout &layout = mRingField.layout;
-        if (mRingField.buffer.Ensure(GetFormatAvailability(), GetFieldFormats(mEffectiveSegments), layout.atlas.x,
-                                     layout.atlas.y) ==
+        const FormatList formats = GetFieldFormats(mEffectiveSegments);
+        if (mRingField.buffer.Ensure(GetFormatAvailability(), formats, layout.atlas.x, layout.atlas.y) ==
             AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             LOG_E("NeonRenderer: the edge ring's field's half-float target failed to allocate - the ring is "

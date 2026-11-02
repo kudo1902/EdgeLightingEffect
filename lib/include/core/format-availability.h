@@ -69,6 +69,19 @@ namespace EdgeLighting
         /// Never from a temporary array: it would not outlive the call.
         template <size_t N>
         FormatList(const TextureFormat (&&list)[N]) = delete;
+
+        /// Whether the list holds @p internalFormat.
+        constexpr bool Contains(GLint internalFormat) const
+        {
+            for (size_t i = 0; i < count; ++i)
+            {
+                if (formats[i].internalFormat == internalFormat)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     } FormatList;
 
     /// The library's format lists, best first. Every library buffer with a
@@ -233,6 +246,14 @@ namespace EdgeLighting
             int count = 0;                   ///< Only the first this many allocations it selects fail - a shortage that passes; 0 fails every one.
         } ForcedFailure;
 
+        // --- Construction ----------------------------------------------------
+
+        FormatAvailability() = default;
+        /// Neither copied nor moved: the effect hands out one object, and a
+        /// copy's hooks and failures would reach no walk.
+        FormatAvailability(const FormatAvailability &) = delete;
+        FormatAvailability &operator=(const FormatAvailability &) = delete;
+
         // --- Asking about a format -------------------------------------------
 
         /// The answer for @p internalFormat: probed on the first ask, with
@@ -282,7 +303,8 @@ namespace EdgeLighting
 
         // --- Frame time: what an out-of-memory failure expires by ------------
 
-        /// Move frame time on by @p seconds (a negative step counts as 0):
+        /// Move frame time on by @p seconds (a negative or non-finite step
+        /// counts as 0):
         /// the clock an out-of-memory failure expires by. Called by
         /// @ref EdgeLightingEffect::Update with the host's frame delta - real
         /// time between frames, not the effect's Clock, which a host may

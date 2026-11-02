@@ -148,6 +148,26 @@ Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
       first walk that reaches it, mid-frame, clearing the frame's pending GL
       errors; `SharedBuffer`'s constructor, `AdaptiveFormatTarget::Ensure` and
       the upgrade notes now say to ask it from `Initialize`.
+  - Then a review of the implementation (2026-11-02): no serious defect,
+    and six small things, fixed:
+    - `Advance` clamped a negative step but let NaN and infinity through
+      (`std::max(NaN, 0.0)` is NaN): one non-finite delta from a C++ host held
+      the frame time there for good, every out-of-memory failure reading as
+      expired - a failed allocation and an ERROR line every frame while a
+      shortage held. A non-finite step now counts as 0, as a negative one
+      does. (The C ABI already refused such a delta.)
+    - `FormatAvailability` was copyable, so a copy's hooks compiled and
+      refused nothing; it is now neither copied nor moved.
+    - The coverage table told a two-channel table by `GL_RG16F || GL_RG8`, a
+      second copy of `RG16F_THEN_RG8`: it asks `FormatList::Contains`.
+    - An empty list - a host's `SharedBuffer` built with no formats - failed
+      every frame without a word: it now warns once.
+    - Two awkward wraps at the fields' `Ensure` calls, and a stale
+      `GetFieldFormat` in the onboarding guide.
+    A probe with no GL context checked the first, second and fourth: steps of
+    NaN, infinity and -5 between 1 and 0.5 leave the time at 1.5, the copy and
+    move constructors are gone, and three walks over an empty list fail with
+    one warning.
   - Gate: D8 gains a way with the emission table falling alone on `arcs`,
     whose config holds across the move, and a failed retry on the flare's
     buffer; both added because removing the guard they cover passed

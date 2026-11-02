@@ -4,6 +4,7 @@
 #include "util/log-util.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -36,7 +37,8 @@ namespace EdgeLighting
                 }
             }
             std::stable_partition(rows.begin(), rows.end(),
-                                  [](const TextureFormat &row) { return HoldsSubLevels(row.internalFormat); });
+                                  [](const TextureFormat &row)
+                                  { return HoldsSubLevels(row.internalFormat); });
             return rows;
         }
 
@@ -160,6 +162,18 @@ namespace EdgeLighting
             buffer.Release();
             return false;
         }
+        // A list with nothing in it - a host's SharedBuffer built with no
+        // formats - has nothing to try, ever: said once, rather than failing
+        // every frame without a word.
+        if (formats.count == 0)
+        {
+            if (recordSkip(target, "no formats"))
+            {
+                LOG_W("%s: target has no formats to try - nothing is allocated.", target);
+            }
+            buffer.Release();
+            return false;
+        }
         // Past the context's texture size limit: every row would fail alike,
         // so none is tried and nothing is kept against a format.
         if (isPastSizeLimit(width, height))
@@ -242,7 +256,7 @@ namespace EdgeLighting
     }
 
     size_t FormatAvailability::firstToTry(const FormatList &formats, size_t from, int width, int height,
-                                           int attachments, const char *target)
+                                          int attachments, const char *target)
     {
         for (size_t index = from; index < formats.count; ++index)
         {
@@ -306,7 +320,7 @@ namespace EdgeLighting
     }
 
     void FormatAvailability::recordFailedAllocation(GLint internalFormat, int width, int height, int attachments,
-                                                     GLenum failure)
+                                                    GLenum failure)
     {
         // Memory by its total size; anything else by its attachment count
         // alone - size is not what failed it, the texture size limit being
@@ -380,7 +394,8 @@ namespace EdgeLighting
         // again. Not on any other allocation - a skip for a refusal, or a
         // failure that does not expire, is said once.
         mLoggedSkips.erase(std::remove_if(mLoggedSkips.begin(), mLoggedSkips.end(),
-                                          [format](const LoggedSkip &logged) { return logged.format == format; }),
+                                          [format](const LoggedSkip &logged)
+                                          { return logged.format == format; }),
                            mLoggedSkips.end());
     }
 
@@ -400,7 +415,13 @@ namespace EdgeLighting
 
     void FormatAvailability::Advance(double seconds)
     {
-        mTime += std::max(seconds, 0.0);
+        // A negative step counts as 0, and so does one that is not finite:
+        // NaN or infinity would hold mTime there for good, every out-of-memory
+        // failure reading as expired - a failed allocation every frame.
+        if (std::isfinite(seconds) && seconds > 0.0)
+        {
+            mTime += seconds;
+        }
     }
 
     int FormatAvailability::GetMaxTextureSize() const
@@ -494,7 +515,7 @@ namespace EdgeLighting
     }
 
     void FormatAvailability::logSkipped(const char *target, const char *format, const char *nextFormat,
-                                         const Answer &answer)
+                                        const Answer &answer)
     {
         if (!recordSkip(target, format))
         {
@@ -517,7 +538,7 @@ namespace EdgeLighting
     }
 
     void FormatAvailability::logSkippedAfterFailure(const char *target, const char *format, const char *nextFormat,
-                                                     int width, int height, int attachments, const char *reason)
+                                                    int width, int height, int attachments, const char *reason)
     {
         if (!recordSkip(target, format))
         {
