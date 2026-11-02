@@ -42,6 +42,12 @@ namespace EdgeLighting
             return rows;
         }
 
+        /// What recordSkip keeps in place of a format's name for a skip that
+        /// is no format's: a buffer past the texture size limit, a list with
+        /// no formats in it.
+        const char *const SKIP_SIZE_LIMIT = "size limit";
+        const char *const SKIP_NO_FORMATS = "no formats";
+
         /// What a log line adds when a verification hook gave the answer, so
         /// its log does not read as a device's.
         const char *const REFUSED_BY_HOOK = "refused by FormatAvailability::SetRefusedFormats";
@@ -139,7 +145,7 @@ namespace EdgeLighting
         readLimits();
         for (const TextureFormat &row : GetReportRows())
         {
-            Ask(row.internalFormat, row.format, row.type);
+            Ask(row);
         }
     }
 
@@ -152,34 +158,8 @@ namespace EdgeLighting
                                                   const char *fallbackCost, int width, int height, int attachments)
     {
         const char *target = buffer.GetName();
-        // A size Resize refuses without allocating: no format failed, so
-        // nothing is recorded. Released all the same, as a failed walk
-        // promises: what it holds was sized for another frame.
-        if (width <= 0 || height <= 0 || attachments <= 0)
+        if (rejectsOutright(buffer, formats, width, height, attachments))
         {
-            LOG_E("%s: target requested at %d x %d with %d attachment(s) - refused.", target, width, height,
-                  attachments);
-            buffer.Release();
-            return false;
-        }
-        // A list with nothing in it - a host's SharedBuffer built with no
-        // formats - has nothing to try, ever: said once, rather than failing
-        // every frame without a word.
-        if (formats.count == 0)
-        {
-            if (recordSkip(target, "no formats"))
-            {
-                LOG_W("%s: target has no formats to try - nothing is allocated.", target);
-            }
-            buffer.Release();
-            return false;
-        }
-        // Past the context's texture size limit: every row would fail alike,
-        // so none is tried and nothing is kept against a format.
-        if (isPastSizeLimit(width, height))
-        {
-            logPastSizeLimit(target, width, height);
-            buffer.Release();
             return false;
         }
         const int64_t texels = static_cast<int64_t>(width) * height * attachments;
@@ -214,19 +194,8 @@ namespace EdgeLighting
             // The line below says it; no skip line for it later.
             recordSkip(target, candidate.name);
             const size_t next = firstToTry(formats, index + 1, width, height, attachments, target);
-            const std::string cause = describeFailure(failure);
-            const char *hook = forced ? " (failed by FormatAvailability::SetFailedAllocations)" : "";
-            if (next < formats.count)
-            {
-                LOG_E("%s: target unavailable in %s at %d x %d x %d (%s), falling back to %s. %s%s", target,
-                      candidate.name, width, height, attachments, cause.c_str(), formats.formats[next].name,
-                      fallbackCost, hook);
-            }
-            else
-            {
-                LOG_E("%s: target unavailable in %s at %d x %d x %d (%s), and no format is left to try.%s", target,
-                      candidate.name, width, height, attachments, cause.c_str(), hook);
-            }
+            logFallback(target, candidate.name, next < formats.count ? formats.formats[next].name : nullptr, width,
+                        height, attachments, failure, forced, fallbackCost);
             index = next;
         }
         // Nothing allocated - and when no row could even be tried, the buffer
@@ -234,6 +203,43 @@ namespace EdgeLighting
         // again at this size. Give it back, as a failed Resize would have.
         buffer.Release();
         return false;
+    }
+
+    bool FormatAvailability::rejectsOutright(Framebuffer &buffer, const FormatList &formats, int width, int height,
+                                             int attachments)
+    {
+        const char *target = buffer.GetName();
+        // A size Resize refuses without allocating: no format failed, so
+        // nothing is recorded.
+        if (width <= 0 || height <= 0 || attachments <= 0)
+        {
+            LOG_E("%s: target requested at %d x %d with %d attachment(s) - refused.", target, width, height,
+                  attachments);
+        }
+        // A list with nothing in it - a host's SharedBuffer built with no
+        // formats - has nothing to try, ever: said once, rather than failing
+        // every frame without a word.
+        else if (formats.count == 0)
+        {
+            if (recordSkip(target, SKIP_NO_FORMATS))
+            {
+                LOG_W("%s: target has no formats to try - nothing is allocated.", target);
+            }
+        }
+        // Past the context's texture size limit: every row would fail alike,
+        // so none is tried and nothing is kept against a format.
+        else if (isPastSizeLimit(width, height))
+        {
+            logPastSizeLimit(target, width, height);
+        }
+        else
+        {
+            return false;
+        }
+        // Released all the same, as a failed walk promises: what the buffer
+        // holds was sized for another frame.
+        buffer.Release();
+        return true;
     }
 
     bool FormatAvailability::isBelowBestRow(const Framebuffer &buffer, const FormatList &formats)
@@ -262,7 +268,7 @@ namespace EdgeLighting
         {
             const TextureFormat &candidate = formats.formats[index];
             const char *nextFormat = index + 1 < formats.count ? formats.formats[index + 1].name : nullptr;
-            const Answer answer = Ask(candidate.internalFormat, candidate.format, candidate.type);
+            const Answer answer = Ask(candidate);
             if (answer.result == ProbeResult::REFUSED)
             {
                 logSkipped(target, candidate.name, nextFormat, answer);
@@ -284,7 +290,7 @@ namespace EdgeLighting
         for (size_t index = 0; index < formats.count; ++index)
         {
             const TextureFormat &candidate = formats.formats[index];
-            if (MayAllocate(candidate.internalFormat, candidate.format, candidate.type, width, height, attachments))
+            if (MayAllocate(candidate, width, height, attachments))
             {
                 return index;
             }
@@ -453,7 +459,7 @@ namespace EdgeLighting
     void FormatAvailability::logPastSizeLimit(const char *target, int width, int height)
     {
         // Once per target, as a skip is: the walk asks every frame.
-        if (!recordSkip(target, "size limit"))
+        if (!recordSkip(target, SKIP_SIZE_LIMIT))
         {
             return;
         }
@@ -497,6 +503,24 @@ namespace EdgeLighting
         }
         std::snprintf(text, sizeof(text), "0x%x", failure);
         return text;
+    }
+
+    void FormatAvailability::logFallback(const char *target, const char *format, const char *nextFormat, int width,
+                                         int height, int attachments, GLenum failure, bool forced,
+                                         const char *fallbackCost)
+    {
+        const std::string cause = describeFailure(failure);
+        const char *hook = forced ? " (failed by FormatAvailability::SetFailedAllocations)" : "";
+        if (nextFormat)
+        {
+            LOG_E("%s: target unavailable in %s at %d x %d x %d (%s), falling back to %s. %s%s", target, format, width,
+                  height, attachments, cause.c_str(), nextFormat, fallbackCost, hook);
+        }
+        else
+        {
+            LOG_E("%s: target unavailable in %s at %d x %d x %d (%s), and no format is left to try.%s", target,
+                  format, width, height, attachments, cause.c_str(), hook);
+        }
     }
 
     bool FormatAvailability::recordSkip(const char *target, const char *format)
@@ -569,7 +593,7 @@ namespace EdgeLighting
         const auto start = std::chrono::steady_clock::now();
         for (const TextureFormat &row : GetReportRows())
         {
-            const Answer answer = Ask(row.internalFormat, row.format, row.type);
+            const Answer answer = Ask(row);
             switch (answer.result)
             {
             case ProbeResult::RENDERABLE:

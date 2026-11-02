@@ -4,7 +4,6 @@
 #include "core/format-availability.h"
 #include "gl/framebuffer.h"
 #include "gl/gl-header.h"
-#include <cstddef>
 #include <cstdint>
 #include <string>
 

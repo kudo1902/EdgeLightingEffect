@@ -268,10 +268,14 @@ namespace EdgeLighting
         /// kept.
         /// @pre A GL context is current, if this format has no answer kept.
         Answer Ask(GLint internalFormat, GLenum format, GLenum type);
+        /// The same, for one row of a format list.
+        Answer Ask(const TextureFormat &format) { return Ask(format.internalFormat, format.format, format.type); }
 
         /// Whether this driver renders to @p internalFormat - the probe
         /// result alone: false for a format it refused AND for one its probe
-        /// could not judge. What a host reports as supported.
+        /// could not judge. What a host reports as supported. Non-const, as
+        /// @ref Ask is - it probes a format not asked yet - so a host holding
+        /// a const effect reads the answers kept instead (@ref GetAnswers).
         bool IsRenderable(GLint internalFormat, GLenum format, GLenum type)
         {
             return Ask(internalFormat, format, type).result == ProbeResult::RENDERABLE;
@@ -289,6 +293,11 @@ namespace EdgeLighting
             return !isPastSizeLimit(width, height) &&
                    Ask(internalFormat, format, type).result != ProbeResult::REFUSED &&
                    failedReason(internalFormat, width, height, attachments) == nullptr;
+        }
+        /// The same, for one row of a format list.
+        bool MayAllocate(const TextureFormat &format, int width, int height, int attachments)
+        {
+            return MayAllocate(format.internalFormat, format.format, format.type, width, height, attachments);
         }
 
         /// Whether a walk over @p formats at @p width x @p height x
@@ -465,6 +474,12 @@ namespace EdgeLighting
         bool allocateInBestFormat(Framebuffer &buffer, const FormatList &formats, GLint filter,
                                   const char *fallbackCost, int width, int height, int attachments);
 
+        /// Whether no row of @p formats can be tried at all - a size Resize
+        /// refuses, a list with nothing in it, a buffer past the texture size
+        /// limit - and if so, said in the log and @p buffer released. Nothing
+        /// is kept against a format for any of them.
+        bool rejectsOutright(Framebuffer &buffer, const FormatList &formats, int width, int height, int attachments);
+
         /// Whether @p buffer holds a row of @p formats below the one a walk at
         /// its own size would now start at - what AdaptiveFormatTarget::Refresh
         /// asks. False for a buffer that holds nothing, or a format not in the
@@ -553,6 +568,13 @@ namespace EdgeLighting
         /// The warning a walk writes, once, for a buffer past the texture size
         /// limit: refused before any row is tried, and nothing kept.
         void logPastSizeLimit(const char *target, int width, int height);
+
+        /// The error a walk writes when an allocation of @p format failed with
+        /// @p failure (what Resize reported, or a forced one, @p forced):
+        /// falling back to @p nextFormat, whose cost @p fallbackCost says, or,
+        /// when @p nextFormat is nullptr, with no format left to try.
+        void logFallback(const char *target, const char *format, const char *nextFormat, int width, int height,
+                         int attachments, GLenum failure, bool forced, const char *fallbackCost);
 
         /// The warning @ref firstToTry writes for a refused format it skips,
         /// named @p format, @p nextFormat being the one after it (nullptr

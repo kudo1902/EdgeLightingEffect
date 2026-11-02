@@ -3,9 +3,7 @@
 
 #include "core/adaptive-format-target.h"
 #include <glm/glm.hpp>
-#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace EdgeLighting

@@ -168,6 +168,29 @@ Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
     NaN, infinity and -5 between 1 and 0.5 leave the time at 1.5, the copy and
     move constructors are gone, and three walks over an empty list fail with
     one warning.
+  - A whole-branch review the same day found the rest sound and one design
+    point, left as it is by the owner's decision: a retry of a better format
+    at the size a buffer already holds frees the working buffer first
+    (`Resize` destroys before it allocates). Should the retry and then the
+    fallback both run out of memory, both formats are kept as failed at that
+    size and the buffer stays empty for at least the 2 s wait - the glow
+    gone, the fill alone, where it is the neon's. Allocating the better
+    format into a scratch `Framebuffer` and swapping it in on success would
+    never lose the working buffer, at the price of holding both at once
+    while it tries; `formats`' failed-retry checks rest on the current
+    behaviour.
+  - A code-level review after it: conventions clean throughout, six polish
+    items, five kept. The walk is 49 lines, its up-front refusals in
+    `rejectsOutright` and its fallback lines in `logFallback`. The skip log's
+    stand-ins for a format name are named (`SKIP_SIZE_LIMIT`,
+    `SKIP_NO_FORMATS`); `Ask` and `MayAllocate` take a `TextureFormat`;
+    `IsRenderable`'s doc says a const effect reads `GetAnswers` instead; and
+    four includes the refactors left unused are gone. The sixth - the
+    flare's and the spotlight's fallback-to-1.0 logging, the same block in
+    each - was shared briefly (`ScaledFallback`) and put back inline on the
+    owner's call: a file and a type for fifteen lines, whose log lines named
+    the helper rather than the renderer that wrote them, while `formats`
+    cases D2 / D3 already fail if either copy drifts.
   - Gate: D8 gains a way with the emission table falling alone on `arcs`,
     whose config holds across the move, and a failed retry on the flare's
     buffer; both added because removing the guard they cover passed

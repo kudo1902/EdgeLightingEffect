@@ -1,5 +1,4 @@
 #include "core/shared-buffer.h"
-#include "util/log-util.h"
 #include <utility>
 
 namespace EdgeLighting
