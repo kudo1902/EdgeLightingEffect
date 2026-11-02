@@ -1401,12 +1401,13 @@ names in their constructors, so a GL context must be current when a
 
 1. `ensureProgram` builds `mEmissionShader`, the one program every frame uses.
    Every other program, the fill's included, is built on first use.
-2. `AdaptiveFormatTarget::Ensure` (`ensureEmissionBuffer`): allocate the 128x2 emission table, RGBA16F or
-   RGBA8 - the first the effect's `FormatAvailability` says this driver
-   renders (the effect's startup report probed both already, so this is a
-   lookup). Fails `Initialize` only if neither format renders or allocates. The 1024x128
-   coverage table is NOT allocated here: at 1 MB it is most of what the
-   renderer holds, and the default ring never reads it.
+2. `AdaptiveFormatTarget::Ensure` (`ensureEmissionBuffer`): allocate the
+   128x2 emission table, RGBA16F or RGBA8 - the first the effect's
+   `FormatAvailability` says this driver renders (the effect's startup report
+   probed both already, so this is a lookup). Fails `Initialize` only if
+   neither format renders or allocates. The 1024x128 coverage table is NOT
+   allocated here: at 1 MB it is most of what the renderer holds, and the
+   default ring never reads it.
 3. Declare the vertex format (attribute 0, two floats) on the five rebuildable
    meshes, once.
 4. `rebuildLoopSamples`, `setupGeometry`, `setupFillGeometry`,
