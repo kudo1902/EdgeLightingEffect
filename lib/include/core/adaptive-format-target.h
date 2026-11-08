@@ -24,9 +24,12 @@ namespace EdgeLighting
     ///     memory destroys the buffer, and the walk then allocates the format
     ///     it had at the size it had - a fresh texture under, often, the same
     ///     name. @ref Ensure and @ref Refresh return ALLOCATED for it, and
-    ///     @ref GetGeneration moves. Whoever keeps contents across frames
-    ///     either reacts where it calls them, or keys its cache on the
-    ///     generation - never on the size or format.
+    ///     @ref GetGeneration moves. It moves, too, when the target loses
+    ///     its buffer (a walk that ends with none - FAILED - or @ref Release),
+    ///     so a cache keyed on it never takes a released buffer for the one
+    ///     it drew. Whoever keeps contents across frames either reacts
+    ///     where it calls them, or keys its cache on the generation - never
+    ///     on the size or format.
     ///   - **Moving back up.** A buffer that fell back past a format whose
     ///     out-of-memory failure has since expired is moved back up by its
     ///     next walk - but a frame that reuses the buffer runs no walk.
@@ -126,10 +129,15 @@ namespace EdgeLighting
         /// holds its first row.
         EnsureResult Refresh(FormatAvailability &availability);
 
-        /// Moves with every allocation and never otherwise
-        /// (Framebuffer::GetAllocationCount): a cache over the buffer's texels
-        /// keys on it. Compared only for equality.
-        uint32_t GetGeneration() const { return mBuffer.GetAllocationCount(); }
+        /// Moves with every allocation (Framebuffer::GetAllocationCount) and
+        /// every loss of a buffer the target held - a walk that ends with none,
+        /// or @ref Release - and never otherwise: a cache over the buffer's
+        /// texels keys on it. Without the losses, a retry and its fallback
+        /// that both ran out of memory left the generation where it was, and
+        /// the neon's still frames went on blitting the released shared
+        /// buffer - opaque black over 94% of a 1280 x 720 frame. Compared
+        /// only for equality.
+        uint32_t GetGeneration() const { return mBuffer.GetAllocationCount() + mLosses; }
 
         // --- What it holds, and drawing it ------------------------------------
 
@@ -155,14 +163,22 @@ namespace EdgeLighting
         }
 
         /// Give the buffer back. The next @ref Ensure allocates afresh. Moves
-        /// no generation: a released target holds nothing (@ref IsValid).
-        void Release() { mBuffer.Release(); }
+        /// the generation if the target held a buffer: its texels are gone.
+        void Release()
+        {
+            if (mBuffer.IsValid())
+            {
+                ++mLosses;
+            }
+            mBuffer.Release();
+        }
 
     private:
         Framebuffer mBuffer;       ///< The buffer; its label is the target's name.
         GLint mFilter;             ///< What every allocation is made with.
         std::string mFallbackCost; ///< What the next format costs, for a fallback's log line.
         FormatList mFormats;       ///< The last list walked, what Refresh walks again; empty before the first.
+        uint32_t mLosses = 0;      ///< Buffers this target held and lost - its share of @ref GetGeneration.
     };
 
 } // namespace EdgeLighting

@@ -2352,7 +2352,12 @@ namespace EdgeLighting
         // leaves the caller's framebuffer, so there is no target to capture
         // either. Nor when either buffer was allocated since it was drawn -
         // by refreshTargets above, moving it back up its format list, above
-        // all: its texels are undefined. Both, each for itself: at a scale at
+        // all: its texels are undefined - or lost since: a move whose retry
+        // and fallback both failed releases it, which moves the generation
+        // too, and the frame then runs pass 1b, whose walk finds no row and
+        // drops the glow. Before a loss moved it, every still frame after
+        // such a move reused the released buffer and blitted texture 0 -
+        // opaque black over the host. Both, each for itself: at a scale at
         // or below GATHER_MIN_SCALE the gather's buffer can be the larger
         // allocation (96 x 64 x 2 texels against 80 x 45 at 0.0625 and 720p),
         // so one can move without the other.
@@ -3255,7 +3260,9 @@ namespace EdgeLighting
         // their caches key on (isEmissionTableStale, GatherCache,
         // OffscreenState); the coverage tables are re-baked by piece, so
         // every piece is marked here. A move that fails leaves a buffer
-        // without one, which its ensure function or walk allocates afresh.
+        // without one, which its ensure function or walk allocates afresh -
+        // and moves its generation all the same (a loss), so a still frame
+        // cannot reuse the buffer it lost.
         FormatAvailability &availability = GetFormatAvailability();
         mEmission.buffer.Refresh(availability);
         if (mGlowCover.buffer.Refresh(availability) == AdaptiveFormatTarget::EnsureResult::ALLOCATED)

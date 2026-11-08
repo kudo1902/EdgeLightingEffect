@@ -16,7 +16,8 @@ Section 8 moves no pixel on a GPU that renders every format the library asks
 for, but changes two things a host can see: the library reads and clears the
 host's pending GL errors at `Initialize` and on frames that allocate, and the
 flare and the spotlight below scale 1.0 draw at 1.0, rather than nothing, when
-memory runs out.
+memory runs out. Section 9: a preset animation now refuses a duration of 0,
+which used to fill the config with NaN.
 
 ## 0. `NeonConfig::resolutionScale` defaults to 0.5, and 1.0 takes the same path
 
@@ -348,7 +349,9 @@ both Macs - no pixel moves. What a host can see:
   do - named, filtered and given its fallback cost at construction, sized by
   `Ensure` with a `FormatList` (one of `LIBRARY_FORMAT_LISTS`, or its own
   array), moved back up by `Refresh` once a frame before it decides to skip a
-  write, and any cache over it keyed on `GetGeneration`. A format of its own
+  write, and any cache over it keyed on `GetGeneration` - which moves when
+  the target allocates and when it loses its buffer (a walk that ends FAILED,
+  or `Release`), so the key alone tells a cache its texels are gone. A format of its own
   outside the library's lists is not in the startup report: ask it from the
   renderer's `Initialize` (`FormatAvailability::Ask`), or the first walk
   probes it mid-frame and clears the frame's pending GL errors.
@@ -363,7 +366,29 @@ both Macs - no pixel moves. What a host can see:
   `SetOutOfMemoryRetry`) are verification hooks for `neon-scale-check
   formats`: a host never calls them. Nothing changed in the C ABI.
 
-## 9. Nothing else a host can see moved
+## 9. A preset refuses a duration of 0 (I104)
+
+An oscillator preset handed a 0 s cycle built its oscillator at a frequency of
+infinity and wrote NaN into the config on every frame. The 13 presets that
+build a modulator from their duration (`IntensityPulse` to `ArcWipe` - every
+one but the `*Curve`s) now take only a duration of at least 1e-6 s
+(`PositiveDurationAnimation::MIN_DURATION_SECONDS`) - their C factories took only
+one above 0, which let 1e-40 s, whose reciprocal is infinity, through:
+
+- **C ABI.** `el_animation_set_duration` on such a preset returns
+  `EL_ERROR_INVALID_PARAMETER` for 0 - or anything under 1e-6 s - and leaves
+  the animation as it was. 0 on
+  a field-bound animation (`el_animation_create_field_bound`,
+  `el_animation_from_modulator`) is still accepted: it opts out of the wrap.
+- **C++.** `Animation::SetDuration` returns `bool` - false for a duration the
+  animation refuses (`Animation::AcceptsDuration`), which changes nothing. A
+  call that ignored the old `void` still compiles, though a host linking the
+  static library has to rebuild: `Animation` gained a virtual. A host's own subclass that
+  builds a modulator from its duration should override `AcceptsDuration`, or
+  derive from `PositiveDurationAnimation` (`animation/neon-animations.h`).
+  A preset constructed with 0 holds its cycle's start rather than write NaN.
+
+## 10. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

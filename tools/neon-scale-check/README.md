@@ -514,6 +514,17 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     buffer's generation keeps the cache from blitting the fill - the frame
     after it must be the held run's.
 
+    A failed retry whose fallback fails too, on `card_outside` (V37): the
+    shared buffer's first RGBA16F allocation runs out of memory and it falls
+    to RGBA8; 3 s on, its retry of RGBA16F and the RGBA8 fallback both run
+    out, so the walk releases it and allocates nothing. All three cells are
+    one still config, so only the buffer's generation - which a loss now
+    moves - stops the frame reusing what it lost. That frame must be the fill
+    alone (`debug.opaqueOnly`'s frame), and the frame after it, 6 s on, once
+    both failures have expired, a fresh run's. Against the build before the
+    fix both fail, 255 and 242 levels off: the blit sampled the released
+    texture, opaque black over everything but the edge ring.
+
     Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
     be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,
     each doubling the wait) and end waiting 32 s until 62 s.

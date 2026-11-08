@@ -543,6 +543,76 @@ namespace NeonScaleCheck
                 return failures + (tries != 2) + (heldTries != 1) + !sameFrame;
             }
 
+            /// A failed retry whose fallback fails too, on the shared buffer,
+            /// on @p cell (`card_outside`: its opaque fill keeps the frame
+            /// without the glow from being empty). The shared buffer's first
+            /// RGBA16F allocation runs out of memory (" during", which falls
+            /// to RGBA8); once that has expired, the retry of RGBA16F and the
+            /// RGBA8 fallback behind it both run out (" retry", one frame 3 s
+            /// on), so the walk releases the buffer and allocates nothing.
+            /// That frame must draw the fill alone - what debug.opaqueOnly
+            /// draws: no glow, and nothing over the host. Then (" after", two
+            /// frames 3 s apart) RGBA8's failure expires and the buffer comes
+            /// back, then RGBA16F's, so the last frame must be a fresh run's.
+            /// The three cells are one still config, so only a buffer's
+            /// generation can tell a still frame that its buffer is gone:
+            /// before a loss moved it, both frames reused the released buffer
+            /// and blitted texture 0 - opaque black over the blit band, and
+            /// for good while the config held. Returns the failures.
+            int CheckFailedFallback(const Cell &cell, bool verbose)
+            {
+                Cell during = cell;
+                during.name += " during";
+                Cell retry = cell;
+                retry.name += " retry";
+                retry.frames = 1;
+                retry.deltaTime = 3.0f;
+                retry.replaceFailed = true;
+                retry.failedHere.formats = {GL_RGBA16F, GL_RGBA8};
+                retry.failedHere.fromTexels = RetryThreshold();
+                retry.failedHere.count = 2;
+                Cell after = cell;
+                after.name += " after";
+                after.deltaTime = 3.0f;
+                Cell fillAlone = cell;
+                fillAlone.name += " fill alone";
+                fillAlone.config.debug.opaqueOnly = true;
+
+                Hooks first;
+                first.failed.formats = {GL_RGBA16F};
+                first.failed.fromTexels = RetryThreshold();
+                first.failed.count = 1;
+                const RunResult run = Run(first, false, {during, retry, after});
+                int failures =
+                    Summarise("  a failed retry and fallback - the shared buffer", run, Unprobed(first), verbose);
+                const RunResult fillRun = Run(Hooks{}, false, {fillAlone});
+                const RunResult freshRun = Run(Hooks{}, false, {after});
+
+                const int tries =
+                    CountLines(run.errors, "NeonRenderer.Scaled: target unavailable", "SetFailedAllocations");
+                const auto sameAs = [&run](size_t at, const RunResult &reference, int &maxLevels)
+                {
+                    double over1Pct = 0.0;
+                    maxLevels = 0;
+                    if (run.frames.size() <= at || reference.frames.empty())
+                    {
+                        return false;
+                    }
+                    Compare(run.frames[at], reference.frames[0], maxLevels, over1Pct);
+                    return run.frames[at] == reference.frames[0] && !AllZero(run.frames[at]);
+                };
+                int retryLevels = 0;
+                int afterLevels = 0;
+                const bool retryFill = sameAs(1, fillRun, retryLevels);
+                const bool afterFresh = sameAs(2, freshRun, afterLevels);
+                std::printf("  shared target tries that failed %d (expected 3: the first, its retry and the fallback)%s, "
+                            "frame of the failed retry as the fill alone %s (max %d levels off), frame after it as a "
+                            "fresh run's %s (max %d levels off)\n",
+                            tries, tries == 3 ? "" : "!", retryFill ? "yes" : "NO!", retryLevels,
+                            afterFresh ? "yes" : "NO!", afterLevels);
+                return failures + (tries != 3) + !retryFill + !afterFresh;
+            }
+
             /// D8: out of memory that passes - what a failure's expiry is for.
             ///   - Passing, seven ways (PassingShortage): only the first
             ///     allocation of one format fails (ForcedFailure::count), which
@@ -583,6 +653,10 @@ namespace NeonScaleCheck
             ///     reallocates must be cleared whole. And on the flare's
             ///     buffer (CheckFlareFailedRetry), whose cache must not reuse
             ///     the reallocation: its format is the one the key holds.
+            ///     And a retry whose fallback runs out too (CheckFailedFallback),
+            ///     on `card_outside`: the shared buffer is released, so its
+            ///     still frame must draw the fill alone, and the frames after
+            ///     must bring the buffer back.
             ///   - Lasting: every RGBA16F allocation fails, over 40 frames 1 s
             ///     apart. Each expiry costs one retry - the emission table's,
             ///     the smallest and first asked - which fails again and doubles
@@ -637,6 +711,15 @@ namespace NeonScaleCheck
                 else
                 {
                     std::printf("  no `small_rect` scene for the failed retry!\n");
+                    ++failures;
+                }
+                if (const Scene *card = FindScene("card_outside"))
+                {
+                    failures += CheckFailedFallback(NeonCell(*card, Variant::STILL, SCALE_500), verbose);
+                }
+                else
+                {
+                    std::printf("  no `card_outside` scene for the failed fallback!\n");
                     ++failures;
                 }
 

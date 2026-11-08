@@ -70,6 +70,11 @@ namespace NeonScaleCheck
             /// (RunResult::sharedReads) - every texel, outside the glow's
             /// window too, which no frame shows.
             bool readShared = false;
+            /// Replace the run's SetFailedAllocations hook with @c failedHere
+            /// before this cell's first frame - a shortage that changes
+            /// partway through a run, which one hook for the run cannot draw.
+            bool replaceFailed = false;
+            FormatAvailability::ForcedFailure failedHere;
         } Cell;
 
         /// The neon's shared buffer as a cell's last frame left it.

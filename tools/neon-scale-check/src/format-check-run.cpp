@@ -332,6 +332,10 @@ namespace NeonScaleCheck
                 OffscreenCapture capture;
                 for (const Cell &cell : cells)
                 {
+                    if (cell.replaceFailed)
+                    {
+                        effect.GetFormatAvailability()->SetFailedAllocations(cell.failedHere);
+                    }
                     Config config = cell.config;
                     const float baseIntensity = config.neon.intensity;
                     const int frames = cell.frames > 0 ? cell.frames : FramesFor(cell.variant);

@@ -131,7 +131,11 @@ namespace NeonScaleCheck
     ///     (SharedBuffer::GetLastWriteWindow) is not 0, or none lies outside
     ///     it - then the check proves nothing; the same failure on the
     ///     flare alone, the flare's frame after its failed retry differs
-    ///     from the held run's;
+    ///     from the held run's; with the shared buffer's retry AND its RGBA8
+    ///     fallback both running out of memory on a still `card_outside`, the
+    ///     buffer is not tried exactly 3 times, the frame of that retry is not
+    ///     the fill alone (debug.opaqueOnly's frame), or the frame after it,
+    ///     once both failures have expired, is not a fresh run's (V37);
     ///     and with every RGBA16F allocation failing over 40
     ///     frames 1 s apart, it is not tried exactly 5 times (0, 2, 6, 14,
     ///     30 s: one retry per expiry, each doubling the wait) or does not end

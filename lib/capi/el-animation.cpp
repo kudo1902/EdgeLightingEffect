@@ -601,6 +601,15 @@ el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
     VALIDATE_ANIM_PTR(anim, "el_animation_set_duration");
     REQUIRE_FINITE("el_animation_set_duration", EL_ERROR_INVALID_PARAMETER, seconds);
     REQUIRE_DURATION("el_animation_set_duration", EL_ERROR_INVALID_PARAMETER, seconds, false);
+    // 0 opts a field-bound animation out of the wrap, but a preset builds its
+    // modulator from its duration and takes only one above 0, as its factory
+    // does: a 0 s cycle wrote NaN into the config on every frame.
+    if (anim->ptr && !anim->ptr->AcceptsDuration(seconds))
+    {
+        LOG_E("el_animation_set_duration: anim=%p does not take a duration of %g - it needs at least %g",
+              (void *)anim, (double)seconds, (double)EdgeLighting::PositiveDurationAnimation::MIN_DURATION_SECONDS);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
     if (!anim->ptr || anim->ptr->GetDuration() == seconds)
     {
         return EL_SUCCESS;

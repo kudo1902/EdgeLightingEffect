@@ -235,16 +235,19 @@ inline bool AllFinite(std::initializer_list<double> values)
         }                                                            \
     } while (0)
 
-/// Rejects a duration below @p minimum, or equal to it when @p strict.
-#define REQUIRE_DURATION(fn, failure, duration, strict)                   \
-    do                                                                    \
-    {                                                                     \
-        if ((strict) ? !((duration) > 0.0f) : !((duration) >= 0.0f))      \
-        {                                                                 \
-            LOG_E("%s: duration %f must be %s 0", fn, (double)(duration), \
-                  (strict) ? "above" : "at least");                       \
-            return failure;                                               \
-        }                                                                 \
+/// Rejects a negative duration - or, when @p strict (a preset's), one below
+/// PositiveDurationAnimation::MIN_DURATION_SECONDS: "above 0" let 1e-40 s
+/// through, whose reciprocal is infinity, and the preset wrote NaN.
+#define REQUIRE_DURATION(fn, failure, duration, strict)                                                         \
+    do                                                                                                          \
+    {                                                                                                           \
+        const float minimumDuration =                                                                           \
+            (strict) ? EdgeLighting::PositiveDurationAnimation::MIN_DURATION_SECONDS : 0.0f;                    \
+        if (!((duration) >= minimumDuration))                                                                   \
+        {                                                                                                       \
+            LOG_E("%s: duration %g must be at least %g", fn, (double)(duration), (double)minimumDuration);      \
+            return failure;                                                                                     \
+        }                                                                                                       \
     } while (0)
 
 /// Short-circuit setter that only logs + assigns when the incoming value

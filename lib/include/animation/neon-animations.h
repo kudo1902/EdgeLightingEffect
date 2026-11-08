@@ -26,6 +26,39 @@ namespace EdgeLighting
     ///
     /// @{
 
+    /// @brief The base of every preset here that builds its modulator from
+    ///        its duration - a cycle's frequency, an ease's length, a wipe's
+    ///        speed: it takes only a duration of at least
+    ///        @ref MIN_DURATION_SECONDS.
+    /// @details @ref Animation::SetDuration refuses 0 or less for it, as the C
+    ///          ABI's factories always have: a 0 s cycle is a frequency of
+    ///          infinity, and an oscillator built from one wrote NaN into the
+    ///          config on every frame - a value that never equals itself, so
+    ///          no renderer could skip work again. The @c *Curve presets take
+    ///          a modulator that owns its time, so 0 stays theirs.
+    class PositiveDurationAnimation : public Animation
+    {
+    public:
+        using Animation::Animation;
+
+        /// The shortest duration a preset takes, seconds: far below a frame,
+        /// and far above the ~2.9e-39 s whose reciprocal is the largest float.
+        /// "Above 0" alone let 1e-40 s through, whose frequency is infinity
+        /// all the same. The C ABI's preset factories check this bound too.
+        static constexpr float MIN_DURATION_SECONDS = 1e-6f;
+
+        bool AcceptsDuration(float duration) const override { return duration >= MIN_DURATION_SECONDS; }
+
+    protected:
+        /// Cycles per second for a cycle of @p seconds. A constructor is the
+        /// one place a duration the presets refuse can still arrive: it gets
+        /// 0, an oscillator held at its start, rather than infinity.
+        static float CycleFrequency(float seconds)
+        {
+            return seconds >= MIN_DURATION_SECONDS ? 1.0f / seconds : 0.0f;
+        }
+    };
+
     // -------------------------------------------------------------------------
     // neon.intensity
     // -------------------------------------------------------------------------
@@ -34,14 +67,14 @@ namespace EdgeLighting
     /// @details Default one-second cycle between 0.4 and 1.0. @ref SetDuration
     ///          rebuilds the internal Oscillator so the debug UI's Duration
     ///          slider live-adjusts the breathing period.
-    class IntensityPulse : public Animation
+    class IntensityPulse : public PositiveDurationAnimation
     {
     public:
         /// @param duration Seconds per cycle.
         /// @param min      Minimum intensity (lower bound).
         /// @param max      Maximum intensity (upper bound).
         IntensityPulse(float duration = 1.0f, float min = 0.4f, float max = 1.0f)
-            : mOsc(1.0f / duration, min, max), mMin(min), mMax(max)
+            : mOsc(CycleFrequency(duration), min, max), mMin(min), mMax(max)
         {
             SetDuration(duration);
         }
@@ -56,7 +89,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
-            mOsc = Oscillator(1.0f / d, mMin, mMax);
+            mOsc = Oscillator(CycleFrequency(d), mMin, mMax);
         }
 
     private:
@@ -67,7 +100,7 @@ namespace EdgeLighting
     };
 
     /// @brief Square-wave on/off strobe on @c neon.intensity.
-    class IntensityStrobe : public Animation
+    class IntensityStrobe : public PositiveDurationAnimation
     {
     public:
         /// @param duration      Seconds per on+off cycle.
@@ -76,7 +109,7 @@ namespace EdgeLighting
         IntensityStrobe(float duration = 0.25f,
                         float offIntensity = 0.0f,
                         float onIntensity = 1.0f)
-            : mOsc(1.0f / duration, offIntensity, onIntensity, 0.0f, Waveform::SQUARE),
+            : mOsc(CycleFrequency(duration), offIntensity, onIntensity, 0.0f, Waveform::SQUARE),
               mOff(offIntensity), mOn(onIntensity)
         {
             SetDuration(duration);
@@ -92,7 +125,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
-            mOsc = Oscillator(1.0f / d, mOff, mOn, 0.0f, Waveform::SQUARE);
+            mOsc = Oscillator(CycleFrequency(d), mOff, mOn, 0.0f, Waveform::SQUARE);
         }
 
     private:
@@ -106,7 +139,7 @@ namespace EdgeLighting
     /// @details Ramps from 0 up to a target value. @ref SetDuration rebuilds
     ///          the internal @ref Ease so the visual fade stays in sync with
     ///          the completion latch.
-    class IntensityFadeIn : public Animation
+    class IntensityFadeIn : public PositiveDurationAnimation
     {
     public:
         /// @param targetIntensity Value to fade up to.
@@ -115,7 +148,7 @@ namespace EdgeLighting
         IntensityFadeIn(float targetIntensity = 1.0f,
                         float duration = 0.4f,
                         EasingFunction::Curve curve = EasingFunction::OutCubic)
-            : Animation(duration),
+            : PositiveDurationAnimation(duration),
               mTarget(targetIntensity), mCurve(curve),
               mEase(0.0f, targetIntensity, duration, curve, /*loop=*/false) {}
 
@@ -142,7 +175,7 @@ namespace EdgeLighting
 
     /// @brief One-shot eased fade-out on @c neon.intensity to 0.
     /// @details Mirror of @ref IntensityFadeIn.
-    class IntensityFadeOut : public Animation
+    class IntensityFadeOut : public PositiveDurationAnimation
     {
     public:
         /// @param startIntensity Value to fade from.
@@ -151,7 +184,7 @@ namespace EdgeLighting
         IntensityFadeOut(float startIntensity = 1.0f,
                          float duration = 0.4f,
                          EasingFunction::Curve curve = EasingFunction::InCubic)
-            : Animation(duration),
+            : PositiveDurationAnimation(duration),
               mStart(startIntensity), mCurve(curve),
               mEase(startIntensity, 0.0f, duration, curve, /*loop=*/false) {}
 
@@ -182,7 +215,7 @@ namespace EdgeLighting
 
     /// @brief Sine breathe on @c neon.glowRadius.
     /// @details The halo "throbs" wider and narrower.
-    class GlowRadiusBreath : public Animation
+    class GlowRadiusBreath : public PositiveDurationAnimation
     {
     public:
         /// @param duration  Seconds per cycle.
@@ -191,7 +224,7 @@ namespace EdgeLighting
         GlowRadiusBreath(float duration = 2.0f,
                          float minRadius = 4.0f,
                          float maxRadius = 12.0f)
-            : mOsc(1.0f / duration, minRadius, maxRadius),
+            : mOsc(CycleFrequency(duration), minRadius, maxRadius),
               mMin(minRadius), mMax(maxRadius)
         {
             SetDuration(duration);
@@ -207,7 +240,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.glowRadius = mSavedGlowRadius; }
         void OnDurationChanged(float d) override
         {
-            mOsc = Oscillator(1.0f / d, mMin, mMax);
+            mOsc = Oscillator(CycleFrequency(d), mMin, mMax);
         }
 
     private:
@@ -223,7 +256,7 @@ namespace EdgeLighting
 
     /// @brief Sine breathe on @c neon.bloomStrength.
     /// @details The wide spill swells in and out.
-    class BloomPulse : public Animation
+    class BloomPulse : public PositiveDurationAnimation
     {
     public:
         /// @param duration Seconds per cycle.
@@ -232,7 +265,7 @@ namespace EdgeLighting
         BloomPulse(float duration = 1.5f,
                    float min = 0.1f,
                    float max = 0.6f)
-            : mOsc(1.0f / duration, min, max), mMin(min), mMax(max)
+            : mOsc(CycleFrequency(duration), min, max), mMin(min), mMax(max)
         {
             SetDuration(duration);
         }
@@ -247,7 +280,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.bloomStrength = mSavedBloom; }
         void OnDurationChanged(float d) override
         {
-            mOsc = Oscillator(1.0f / d, mMin, mMax);
+            mOsc = Oscillator(CycleFrequency(d), mMin, mMax);
         }
 
     private:
@@ -264,7 +297,7 @@ namespace EdgeLighting
     /// @brief Flip the sign of @c neon.hueRotationRate periodically.
     /// @details A full forward-backward cycle takes @p duration seconds, with
     ///          an abrupt square-wave transition at the half-cycle mark.
-    class HueRotationReverse : public Animation
+    class HueRotationReverse : public PositiveDurationAnimation
     {
     public:
         /// @param baseRate Absolute rotation rate in cycles/second.
@@ -276,6 +309,14 @@ namespace EdgeLighting
         }
         void ApplyAt(Config &cfg, double elapsed) const override
         {
+            // Only a constructor handed 0 or less reaches this with no half
+            // period (SetDuration refuses one): hold the forward rate rather
+            // than cast an infinite quotient to int.
+            if (!(mHalfPeriod > 0.0f))
+            {
+                cfg.neon.hueRotationRate = mBaseRate;
+                return;
+            }
             int n = static_cast<int>(std::floor(elapsed / mHalfPeriod));
             cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
         }
@@ -298,13 +339,13 @@ namespace EdgeLighting
     /// @brief Smoothly ease the hue rotation direction.
     /// @details Uses a triangle wave so direction reverses gradually - no
     ///          abrupt flips.
-    class HueRotationEaseReverse : public Animation
+    class HueRotationEaseReverse : public PositiveDurationAnimation
     {
     public:
         /// @param maxRate  Maximum absolute rotation rate.
         /// @param duration Seconds for one full forward-backward cycle.
         HueRotationEaseReverse(float maxRate = 0.5f, float duration = 6.0f)
-            : mOsc(1.0f / duration, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE),
+            : mOsc(CycleFrequency(duration), -maxRate, maxRate, 0.0f, Waveform::TRIANGLE),
               mMaxRate(maxRate)
         {
             SetDuration(duration);
@@ -320,7 +361,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.hueRotationRate = mSavedHueRate; }
         void OnDurationChanged(float d) override
         {
-            mOsc = Oscillator(1.0f / d, -mMaxRate, mMaxRate, 0.0f, Waveform::TRIANGLE);
+            mOsc = Oscillator(CycleFrequency(d), -mMaxRate, mMaxRate, 0.0f, Waveform::TRIANGLE);
         }
 
     private:
@@ -356,7 +397,7 @@ namespace EdgeLighting
     ///          wraps around and restarts from 0. Writes into
     ///          @c cfg.neon.segmentBoosts[index], auto-growing the vector to
     ///          include that slot if needed.
-    class SegmentTravel : public Animation
+    class SegmentTravel : public PositiveDurationAnimation
     {
     public:
         /// @param duration Seconds for one full revolution.
@@ -367,7 +408,7 @@ namespace EdgeLighting
                       float length = 0.15f,
                       float boost = 4.0f,
                       size_t index = 0)
-            : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
+            : mPosOsc(CycleFrequency(duration), 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
               mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
@@ -391,7 +432,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.segmentBoosts = mSavedBoosts; }
         void OnDurationChanged(float d) override
         {
-            mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH);
+            mPosOsc = Oscillator(CycleFrequency(d), 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH);
         }
 
     private:
@@ -405,7 +446,7 @@ namespace EdgeLighting
     /// @brief Swing the bright spot back and forth.
     /// @details Uses a triangle wave on the target segment's @c position.
     ///          Writes into @c cfg.neon.segmentBoosts[index] (auto-grown).
-    class SegmentBounce : public Animation
+    class SegmentBounce : public PositiveDurationAnimation
     {
     public:
         /// @param duration Seconds for one full back-and-forth cycle.
@@ -416,7 +457,7 @@ namespace EdgeLighting
                       float length = 0.20f,
                       float boost = 4.0f,
                       size_t index = 0)
-            : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
+            : mPosOsc(CycleFrequency(duration), 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
               mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
@@ -436,7 +477,7 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.segmentBoosts = mSavedBoosts; }
         void OnDurationChanged(float d) override
         {
-            mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE);
+            mPosOsc = Oscillator(CycleFrequency(d), 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE);
         }
 
     private:
@@ -473,7 +514,7 @@ namespace EdgeLighting
     ///
     /// @ref SetDuration rebuilds the internal @ref Ease in lockstep with the
     /// completion latch.
-    class OutlineTracer : public Animation
+    class OutlineTracer : public PositiveDurationAnimation
     {
     public:
         /// @param duration  Total draw time in seconds.
@@ -483,7 +524,7 @@ namespace EdgeLighting
         OutlineTracer(float duration = 2.0f,
                       EasingFunction::Curve curve = EasingFunction::OutCubic,
                       float maxLength = 1.0f)
-            : Animation(duration),
+            : PositiveDurationAnimation(duration),
               mCurve(curve),
               mMaxLength(maxLength),
               mEase(0.0f, maxLength, duration, curve, /*loop=*/false) {}
@@ -529,14 +570,14 @@ namespace EdgeLighting
     ///
     /// @ref SetDuration rebuilds the internal @ref Ease in lockstep with the
     /// completion latch.
-    class OutlineCollapse : public Animation
+    class OutlineCollapse : public PositiveDurationAnimation
     {
     public:
         /// @param duration Total erase time in seconds.
         /// @param curve    Easing curve for the sweep.
         OutlineCollapse(float duration = 2.0f,
                         EasingFunction::Curve curve = EasingFunction::InCubic)
-            : Animation(duration),
+            : PositiveDurationAnimation(duration),
               mCurve(curve),
               mEase(1.0f, 0.0f, duration, curve, /*loop=*/false) {}
 
@@ -604,7 +645,7 @@ namespace EdgeLighting
     /// Defaults to @c ONE_SHOT since a wipe is naturally a fire-and-forget
     /// gesture; toggle @ref SetPlaybackMode to LOOP for a repeating chase.
     /// @ref SetDuration rebuilds the phase timings so the slider works live.
-    class ArcWipe : public Animation
+    class ArcWipe : public PositiveDurationAnimation
     {
     public:
         /// @param duration   Total wipe time in seconds.
@@ -623,7 +664,7 @@ namespace EdgeLighting
                 float endPos = 1.0f,
                 float maxLength = 0.25f,
                 EasingFunction::Curve curve = EasingFunction::Linear)
-            : Animation(duration),
+            : PositiveDurationAnimation(duration),
               mStartPos(startPos),
               mEndPos(endPos),
               mMaxLength(maxLength),

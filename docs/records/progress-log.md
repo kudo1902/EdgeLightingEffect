@@ -5,6 +5,64 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-11-08 - A lost buffer moves its generation (V37); presets refuse a 0 s duration (I104)
+
+Not committed; on top of `9b0c76e`. Both from a whole-project review the same
+day, each reproduced before it was fixed.
+
+- **V37: the black frame.** A move back up (`refreshTargets`) whose retry of
+  RGBA16F and RGBA8 fallback both run out of memory leaves the shared buffer
+  released - and its generation where it was, since nothing was allocated. On
+  a still config `reuseOffscreen` keys on that generation, so it skipped
+  passes 1a and 1b and the blit sampled texture 0: opaque black over 864,252
+  of 921,600 px at 1280 x 720 (all but the edge ring), on every frame until
+  the config changed. The 2026-10-31 review expected "the glow gone, the fill
+  alone" here; that is what a frame that runs pass 1b draws, but a still frame
+  never did. `formats` passed: its failed retry always had a fallback that
+  allocated.
+  - **Fix.** `AdaptiveFormatTarget::GetGeneration` also moves when the target
+    loses its buffer - a walk that ends FAILED while it held one, or
+    `Release` of a live one (`mLosses`) - so every cache keyed on a
+    generation sees a loss as it sees an allocation. The frame then runs pass
+    1b, whose walk finds no row, and draws the fill alone; the buffer comes
+    back as each failure expires. The gather buffer had the same gap.
+  - **Gate.** `formats` D8, `CheckFailedFallback` on `card_outside` (whose
+    opaque fill keeps the glow-less frame from being empty): the failed
+    retry's frame must be the fill alone (`debug.opaqueOnly`'s frame) and the
+    frame after must be a fresh run's, byte for byte. Against `9b0c76e` both
+    fail - 255 and 242 levels off - and nothing else does. A `Cell` can now
+    replace the run's `SetFailedAllocations` hook from its first frame
+    (`replaceFailed`), which this case needs: fail, allocate, then fail twice.
+- **I104: NaN from a 0 s cycle.** `el_animation_set_duration` accepted 0 -
+  right for a field-bound animation, which 0 opts out of the wrap - and the
+  oscillator presets rebuilt their `Oscillator` at `1 / 0`: `IntensityPulse`
+  wrote NaN into `neon.intensity` on every frame, a config that never equals
+  itself, so no renderer could skip work again. `HueRotationReverse` cast an
+  infinite quotient to int.
+  - **Fix.** `Animation::AcceptsDuration` (any duration by default);
+    `PositiveDurationAnimation`, the new base of the 13 presets that build a
+    modulator from their duration, takes only one of at least 1e-6 s
+    (`MIN_DURATION_SECONDS`); their C factories, which took any duration above
+    0, check the same bound now - 1e-40 s is above 0 and its reciprocal is
+    infinity all the same (found by the second review pass). `SetDuration` returns false for a duration
+    refused and changes nothing; `el_animation_set_duration` returns
+    `EL_ERROR_INVALID_PARAMETER` and logs. A constructor is the one place 0
+    still arrives: `CycleFrequency` gives it an oscillator held at its start,
+    and `HueRotationReverse` holds its forward rate. The `*Curve` presets
+    keep 0.
+  - **Verified** by a probe of every preset: `SetDuration(0)` refused and the
+    duration kept, every config equal to itself, three presets constructed
+    with 0 finite; the C ABI refuses 0 on a pulse and takes it on a
+    field-bound animation.
+- **Still open from the review**, not recorded as items yet: the C ABI's
+  `set_*_count` setters resize with no cap and no `try`; a stopped RESTORE
+  `FieldBoundAnimation` writes its whole saved arcs / lamps / segment vectors
+  back every frame; no shader declares `precision highp sampler2D` (ES 3.00
+  defaults samplers to lowp); `AnimationGroup` never completes, though its
+  doc says its state is derived; `gradientLutSize` is documented as 32-256
+  but not capped; and `check-doc-links.py` fails on this log's link to
+  `spotlight-art-plan.md`, which only `origin/spotlight_art` has.
+
 ## 2026-10-31 - One type owns a buffer and its format list (I93)
 
 Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
