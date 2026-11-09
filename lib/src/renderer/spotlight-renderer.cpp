@@ -1,5 +1,6 @@
 #include "renderer/spotlight-renderer.h"
 #include "renderer/spotlight-tuning.h"
+#include "core/adaptive-format-target.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
 #include "shaders.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 
 namespace EdgeLighting
 {
@@ -25,19 +27,6 @@ namespace EdgeLighting
         /// is reading so few texels that the light turns to blocks, and the
         /// strips are already the cheap part.
         constexpr float MIN_RESOLUTION_SCALE = 0.125f;
-
-        /// One candidate format for @c mScaledBuffer.
-        typedef struct ScaledFormat
-        {
-            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
-            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
-            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
-            /// Whether this format holds the dark tail unrounded, so the
-            /// strips draw it undithered and the blit alone dithers. False for
-            /// RGBA8, where spotlight.frag has to dither into the buffer too.
-            bool holdsSubLevels;
-            const char *name; ///< For the fallback log line.
-        } ScaledFormat;
 
         /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
         /// same pair, for the same reason, as the neon's SCALED_FORMATS.
@@ -79,11 +68,16 @@ namespace EdgeLighting
         ///
         /// Twice the memory: 960 x 540 texels at 1080p and 0.5 is 4.1 MB
         /// instead of 2.1; 1.0 MB at 0.25.
-        constexpr ScaledFormat SCALED_FORMATS[] = {
-            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, true, "RGBA16F"},
-            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false, "RGBA8"},
-        };
-        constexpr size_t SCALED_FORMAT_COUNT = sizeof(SCALED_FORMATS) / sizeof(SCALED_FORMATS[0]);
+        ///
+        /// Whether a row holds the dark tail unrounded - the strips then draw
+        /// it undithered and the blit alone dithers - is the format's own
+        /// property (HoldsSubLevels): RGBA16F does, RGBA8 does not, and there
+        /// spotlight.frag dithers into the buffer too.
+        ///
+        /// resizeScaledBuffer asks the effect's FormatAvailability and starts
+        /// at the first row this driver renders. One of the library's lists
+        /// (LIBRARY_FORMAT_LISTS), which the startup report asks.
+        constexpr auto &SCALED_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// Whether any lamp this pass will actually DRAW honours the clip area.
         ///
@@ -698,6 +692,10 @@ namespace EdgeLighting
         }
 
         setupBlitGeometry();
+        // What this context renders to, asked now rather than on the first
+        // scaled frame: outside an effect this makes the renderer's own object
+        // and probes the library's formats into it here, not mid-frame.
+        GetFormatAvailability();
 
         // mCurrentSpotlight is whatever the last OnConfigChanged left - the
         // effect calls it on registration, so by here it is usually the host's
@@ -708,8 +706,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void SpotlightRenderer::Update(float, double, const Config &)
+    void SpotlightRenderer::Update(float deltaTime, double, const Config &)
     {
+        // Outside an effect, the frame time its own FormatAvailability's
+        // out-of-memory failures expire by.
+        AdvanceOwnFormatAvailability(deltaTime);
     }
 
     void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double, const Config &config)
@@ -751,7 +752,8 @@ namespace EdgeLighting
         // would leave mScaledBuffer holding id 0 and Bind would then bind the
         // CALLER'S framebuffer - with ClearBuffer about to wipe it. Bail
         // instead: nothing has been drawn or bound, noScissor puts the scissor
-        // enable back as this return unwinds, and Render composites nothing.
+        // enable back as this return unwinds, and Render draws the lamps at
+        // 1.0, which needs no buffer.
         if (!resizeScaledBuffer(bufW, bufH))
         {
             return;
@@ -784,7 +786,7 @@ namespace EdgeLighting
             mFrame.prepared = false;
             return;
         }
-        const bool scaled = UsesScaledBuffer(config);
+        bool scaled = UsesScaledBuffer(config);
 
         // The offscreen phase for this frame, if nothing ran it - a host that
         // drives the renderer without EdgeLightingEffect, which runs every
@@ -795,11 +797,32 @@ namespace EdgeLighting
         }
         const bool scaledReady = mFrame.scaledReady;
         mFrame.prepared = false;
-        // The scaled buffer could not be allocated: nothing to composite, and
-        // nothing touched.
-        if (scaled && !scaledReady)
+        // No scaled buffer could be allocated, in any format - the one way the
+        // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
+        // no buffer: no uniform that shapes the light differs between the
+        // paths, so this is exactly the 1.0 path's frame. The walk remembers
+        // the failure with its size (FormatAvailability), so the frames after
+        // this try nothing until the size drops below it. Logged when it
+        // starts and when it ends.
+        const bool fellBack = scaled && !scaledReady;
+        if (fellBack != mScaledFellBack)
         {
-            return;
+            if (fellBack)
+            {
+                LOG_W("SpotlightRenderer: no reduced-scale target could be allocated at scale %.3f - drawing at "
+                      "resolution scale 1.0.",
+                      GetClampedSpotScale(config));
+            }
+            else if (scaled)
+            {
+                LOG_I("SpotlightRenderer: a reduced-scale target allocated again - back to scale %.3f.",
+                      GetClampedSpotScale(config));
+            }
+            mScaledFellBack = fellBack;
+        }
+        if (fellBack)
+        {
+            scaled = false;
         }
 
         UseScreenBlend();
@@ -912,29 +935,13 @@ namespace EdgeLighting
 
     bool SpotlightRenderer::resizeScaledBuffer(int width, int height)
     {
-        // Walk SCALED_FORMATS from the last tier that allocated. A refused
-        // format is never asked for again: Resize treats a format change as a
-        // reallocation, and its failure path destroys what was there, so
-        // re-asking every frame would churn the attachment - and the buffer is
-        // released between uses, so it cannot remember the refusal itself.
-        for (; mScaledFormat < SCALED_FORMAT_COUNT; ++mScaledFormat)
-        {
-            const ScaledFormat &f = SCALED_FORMATS[mScaledFormat];
-            if (mScaledBuffer.Resize(width, height, f.internalFormat, f.format, f.type))
-            {
-                return true;
-            }
-            if (mScaledFormat + 1 < SCALED_FORMAT_COUNT)
-            {
-                LOG_E("SpotlightRenderer: %s reduced-scale target unavailable, falling back to %s. "
-                      "The dark tail is rounded to 8 bits before the blit reads it.",
-                      f.name, SCALED_FORMATS[mScaledFormat + 1].name);
-            }
-        }
-        // Every candidate refused: stay on the last, the one most likely to
-        // allocate on a later frame, rather than off the end of the list.
-        mScaledFormat = SCALED_FORMAT_COUNT - 1;
-        return false;
+        // Walk SCALED_FORMATS from the best row this context may render at this
+        // size (AdaptiveFormatTarget::Ensure). The walk keeps nothing here: a
+        // refused format, or one whose allocation failed this large, is the
+        // effect's FormatAvailability's to remember, so a refusal is never
+        // asked for again although the buffer is released between uses.
+        return mScaledBuffer.Ensure(GetFormatAvailability(), SCALED_FORMATS, width, height) !=
+               AdaptiveFormatTarget::EnsureResult::FAILED;
     }
 
     void SpotlightRenderer::ensureBuffer()
@@ -1317,7 +1324,7 @@ namespace EdgeLighting
         // the tail to one-level plateaus before any noise downstream can
         // help. See SCALED_FORMATS for what that looked like. On the RGBA8
         // fallback this pass dithers as before and the blit adds its own.
-        const bool blitDithersAlone = scaled && SCALED_FORMATS[mScaledFormat].holdsSubLevels;
+        const bool blitDithersAlone = scaled && HoldsSubLevels(mScaledBuffer.GetInternalFormat());
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uDither", blitDithersAlone ? 0.0f : 1.0f);
 

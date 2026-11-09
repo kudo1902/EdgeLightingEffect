@@ -1,11 +1,9 @@
 #ifndef _EDGE_LIGHTING_SHARED_BUFFER_H_
 #define _EDGE_LIGHTING_SHARED_BUFFER_H_
 
-#include "gl/framebuffer.h"
+#include "core/adaptive-format-target.h"
 #include <glm/glm.hpp>
-#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace EdgeLighting
@@ -36,26 +34,30 @@ namespace EdgeLighting
     ///
     /// @par Writes
     /// The producer allocates and clears it through @ref BeginWrite, which
-    /// keeps the format tier, the version and which texels may hold anything
-    /// but 0 - so a write clears only the window it draws into and the one the
-    /// last write drew, rather than the whole viewport-sized buffer.
+    /// keeps the version and which texels may hold anything but 0 - so a write
+    /// clears only the window it draws into and the one the last write drew,
+    /// rather than the whole viewport-sized buffer. The buffer is a
+    /// AdaptiveFormatTarget, so it moves back up its format list through
+    /// @ref Refresh, and knows an allocation by its generation.
     class SharedBuffer
     {
     public:
-        /// A format the buffer may be allocated in.
-        typedef struct Format
-        {
-            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
-            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
-            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
-            const char *name;     ///< For the fallback log line.
-        } Format;
+        /// A format the buffer may be allocated in - TextureFormat, what every
+        /// format list holds; the name is kept so a host's list still
+        /// compiles.
+        typedef TextureFormat Format;
 
         /// @p name labels the buffer in log messages. @p formats in preference
         /// order, best first: each allocation walks them from the best one the
-        /// driver has not yet refused. @p consequence says, in the log line a
+        /// driver has not yet refused. @p fallbackCost says, in the log line a
         /// fallback writes, what the next format costs. Creates no GL object.
-        SharedBuffer(const char *name, std::vector<Format> formats, const char *consequence);
+        ///
+        /// A format of @p formats outside the library's lists
+        /// (LIBRARY_FORMAT_LISTS) has no answer from the startup report, so the
+        /// first walk that reaches it probes it - mid-frame, where the probe
+        /// clears the frame's pending GL errors. A producer that lists one asks
+        /// it from its Initialize instead (FormatAvailability::Ask).
+        SharedBuffer(const char *name, std::vector<Format> formats, const char *fallbackCost);
 
         SharedBuffer(const SharedBuffer &) = delete;
         SharedBuffer &operator=(const SharedBuffer &) = delete;
@@ -63,42 +65,83 @@ namespace EdgeLighting
         // --- Read: any renderer ----------------------------------------------
 
         /// Whether the buffer holds this frame's image.
-        bool IsReady() const { return mReady && mBuffer.IsValid(); }
+        bool IsReady() const { return mReady && mTarget.IsValid(); }
 
         /// Bind colour attachment 0 to texture unit @p unit.
-        void BindTexture(GLuint unit) const { mBuffer.BindTexture(unit); }
+        void BindTexture(GLuint unit) const { mTarget.BindTexture(unit); }
 
         /// The GL texture name of attachment 0; 0 while unallocated. For a
         /// reader that has to attach it elsewhere (a read-back); bind it with
         /// @ref BindTexture to sample it.
-        GLuint GetTextureId() const { return mBuffer.GetTextureId(); }
+        GLuint GetTextureId() const { return mTarget.GetTextureId(); }
 
         /// The buffer's size, texels.
-        glm::ivec2 GetTexels() const { return glm::ivec2(mBuffer.GetWidth(), mBuffer.GetHeight()); }
+        glm::ivec2 GetTexels() const { return glm::ivec2(mTarget.GetWidth(), mTarget.GetHeight()); }
 
         /// The viewport it was drawn for, px: uv (0, 0) to (1, 1) spans it.
         glm::ivec2 GetViewport() const { return mViewport; }
 
+        /// The sized internal format it is allocated in, e.g. GL_RGBA16F - so a
+        /// reader can tell whether it holds gradients finer than an 8-bit
+        /// level. Valid while allocated (@ref GetTextureId nonzero).
+        GLint GetInternalFormat() const { return mTarget.GetInternalFormat(); }
+
         /// Writes so far. Compared only for equality.
         uint32_t GetVersion() const { return mVersion; }
+
+        /// Where the last write drew, as x0, y0, x1, y1 texels ([x0, x1) x
+        /// [y0, y1)): every texel outside it is 0 - what @ref BeginWrite's
+        /// windowed clear rests on. The whole buffer while that is not known
+        /// (no write yet, or the last one failed or was released). For
+        /// verification: a reader needs the texels, not this.
+        glm::ivec4 GetLastWriteWindow() const
+        {
+            return mDirtyKnown ? mDirty : glm::ivec4(0, 0, mTarget.GetWidth(), mTarget.GetHeight());
+        }
 
         // --- Write: the producer alone ---------------------------------------
 
         /// Size the buffer to @p texels in the best format left, bind it, and
         /// clear what may hold anything but 0: @p window - [x0, x1) x [y0, y1)
         /// texels, as x0, y0, x1, y1, where this write draws - and the last
-        /// write's window, or the whole buffer when its texels are undefined
-        /// (fresh, reallocated or released). Moves the version.
+        /// write's window, or the whole buffer when its texels are undefined:
+        /// allocated since the last write - by this call's walk or by
+        /// @ref Refresh, told by the generation - or released. Moves the
+        /// version.
         ///
         /// The caller lifts the host's scissor first and keeps it lifted
         /// through its draw (GLUtils::NoScissorScope): the buffer is the
         /// caller's viewport at a reduced scale, so a host scissor in window
         /// px lands on the wrong texels. The clear's own scissor is put back
         /// as it was found.
+        ///
+        /// The format walk asks @p availability first - the producer's
+        /// BaseRenderer::GetFormatAvailability - and starts at the first
+        /// format this context may render at this size, so it never fails a
+        /// full-size allocation in a format a probe already refused, nor
+        /// retries one that already failed this large; its own fallback is
+        /// left for a refusal neither predicted.
         /// @return false if no format allocates, in which case nothing is bound
         ///         - binding then would bind the CALLER's framebuffer - and the
         ///         caller must draw nothing.
-        bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window);
+        bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, FormatAvailability &availability);
+
+        /// Move the buffer back up its format list once a format it fell back
+        /// past may be allocated again (AdaptiveFormatTarget::Refresh): for a
+        /// producer that skips its write on a frame it reuses, once a frame
+        /// before it decides to - a still frame would otherwise keep the buffer
+        /// where it fell. ALLOCATED leaves the texels undefined: the producer
+        /// may not reuse the buffer that frame, which keying its reuse on
+        /// @ref GetGeneration does, and the next @ref BeginWrite clears it
+        /// whole.
+        AdaptiveFormatTarget::EnsureResult Refresh(FormatAvailability &availability)
+        {
+            return mTarget.Refresh(availability);
+        }
+
+        /// Moves with every allocation (AdaptiveFormatTarget::GetGeneration):
+        /// what a producer keys its reuse of the buffer on.
+        uint32_t GetGeneration() const { return mTarget.GetGeneration(); }
 
         /// Treat the texels as undefined: the next @ref BeginWrite clears the
         /// whole buffer rather than two windows. Moves nothing else. For
@@ -117,15 +160,14 @@ namespace EdgeLighting
         void Release();
 
     private:
-        Framebuffer mBuffer;          ///< The image: one attachment.
-        std::vector<Format> mFormats; ///< Candidate formats, best first.
-        size_t mTier = 0;             ///< Index of the best format the driver has not refused. Only ever advances.
-        std::string mConsequence;     ///< What a fallback costs, for its log line.
-        glm::ivec4 mDirty{0};         ///< The last write's window: every texel outside it is 0 while @c mDirtyKnown.
-        bool mDirtyKnown = false;     ///< False while the texels are undefined.
-        glm::ivec2 mViewport{0};      ///< See @ref GetViewport.
-        uint32_t mVersion = 0;        ///< See @ref GetVersion.
-        bool mReady = false;          ///< See @ref IsReady.
+        AdaptiveFormatTarget mTarget;    ///< The image: one attachment.
+        std::vector<Format> mFormats;    ///< Candidate formats, best first - the list @c mTarget walks.
+        glm::ivec4 mDirty{0};            ///< The last write's window: every texel outside it is 0 while @c mDirtyKnown.
+        bool mDirtyKnown = false;        ///< False while the texels are undefined.
+        uint32_t mWrittenGeneration = 0; ///< The generation the last write drew into; another is a fresh allocation.
+        glm::ivec2 mViewport{0};         ///< See @ref GetViewport.
+        uint32_t mVersion = 0;           ///< See @ref GetVersion.
+        bool mReady = false;             ///< See @ref IsReady.
     };
 
 } // namespace EdgeLighting

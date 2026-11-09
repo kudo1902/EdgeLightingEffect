@@ -5,6 +5,588 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-11-08 - A lost buffer moves its generation (V37); presets refuse a 0 s duration (I104)
+
+Not committed; on top of `9b0c76e`. Both from a whole-project review the same
+day, each reproduced before it was fixed.
+
+- **V37: the black frame.** A move back up (`refreshTargets`) whose retry of
+  RGBA16F and RGBA8 fallback both run out of memory leaves the shared buffer
+  released - and its generation where it was, since nothing was allocated. On
+  a still config `reuseOffscreen` keys on that generation, so it skipped
+  passes 1a and 1b and the blit sampled texture 0: opaque black over 864,252
+  of 921,600 px at 1280 x 720 (all but the edge ring), on every frame until
+  the config changed. The 2026-10-31 review expected "the glow gone, the fill
+  alone" here; that is what a frame that runs pass 1b draws, but a still frame
+  never did. `formats` passed: its failed retry always had a fallback that
+  allocated.
+  - **Fix.** `AdaptiveFormatTarget::GetGeneration` also moves when the target
+    loses its buffer - a walk that ends FAILED while it held one, or
+    `Release` of a live one (`mLosses`) - so every cache keyed on a
+    generation sees a loss as it sees an allocation. The frame then runs pass
+    1b, whose walk finds no row, and draws the fill alone; the buffer comes
+    back as each failure expires. The gather buffer had the same gap.
+  - **Gate.** `formats` D8, `CheckFailedFallback` on `card_outside` (whose
+    opaque fill keeps the glow-less frame from being empty): the failed
+    retry's frame must be the fill alone (`debug.opaqueOnly`'s frame) and the
+    frame after must be a fresh run's, byte for byte. Against `9b0c76e` both
+    fail - 255 and 242 levels off - and nothing else does. A `Cell` can now
+    replace the run's `SetFailedAllocations` hook from its first frame
+    (`replaceFailed`), which this case needs: fail, allocate, then fail twice.
+- **I104: NaN from a 0 s cycle.** `el_animation_set_duration` accepted 0 -
+  right for a field-bound animation, which 0 opts out of the wrap - and the
+  oscillator presets rebuilt their `Oscillator` at `1 / 0`: `IntensityPulse`
+  wrote NaN into `neon.intensity` on every frame, a config that never equals
+  itself, so no renderer could skip work again. `HueRotationReverse` cast an
+  infinite quotient to int.
+  - **Fix.** `Animation::AcceptsDuration` (any duration by default);
+    `PositiveDurationAnimation`, the new base of the 13 presets that build a
+    modulator from their duration, takes only one of at least 1e-6 s
+    (`MIN_DURATION_SECONDS`); their C factories, which took any duration above
+    0, check the same bound now - 1e-40 s is above 0 and its reciprocal is
+    infinity all the same (found by the second review pass). `SetDuration` returns false for a duration
+    refused and changes nothing; `el_animation_set_duration` returns
+    `EL_ERROR_INVALID_PARAMETER` and logs. A constructor is the one place 0
+    still arrives: `CycleFrequency` gives it an oscillator held at its start,
+    and `HueRotationReverse` holds its forward rate. The `*Curve` presets
+    keep 0.
+  - **Verified** by a probe of every preset: `SetDuration(0)` refused and the
+    duration kept, every config equal to itself, three presets constructed
+    with 0 finite; the C ABI refuses 0 on a pulse and takes it on a
+    field-bound animation.
+- **Still open from the review**, not recorded as items yet: the C ABI's
+  `set_*_count` setters resize with no cap and no `try`; a stopped RESTORE
+  `FieldBoundAnimation` writes its whole saved arcs / lamps / segment vectors
+  back every frame; no shader declares `precision highp sampler2D` (ES 3.00
+  defaults samplers to lowp); `AnimationGroup` never completes, though its
+  doc says its state is derived; `gradientLutSize` is documented as 32-256
+  but not capped; and `check-doc-links.py` fails on this log's link to
+  `spotlight-art-plan.md`, which only `origin/spotlight_art` has.
+
+## 2026-10-31 - One type owns a buffer and its format list (I93)
+
+Not committed; on top of `e3de12d`. Finding 1 of the architecture review of
+2026-10-31; the detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problem.** Moving a buffer back up its format list, and knowing its
+  texels had been replaced, were each owner's to get right at sites placed by
+  hand: 7 skips of a walk, each asking `IsBelowBestRow` with its own list, and
+  4 ways of saying "contents stale" - the emission bake's flag, the coverage
+  tables' dirty masks, `BeginWrite`'s allocation count, the fields' recorded
+  formats. Four defects in a week came from them: the ring field composited
+  after its input moved, the reused frame never asking about the gather,
+  `BeginWrite` missing a same-format reallocation, a dropped field waiting two
+  frames.
+- **What changed.**
+  - `FormatTarget` (`core/format-target.h`): a Framebuffer sized only through
+    the walk, by `Ensure` with a `Spec` - the list, filter and log names, one
+    constant per list - which says HELD, ALLOCATED or FAILED; `Refresh`, which
+    moves it back up at the size it holds when a better row may be allocated
+    now (`IsBelowBestRow`, asked only there); and `GetGeneration`, which moves
+    with every allocation. All nine buffers are one.
+  - Moving back up happens in one place per renderer, once a frame, before any
+    skip is decided: `NeonRenderer::refreshTargets` (the emission table, both
+    coverage tables, the gather, the shared buffer) and the top of the flare's
+    `RenderOffscreen`. The spotlight and the fields walk on every frame they
+    draw.
+  - Every cache over a buffer's texels keys on its generation: the emission
+    bake (`EmissionBake::generation`, for the `baked` flag), the gather cache,
+    the reused offscreen frame (`OffscreenState`), the flare's cache
+    (`FlareInputs::bufferGeneration`) and the shared buffer's whole clear - the
+    generation its last write drew into, so a Refresh earlier in the frame
+    counts too. The coverage tables mark every piece dirty on ALLOCATED. The
+    fields keep keying on the FORMAT (`FieldInputFormats`): a same-format
+    reallocation recomputes the same texels, which a field may keep reading.
+  - One type, `TextureFormat`, for every list's entries - the neon's
+    `TargetFormat` and the flare's and the spotlight's `ScaledFormat` are
+    gone, and so is the startup report's `ReportRow`, a fifth copy;
+    `SharedBuffer::Format` is its typedef, so a host's list still compiles.
+    "Row" stays the word for a position in a list (`getBestRow`,
+    `isBelowBestRow`, "the RGBA8 row"): a list is `formats` (`Spec::formats`),
+    one entry a `candidate`, a format's log name `name`.
+    Whether a format keeps values between 8-bit levels is the format's own
+    property (`HoldsSubLevels`), so `mScaledFormat` is gone too.
+  - Not built: the global epoch the review proposed. It cannot see a retry
+    that fails and reallocates the same size and format - what the shared
+    buffer's defect was - and the generation can; the rule the caches already
+    follow, "a key holds every input", then covers the move.
+  - Then, from a second architecture review the same day: `FormatTarget`
+    COPIES the `Spec` it is handed - it kept its address, so a temporary or
+    local `Spec` compiled without a warning (`-Wall -Wextra -Wdangling`) and
+    left `Refresh` reading a dead object; a probe that walks a function-local
+    `Spec` again after its stack is overwritten is clean under ASan and UBSan
+    and moves the buffer back up. And the walk is private to it, no longer a
+    template: `ResizeInBestFormat`, `IsBelowBestRow` and `GetBestRow` were
+    public templates over a row type with one instantiation, callable on a
+    raw Framebuffer; they are now `FormatTarget`'s own and
+    `RenderTargetFormats`' private `firstToTry` / `getBestRow`, with
+    `FormatTarget` its friend - so the compiler holds every buffer with a
+    format list to the type. `render-target-formats.h` went from 671 lines to
+    479, and no longer pulls in the GL wrappers or the log macros.
+  - Last, a rename, the owner's call: `RenderTargetFormats` is now
+    `FormatAvailability` (`core/format-availability.h` / `.cpp`), with
+    `BaseRenderer::GetFormatAvailability` / `AdvanceOwnFormatAvailability`,
+    `EdgeLightingEffect::GetFormatAvailability` and the walk's parameter
+    `availability`. It holds no target - which formats a driver can render
+    and which allocations failed - and beside `FormatTarget` the old name read
+    as a second kind of target. Its `Verdict` is now `ProbeResult`, and
+    `Answer::verdict` is `Answer::result`: the name says the value is the
+    probe's, as against the failed allocations kept beside it, and UNKNOWN
+    read oddly as a verdict. No behaviour moves: all seven gates pass, and
+    `formats`' output differs from the run before only in case S's heading,
+    which names the class. The bullets above and the entries below keep the
+    old names.
+  - Then its header was laid out the way the library's others are: nested
+    types first in each section - `FailedAllocation` and `ForcedFailure` had
+    sat among the hooks, `LoggedSkip` among the private methods - the methods
+    under group markers, and `FormatTarget`'s private methods and members
+    under separate labels, as AGENTS.md asks. Four private names said the
+    wrong thing: `isNewSkip` recorded the skip (now `recordSkip`),
+    `onAllocated` read as an event callback (`recordAllocation`), `IsRefused`
+    was public for the class's own use (`isForcedRefused`, beside
+    `isForcedUnknown`), and `mFailedSizes` held failed allocations
+    (`mFailedAllocations`). `FailedAllocation`'s fields are initialised, as
+    the other two structs' are.
+  - Then a review of `FormatTarget` itself, and six changes from it:
+    - The walk's "already held" test left out the filter, which `Resize`'s
+      early-out compares: a target whose filter changed would have
+      reallocated with the walk believing nothing had - no recovery recorded,
+      a forced failure skipped. Both now ask `Framebuffer::Holds`. No target
+      changes its filter today.
+    - A target is named, filtered and given what falling back costs it at
+      construction, and walks a `FormatList`: the `Spec` mixed the buffer's
+      identity with the list, so three pairs repeated their strings and
+      every buffer had two names that disagreed ("LensFlare.Scaled" from
+      `Framebuffer`, "LensFlareRenderer ... reduced-scale" from the walk). One
+      name now, in every line: "NeonRenderer.Gather: target unavailable in
+      RGBA16F at ...". `formats`' needles follow it.
+    - The walk lives in `FormatAvailability` (`allocateInBestFormat`, with
+      `isBelowBestRow` for `Refresh`), private, `FormatTarget` its only way
+      in: two friend calls where there were ten, and every decision and log
+      line in one class. Nothing else can size a buffer from a list, as
+      before.
+    - `Ensured` is `EnsureResult` (`Ensured::FAILED` read as a contradiction),
+      matching `ProbeResult`; `consequence` is `fallbackCost`.
+    - A list's length is counted from the array (`FormatList`'s constructor),
+      never written: the fields wrote `1` by hand.
+    - The library's lists are named once, in `core/format-availability.h`
+      (`RGBA16F_THEN_RGBA8`, `RG16F_THEN_RG8`, `R16F_ONLY`, `RG16F_ONLY`,
+      gathered in `LIBRARY_FORMAT_LISTS`), each buffer giving one a name of
+      its own that says why; the same two-entry list had been defined five
+      times in three files. The startup report's rows come from them - the
+      hand-kept copy that was open since the first architecture review is
+      gone, and a new list is reported without a second edit. Same rows, same
+      order.
+    - All seven gates pass, and `formats`' output is what it was before the
+      six, timings aside - every fallback line it counts found under its new
+      needle.
+  - Last, `FormatTarget` is now `AdaptiveFormatTarget`
+    (`core/adaptive-format-target.h` / `.cpp`), the owner's call: "format
+    target" read as "the format aimed at" and said nothing of what sets the
+    class apart from a Framebuffer - its format adapts, down a list when an
+    allocation fails and back up when it may, as an adaptive bitrate does. The
+    bullets above and the entries below keep the old name.
+  - A third architecture review that day (2026-11-01) found the policy
+    testable only through `formats` - a GPU, ~70 s, 33 log-text matches - with
+    the verification hooks branching inside `Ask` and the walk (open: an
+    injected driver for probe, allocate and size limit would replace four of
+    the five hooks), the docs restating the subsystem (CLAUDE.md's paragraph
+    is 8,870 characters; each rename touched seven or eight documents), and
+    three small things, fixed:
+    - "May any row of this list allocate?" was written out twice in the
+      neon (the segment table's loop, the fields' single-format ask). It is
+      `MayAllocate(const FormatList &, ...)`, the walk's own rule, and the
+      fields walk and ask one `GetFieldFormats`.
+    - The class comment said one object per effect meant one per GL context.
+      Two effects on one context each have their own - each probes once, and
+      a failure one keeps is unknown to the other - which the comment now
+      says.
+    - A host list's format outside `LIBRARY_FORMAT_LISTS` is probed by the
+      first walk that reaches it, mid-frame, clearing the frame's pending GL
+      errors; `SharedBuffer`'s constructor, `AdaptiveFormatTarget::Ensure` and
+      the upgrade notes now say to ask it from `Initialize`.
+  - Then a review of the implementation (2026-11-02): no serious defect,
+    and six small things, fixed:
+    - `Advance` clamped a negative step but let NaN and infinity through
+      (`std::max(NaN, 0.0)` is NaN): one non-finite delta from a C++ host held
+      the frame time there for good, every out-of-memory failure reading as
+      expired - a failed allocation and an ERROR line every frame while a
+      shortage held. A non-finite step now counts as 0, as a negative one
+      does. (The C ABI already refused such a delta.)
+    - `FormatAvailability` was copyable, so a copy's hooks compiled and
+      refused nothing; it is now neither copied nor moved.
+    - The coverage table told a two-channel table by `GL_RG16F || GL_RG8`, a
+      second copy of `RG16F_THEN_RG8`: it asks `FormatList::Contains`.
+    - An empty list - a host's `SharedBuffer` built with no formats - failed
+      every frame without a word: it now warns once.
+    - Two awkward wraps at the fields' `Ensure` calls, and a stale
+      `GetFieldFormat` in the onboarding guide.
+    A probe with no GL context checked the first, second and fourth: steps of
+    NaN, infinity and -5 between 1 and 0.5 leave the time at 1.5, the copy and
+    move constructors are gone, and three walks over an empty list fail with
+    one warning.
+  - A whole-branch review the same day found the rest sound and one design
+    point, left as it is by the owner's decision: a retry of a better format
+    at the size a buffer already holds frees the working buffer first
+    (`Resize` destroys before it allocates). Should the retry and then the
+    fallback both run out of memory, both formats are kept as failed at that
+    size and the buffer stays empty for at least the 2 s wait - the glow
+    gone, the fill alone, where it is the neon's. Allocating the better
+    format into a scratch `Framebuffer` and swapping it in on success would
+    never lose the working buffer, at the price of holding both at once
+    while it tries; `formats`' failed-retry checks rest on the current
+    behaviour.
+  - A code-level review after it: conventions clean throughout, six polish
+    items, five kept. The walk is 49 lines, its up-front refusals in
+    `rejectsOutright` and its fallback lines in `logFallback`. The skip log's
+    stand-ins for a format name are named (`SKIP_SIZE_LIMIT`,
+    `SKIP_NO_FORMATS`); `Ask` and `MayAllocate` take a `TextureFormat`;
+    `IsRenderable`'s doc says a const effect reads `GetAnswers` instead; and
+    four includes the refactors left unused are gone. The sixth - the
+    flare's and the spotlight's fallback-to-1.0 logging, the same block in
+    each - was shared briefly (`ScaledFallback`) and put back inline on the
+    owner's call: a file and a type for fifteen lines, whose log lines named
+    the helper rather than the renderer that wrote them, while `formats`
+    cases D2 / D3 already fail if either copy drifts.
+  - Gate: D8 gains a way with the emission table falling alone on `arcs`,
+    whose config holds across the move, and a failed retry on the flare's
+    buffer; both added because removing the guard they cover passed
+    `formats` before them.
+- **Measured.** Apple M2 Pro: `formats`, `check`, `shared-buffer`,
+  `partition`, `clock`, `flare-reuse` and `sequence` pass, and `formats`'
+  output is line for line what it was before the change, timings aside.
+  Removing each of the 6 refresh calls and the 8 generation keys in turn fails
+  `formats` every time - 12 of 14 at first; the emission bake's key and the
+  flare cache's passed, which is what the two new D8 checks are for, and with
+  them both fail. Not run on the AMD 5300M or the device.
+- **Open.** The other five findings of that review: each invariant restated in
+  five to eight documents, the gate reading log text, the verification hooks
+  in the production class, the cross-buffer policy, a renderer outside an
+  effect advancing its own clock.
+
+## 2026-10-29 - The gates that read the shared buffer, hardened (I93)
+
+Mostly committed as `e1c5724`; the rest (the `shared-buffer` table's marks,
+these notes) on top of it. From a third review of the branch, which
+found no library defect (`formats` also passes under ASan and UBSan) but two
+gate checks that could pass without testing anything.
+
+- **The problems.**
+  - `formats`' failed-retry check catches an incomplete clear only where the
+    glow's window leaves texels outside it, and nothing checked that it did:
+    its first version, on `arcs`, passed with the defect in place.
+  - Only `formats` filled fresh textures, but `sequence` and `shared-buffer`
+    compare shared-buffer texels too - and on a Mac a texel nobody wrote reads
+    0 in every run alike. Measured with `BeginWrite`'s whole clear after a
+    reallocation removed: `sequence` caught it only with the fill;
+    `shared-buffer` passed even with it, since no check of its looked outside
+    the window.
+- **What changed.**
+  - `SharedBuffer::GetLastWriteWindow` (read-only; the whole buffer while it
+    is not known) says where the last write drew - every texel outside it is
+    0, which is what the windowed clear rests on.
+  - `formats`' failed-retry check requires every texel outside the window to
+    be 0, in both runs, and some to lie outside it, or fails as proving
+    nothing; `shared-buffer` requires the same in every cell (marked `s`),
+    each of which reallocates the buffer, and at least one cell to leave
+    texels outside. One counter for both (`CountNonZeroOutsideWindow`).
+  - `DrawTargetWatch::InstallFreshTextureFill`, the fill alone, installed by
+    `sequence` and `shared-buffer`.
+  - `.gitignore` ignores every `build*/` directory, not only `build/`.
+- **Measured.** Apple M2 Pro. With the whole clear after a reallocation
+  removed: `shared-buffer` fails nearly every cell with the fill and passes
+  without it; `sequence --sequences 6` fails 338 frames with the fill and
+  passes without it. With the failed-retry check moved back to `arcs`, it
+  fails as proving nothing. With `BeginWrite`'s old size-and-format test put
+  back, the frame differs from a run that never retried in a 4 px column at
+  the window's left edge, at 60 levels - the fill - so the blit reads two
+  texels past the window there: the README's "the blit reads only where the
+  write drew" was wrong, and a frame does show an uncleared texel there. On
+  the final tree `check`, `shared-buffer` (70 cells leave texels outside the
+  window, none of them non-zero), `formats` and `sequence` pass; the other
+  gates read nothing that changed. Not run on the AMD 5300M or the device.
+- **Open.** As in the entries below.
+
+## 2026-10-29 - Three defects in the expiry, fixed (I93)
+
+Not committed; on top of `20b9e4e`. From a second code review of the branch;
+the detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problems.** Each confirmed by a probe against `20b9e4e` before it was
+  fixed.
+  - A retry that ran out of memory again left the shared buffer's texels
+    undefined outside the glow's window. `BeginWrite` told a reallocation by
+    its size and format, but a failed retry destroys the buffer and the walk
+    allocates the format it had at the size it had: a fresh texture, cleared
+    only over the glow quad's window and the last write's, and never whole
+    after, since every later write clears windows. The probe saw the buffer
+    released, sized again to the same 256 x 128, and an 8 x 8 clear - and
+    the texture name came back the same, so no name check could tell either.
+    The shared buffer is the largest buffer, so the one a lasting shortage
+    hits and whose retries keep failing; any reader of it (the debug inset, a
+    host layer) saw what the driver handed back, and so did the neon's own
+    frame - with the fix reverted, the gate's check below finds 86,400 of the
+    buffer's 230,400 texels never written on `small_rect` at 0.5, and the
+    frame differing from a run that never retried.
+  - A reused still frame asked only the shared buffer whether it was below
+    its best format, so a gather that fell back alone stayed in RGBA8 until
+    the config changed. The gather's failure normally reaches the shared
+    buffer, the larger allocation, whose move re-runs the gather - which is
+    what hid this, from D8 too. At a scale at or below `GATHER_MIN_SCALE` on
+    a rect near the viewport, the gather's buffer outgrows the shared one
+    (96 x 64 x 2 texels against 80 x 45 at 0.0625 and 720p): every still frame
+    after the expiry was 124k channels up to 2 levels off.
+  - Found while checking the second: a field dropped for an input that moved
+    rows (`LazyBake::DropIfInputsMoved`) shaded directly for two frames, not
+    the one its comment promised - a field used straight after its
+    first-frame bake was never marked settled, so the frame after the drop
+    waited out a config change there was none of.
+- **What changed.**
+  - `Framebuffer::GetAllocationCount`, moved by every allocation (never by
+    the early-out) and by a move into it; `BeginWrite` clears the whole
+    buffer whenever it moved.
+  - The reused offscreen frame asks about the gather too.
+  - `DropIfInputsMoved` marks the schedule settled, so the next frame bakes.
+  - Gate: `DrawTargetWatch` fills every texture allocated with no data with
+    0x3C - the GL leaves those texels undefined, and a desktop GL hands back
+    zeros, which hid any buffer reading a texel it never wrote. Every
+    `formats` case passes with it unchanged. D8 compares the waiting cell's
+    last frame - the one after the move - with A's too; its gather way runs
+    at scale 1/16, where the gather falls alone, and requires the shared
+    buffer to stay RGBA16F; and a new check fails the shared buffer's retry
+    again and compares its frame and every texel (read back) with a run
+    whose failure is held. `ReadSharedTexels` is shared with `sequence`.
+- **Measured.** Apple M2 Pro. With every fresh texture filled, every
+  earlier `formats` case passes unchanged - no buffer the gate reaches reads
+  a texel it never wrote. Each fix reverted alone fails `formats`: the
+  shared buffer's whole clear (the failed-retry check: 86,400 texels never
+  written, the frame different; with the fill off too it passes, so the fill
+  is what shows it on a Mac), the reused frame's gather check and the gather
+  cache's (the 1/16 way, both - at 0.5 the way caught only the cache's), and
+  the drop marking the schedule settled (the RG16F ways' waiting cell, a
+  level off for one more frame). `formats` (66 s - not the ~15 s the docs
+  said, for all the cases added since), `check`, `shared-buffer`,
+  `partition`, `clock`, `flare-reuse` and `sequence` pass. Not run on the AMD
+  5300M or the device.
+- **Open.** As in the entry below. And a trade-off rather than a defect: a retry destroys
+  the buffer that fell back before it tries the better format (`Resize`
+  frees the old allocation first). That gives the retry the most memory to
+  work with, but if the fallback's own allocation then fails too, the layer
+  loses its buffer until the next wait ends - the neon draws only the fill.
+
+## 2026-10-28 - An out-of-memory failure expires (I93)
+
+Committed as `20b9e4e`, on top of `5be9a9b`. From a code review of the branch; the
+detail is at the end of section 10 of
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md).
+
+- **The problem.** An out-of-memory failure was kept for the effect's life, at
+  its size and above, against every walk of its format: a forced failure of
+  the ~61k-texel gather put the 230k-texel shared buffer on RGBA8 for every
+  frame of `formats` case D7. One passing shortage - a video decoder taking
+  memory for a moment - would leave the shared buffer at 8 bits, and R7's
+  contour rings back, for good.
+- **What changed.**
+  - `RenderTargetFormats` keeps a frame time (`Advance`, the host's frame
+    delta from `EdgeLightingEffect::Update`; a renderer outside an effect
+    advances its own object). An out-of-memory failure expires after 2 s
+    (`OUT_OF_MEMORY_RETRY_SECONDS`); a retry that runs out again doubles the
+    wait, up to 512 s; an allocation that large that succeeds clears it and
+    says so. Every other failure still holds for good.
+  - Every caller that skips its walk while its buffer holds asks
+    `IsBelowBestRow` first - the emission table (`ensureEmissionBuffer`, now
+    re-walked when it fell back), the glow coverage and segment tables, the
+    gather cache, the neon's reused offscreen frame, the flare's cache - so a
+    buffer moves back up, still frames included.
+  - Skips are logged again after a shortage passes; `ResizeInBestFormat`
+    releases the buffer on an invalid size; `formats` scans live textures up
+    to the highest name generated.
+  - Gate: `formats` case D8 (a shortage that passes: every cell drawn after
+    it is A's byte for byte; one that lasts: 5 tries in 40 s, waiting 32 s at
+    the end) on two new hooks, `ForcedFailure::count` and
+    `SetOutOfMemoryRetry`. Cases D and D6's failing run hold their failure
+    for the run.
+  - Then an architecture review of it: D8's passing shortage runs six ways
+    (RGBA16F; RG16F on the coverage table; RG16F on the segment table; and,
+    each alone, the shared buffer, the flare's buffer and the gather), since
+    disabling each check in turn left four of them ungated - the coverage
+    tables', and three the first way hid behind the emission table's move. The RG16F-on-`arcs` way
+    found a defect: the edge ring's field, baked from the 8-bit coverage
+    table, was still composited after the table moved up, a field being
+    invalidated only by config changes. A field now records the formats its
+    bake read (`FieldInputFormats`) and is composited only while they hold
+    (`LazyBake::DropIfInputsMoved`). The host-visible changes of the whole
+    format check are section 8 of
+    [`upgrade-notes.md`](../guides/upgrade-notes.md).
+- **Measured.** Apple M2 Pro: `formats` passes, every earlier case's output
+  unchanged; `check`, `shared-buffer`, `partition`, `clock`, `flare-reuse`
+  and `sequence` pass. Disabling any one of the seven checks that move a
+  buffer back up - the emission table's, the gather cache's, the reused
+  frame's, the flare cache's, the two coverage tables' and the fields' input
+  check - fails D8.
+- **Open.** The AMD 5300M and the device (step 6). A failure other than out
+  of memory is still kept for good, which is right only if the driver reports
+  a shortage as `GL_OUT_OF_MEMORY` - read the device's log for it. From the
+  architecture review: one type owning a buffer and its format list (each
+  buffer's policy is spread across five places), a seam in place of the five
+  verification setters, and counters in place of the gate's log-text
+  checks.
+
+## 2026-10-27 - Render-target formats are asked about before they are allocated (I93)
+
+Not committed; on top of `dce6d45`. Built from
+[`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md),
+steps 1-5 and 7; step 6, on the device, is open.
+
+- **The problem.** A driver's support for a format was learned only by
+  failing a full-size allocation: on a device without half-float render
+  targets that meant two ERROR lines per buffer, spread over whichever frames
+  first allocated each one, and nothing for a buffer the config never reached;
+  the half-float fields built their three programs - on the frame that already
+  carries the first-draw compile stall - before finding out they could not be
+  used; and the 8-bit fallback rows ran nowhere, since both Macs render every
+  format the library asks for.
+- **What changed.**
+  - `Framebuffer::IsColorRenderable`: a 4 x 4 texture allocated as `Resize`
+    allocates one, attached, `glCheckFramebufferStatus`; it restores the draw
+    binding, the 2D texture and the pixel-unpack buffer and leaves no GL
+    error. ~0.03 ms a probe (AMD 5300M). The extension strings are no
+    substitute: the AMD lists none of the four while rendering every float
+    format, and desktop GL and GLES 3.2 have float targets in core.
+  - `RenderTargetFormats` (`core/render-target-formats.h`): one per effect,
+    owned by `EdgeLightingEffect` and handed to every renderer like the
+    shared-buffer registry (`BaseRenderer::GetRenderTargetFormats`, never
+    null). Each format probed once and kept. `Initialize` logs its report -
+    the five formats the library uses, the four extensions, 0.22 ms - before
+    any renderer initialises.
+  - Every format walk asks it at its allocation (`ResizeInBestFormat`,
+    `SharedBuffer::BeginWrite`, both `resizeScaledBuffer`s) and starts at the
+    first row the driver renders; when no row renders it tries nothing. Both
+    half-float fields ask it before their programs are built.
+  - `SetRefusedFormats` on the object, per effect, is the verification hook,
+    and `neon-scale-check formats` the gate built on it.
+- **Designed twice.** A first version had each renderer probe its own lists in
+  `Initialize` and kept the refusal hook as process-wide state on
+  `Framebuffer`, which also failed `Resize`. It was replaced the same day by
+  the central object, which the plan's section 4.0 argues for; the central
+  hook also makes a better test, since a buffer that allocates without asking
+  now visibly gets the refused format. Building `formats` then found one
+  defect in the rework: with no row of a list rendering, the walk was still
+  sent on to allocate the last one - fixed (the object's "no" is final, each
+  skip logged once).
+- **Verified** on the AMD 5300M: `check`, `partition`, `shared-buffer`,
+  `flare-reuse`, `clock` and `sequence` pass with no WARN or ERROR; the
+  `cover` set is byte-identical to the build before the field gate; a host
+  file including its own GL header and then `edge-lighting.h` still compiles;
+  the report prints the same through the C++ API and the C ABI. `formats`
+  passes in about 10 s and fails on a build without the field gate (675 draws
+  into half float, three field programs built) and on one whose gather walk
+  does not ask (378 draws into RGBA16F).
+- **Measured: what the 8-bit rows cost**, half float refused against nothing
+  refused, 110 cells: every scene within 2-3 levels and 0.46% of lit channels
+  more than one off, except `segments` - ~53 levels and ~9% at every scale,
+  its boosts of 2.0 clamped to 1.0 by the emission table's RGBA8 row (the
+  fallback line says so). That is what a GLES 3.0 device without
+  `EXT_color_buffer_half_float` would draw.
+- **Reviewed three times the same day** (13 findings, 12 fixed; then 7, then
+  4, all fixed; the plan's section 10 lists them). What changed behaviour: a
+  probe with no status - a failed upload, out of memory or a rejected transfer
+  pair - is kept as unknown and the full-size allocation decides that format,
+  where it had been a permanent "no", but an upload that raised
+  `GL_INVALID_ENUM` or `GL_INVALID_VALUE` - the internal format itself
+  rejected; Apple's GL raises the first - is a "no"; `IsRenderable` is the
+  verdict alone and `MayAllocate` (renders or unknown) is what the fields'
+  gate asks; a renderer outside an effect probes in `Initialize`, not
+  mid-frame; every buffer, the half-float fields included, allocates through
+  one `ResizeInBestFormat`; and two more hooks drive what no driver here
+  produces - `SetFailedAllocations` the full-size fallback (`formats` case D),
+  `SetUnknownFormats` an unknown answer (case E, which must draw what nothing
+  refused draws).
+- **Then an architecture review** (six findings; 1-4 fixed, 5-6 - the report's
+  hand-kept format list and the three hooks as one override - left open).
+  What changed behaviour: the walk is stateless - every full-size allocation
+  that fails is recorded in `RenderTargetFormats` with its size, so no buffer
+  keeps a tier, a format that failed at 4K is tried again below that size
+  rather than lost for the effect's life, and the half-float fields no longer
+  switch themselves off for good after one failed bake; `Framebuffer::Resize`
+  fails on any GL error its allocation raises (it used to judge by
+  completeness alone, which `GL_OUT_OF_MEMORY` leaves undefined, and left the
+  error pending - measured), draining the caller's pending errors first and
+  unbinding the unpack buffer for its upload; each answer carries an explicit
+  verdict (RENDERABLE, REFUSED, UNKNOWN) decided in one place; and the flare
+  and the spotlight draw at 1.0 when no scaled buffer allocates, where they
+  used to draw nothing - `formats` case C now checks they match the 1.0
+  frames byte for byte.
+- **Then a review of the stateless walk** (on the M2 Pro). Two contract
+  defects fixed: a walk that could try no row at its size (every row refused,
+  or failed that large) returned false with the buffer still holding an
+  earlier, smaller allocation - it now releases it, as its contract said; and
+  a segment coverage table that could not be allocated still switched the
+  segment table off for the renderer's life (`fillUnavailable`, which means a
+  fill program that will not build) - the mode is now decided against
+  `RenderTargetFormats` before it moves, so the table is tried again below
+  the size that failed, and a frame never flips into the table's mode only to
+  flip back. `SetFailedAllocations` takes a size to fail from, and `formats`
+  cases D2 and D3 use it: each viewport-sized scaled buffer fails at 0.5 and
+  must allocate again, in half float, at 0.25 - the failure memory's
+  retry-below path and the flare's and spotlight's return from 1.0, which
+  nothing ran before; a build whose failure memory ignores size fails both
+  (D2 twice, D3 three times). With RG16F and RG8 refused (by hand, not a
+  case), the `segments` scene keeps its segments in the main table, within 1
+  level of the unrefused frame, with no ERROR line. `formats` passes on the
+  M2 Pro with every group inside its bound (still 2 levels / 0.24%, hue 2 /
+  0.23%, intensity 2 / 0.26%, `segments` 53 / 9.4%), and `sequence`,
+  `partition`, `check` and `shared-buffer` pass.
+- **Then the failure causes** (a second review of the walk, on the M2 Pro).
+  Every full-size failure used to be kept as "this format fails at this many
+  texels x attachments or more", whatever failed it. Right for memory, wrong
+  for the rest: a driver refusing two RGBA16F attachments would have put
+  every larger one-attachment RGBA16F buffer (the shared buffer among them)
+  on RGBA8, and a buffer past the texture size limit would have been kept
+  against every row of its list, by area. Now `Framebuffer::Resize` says what
+  failed it (`failure` out parameter) and `RenderTargetFormats` keeps out of
+  memory by total size, anything else by format and attachment count, and
+  refuses a buffer past `GL_MAX_TEXTURE_SIZE` (read by the report) before
+  any row is tried, keeping nothing; the report prints the limit.
+  `SetFailedAllocations` takes a `ForcedFailure` (formats, size, attachment
+  count, the error reported) and `SetMaxTextureSize` lowers the limit.
+  `formats` grew cases D4 (RGBA16F incomplete with two attachments: every
+  cell without segments as A, the shared buffer RGBA16F - a build keeping
+  every failure by size fails 91 of 103 cells), D5 (the size limit), D6 (the
+  segment table refused, then failing; it found that its fill program was
+  built even when the table was known unavailable - now gated on the same
+  test - and that a refused table was never logged - now logged once each
+  way) and S (the neon, the flare and the spotlight outside an effect: five
+  probes in `Initialize`, none after, frames byte for byte as inside one, a
+  path nothing ran before). The harness split into `format-check-run.{h,cpp}`
+  and `format-check-causes.cpp` (it had reached 954 lines). `formats` passes
+  in ~8 s on the M2 Pro.
+- **Then a non-memory failure holds at every size** (a third review). The
+  first cut kept a non-memory failure per format and attachment count BY
+  SIZE, so a buffer shrinking below it was asked again: a growing rect
+  (whose gather buffer shrinks, a longer perimeter gathering coarser) failed
+  the two-attachment RGBA16F gather 7 times in 12 frames, each a full
+  allocation and an ERROR line, though such a failure says nothing about
+  size - the texture size limit is checked before any row. It is now kept at
+  every size for its format and attachment count; out of memory stays by
+  size and is still tried again below. `formats` case D7 runs both on those
+  12 growing-rect cells: the incomplete gather must fail once (7 with the
+  first cut's rule, which fails it), out of memory more than once (7) - the
+  proof the gather shrank. Every gate passes on the M2 Pro.
+
+### Open
+
+- **Step 6: read the report on the Tizen device** - `GL_RENDERER`, the five
+  formats, the four extensions, the time. It answers the "half-float render
+  targets" part of the 2026-10-08 entry's open "Measure on the target" item; if
+  half float is refused there, look at a segment config and the banding the
+  dither cannot break on the device itself.
+- The plan's open decisions (section 9): a C ABI mirror of the answers, a
+  blend check, a read-back check, the read binding the library moves, and
+  forcing a full-size failure now that the hook is off `Resize`.
+
 ## 2026-10-21 - The flare's ray needles are no longer cut in half (V36)
 
 Not committed; on top of `4467d61`, the V32 entry below. The rest of the thirty-eighth

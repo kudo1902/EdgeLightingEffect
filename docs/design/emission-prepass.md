@@ -154,9 +154,11 @@ is that test, and it has exactly two terms.
   of config fields: an intensity, bloom, glow or geometry animation moves none
   of them and re-bakes nothing; a colour, arc or segment change moves one and
   re-bakes; and a cross-fade frame, which moves the ring texture with no config
-  change at all, moves the ring's count like any re-bake. Plus "never baked"
-  (`mEmission.bake.baked`), because the buffer holds undefined texels until the
-  first bake and its stored key means nothing until then. The light blocks'
+  change at all, moves the ring's count like any re-bake. Plus "not baked into
+  this allocation" (`mEmission.bake.generation` against the buffer's
+  `AdaptiveFormatTarget::GetGeneration`; it was a `baked` flag until 2026-10-31),
+  because a fresh allocation - the first, or a move back up the format list -
+  holds undefined texels and the stored key means nothing until a bake. The light blocks'
   counts are only current once `packLightBlocks` has run, so `Render` packs
   before it asks.
 - **`uHuePhase`**, which reaches `neon-emission.frag` in exactly one place:
@@ -345,8 +347,8 @@ texture and FBO twice per frame - measured at 1218 allocations over a run that
 should need one. What prevents it:
 
 - **The walk runs once.** `NeonRenderer::Initialize` allocates the table
-  (`ResizeInBestFormat` over `EMISSION_FORMATS`), and nothing resizes it per
-  frame. The table's dimensions are compile-time constants
+  (`AdaptiveFormatTarget::Ensure` over `EMISSION_FORMATS`), and nothing
+  resizes it per frame. The table's dimensions are compile-time constants
   (`NEON_MAX_LOOP_SAMPLES x 2` - it is allocated at the sample-count CEILING,
   and `numSamples` only bounds how much of it is read), so nothing a later call
   could discover has changed, and no flag has to remember a refused format

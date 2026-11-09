@@ -438,18 +438,35 @@ namespace EdgeLighting
         ///          animations can derive it from their children.
         virtual float GetDuration() const { return mDuration; }
 
+        /// @brief Whether this animation can play @p duration seconds.
+        /// @details Any duration by default - 0 or less opts out of the wrap
+        ///          (see @ref GetDuration). An animation whose modulators are
+        ///          built from its duration - a cycle's frequency, an ease's
+        ///          length, a wipe's speed - takes only one above 0, and not so small
+        ///          that its reciprocal overflows: every
+        ///          preset in neon-animations.h (@ref PositiveDurationAnimation).
+        virtual bool AcceptsDuration(float /*duration*/) const { return true; }
+
         /// @brief Set the wall-clock duration in seconds. Does NOT touch the mode.
         /// @details Triggers @ref OnDurationChanged so subclasses can rebuild
         ///          any duration-dependent internal modulators (e.g. an
         ///          @ref Ease whose visual transition must match the
-        ///          completion latch).
-        void SetDuration(float duration)
+        ///          completion latch). A duration @ref AcceptsDuration refuses
+        ///          changes nothing: a preset's 0 s cycle was a frequency of
+        ///          infinity, which wrote NaN into the config every frame.
+        /// @return False if refused, true otherwise (an unchanged duration included).
+        bool SetDuration(float duration)
         {
+            if (!AcceptsDuration(duration))
+            {
+                return false;
+            }
             if (duration != mDuration)
             {
                 mDuration = duration;
                 OnDurationChanged(duration);
             }
+            return true;
         }
 
         /// @brief Set the playback rate multiplier.

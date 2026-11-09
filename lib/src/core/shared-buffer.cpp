@@ -1,55 +1,43 @@
 #include "core/shared-buffer.h"
-#include "util/log-util.h"
 #include <utility>
 
 namespace EdgeLighting
 {
 
-    SharedBuffer::SharedBuffer(const char *name, std::vector<Format> formats, const char *consequence)
-        : mBuffer(name), mFormats(std::move(formats)), mConsequence(consequence ? consequence : "")
+    SharedBuffer::SharedBuffer(const char *name, std::vector<Format> formats, const char *fallbackCost)
+        // GL_LINEAR is asked for through the walk, the only writer of the
+        // tracked filter: setting it on the texture afterwards would leave the
+        // two disagreeing and make the next walk reallocate, every frame.
+        : mTarget(name, GL_LINEAR, fallbackCost), mFormats(std::move(formats))
     {
     }
 
-    bool SharedBuffer::BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window)
+    bool SharedBuffer::BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, FormatAvailability &availability)
     {
-        // What the buffer is before the resize: a reallocation leaves its
-        // texels undefined, so the clear below has to be whole.
-        const bool wasValid = mBuffer.IsValid();
-        const glm::ivec2 wasSize = GetTexels();
-        const GLint wasFormat = mBuffer.GetInternalFormat();
-
-        // The format walk resumes from the best format not yet refused - kept
-        // here because a released buffer cannot record it. The filter is
-        // requested through Resize, the only writer of the tracked value:
-        // setting it on the texture afterwards would leave the two disagreeing
-        // and make the next Resize reallocate, every frame.
-        bool allocated = false;
-        for (; mTier < mFormats.size(); ++mTier)
-        {
-            const Format &f = mFormats[mTier];
-            if (mBuffer.Resize(texels.x, texels.y, f.internalFormat, f.format, f.type, GL_LINEAR, 1))
-            {
-                allocated = true;
-                break;
-            }
-            if (mTier + 1 < mFormats.size())
-            {
-                LOG_E("SharedBuffer[%s]: %s unavailable, falling back to %s. %s", mBuffer.GetName(), f.name,
-                      mFormats[mTier + 1].name, mConsequence.c_str());
-            }
-        }
-        if (!allocated)
+        // The format walk starts at the best format this context may render
+        // at this size - the probe results and every failed allocation are
+        // kept in @p availability, so the buffer keeps none.
+        // The target keeps the list's address for its Refresh: @c mFormats,
+        // which this object - neither copied nor moved - keeps.
+        if (mTarget.Ensure(availability, FormatList(mFormats.data(), mFormats.size()), texels.x, texels.y) ==
+            AdaptiveFormatTarget::EnsureResult::FAILED)
         {
             // Resize destroys the attachment on its failure path, so the
             // buffer holds id 0, and Bind would bind the CALLER's framebuffer -
             // which a clear, unclipped by the viewport, would then erase. Bail
             // before either.
-            mTier = mFormats.empty() ? 0 : mFormats.size() - 1;
             mDirtyKnown = false;
             mReady = false;
             return false;
         }
-        if (!wasValid || wasSize != GetTexels() || wasFormat != mBuffer.GetInternalFormat())
+        // A buffer allocated since the last write - by the walk above, or by
+        // a Refresh earlier in the frame - holds undefined texels, so the
+        // clear below has to be whole. Told by the generation, not by the
+        // size and format: a retry of a better format that fails destroys the
+        // buffer, and the walk then allocates the format it had at the size
+        // it had - a fresh texture that looks like the old one, often under
+        // the same name.
+        if (mTarget.GetGeneration() != mWrittenGeneration)
         {
             mDirtyKnown = false;
         }
@@ -60,19 +48,20 @@ namespace EdgeLighting
         // a clear left. A whole viewport-sized buffer cleared on every frame
         // that redraws it - every hue and intensity frame - cost a small rect up
         // to 1.65x a frame at 4K on an AMD Radeon Pro 5300M.
-        mBuffer.Bind();
+        mTarget.Bind();
         if (mDirtyKnown)
         {
             const glm::ivec2 lo = glm::min(glm::ivec2(mDirty.x, mDirty.y), glm::ivec2(window.x, window.y));
             const glm::ivec2 hi = glm::max(glm::ivec2(mDirty.z, mDirty.w), glm::ivec2(window.z, window.w));
-            mBuffer.ClearBufferRect(lo.x, lo.y, hi.x - lo.x, hi.y - lo.y);
+            mTarget.ClearBufferRect(lo.x, lo.y, hi.x - lo.x, hi.y - lo.y);
         }
         else
         {
-            mBuffer.ClearBuffer();
+            mTarget.ClearBuffer();
         }
         mDirty = window;
         mDirtyKnown = true;
+        mWrittenGeneration = mTarget.GetGeneration();
         ++mVersion;
         return true;
     }
@@ -80,12 +69,12 @@ namespace EdgeLighting
     void SharedBuffer::MarkReady(const glm::ivec2 &viewport)
     {
         mViewport = viewport;
-        mReady = mBuffer.IsValid();
+        mReady = mTarget.IsValid();
     }
 
     void SharedBuffer::Release()
     {
-        mBuffer.Release();
+        mTarget.Release();
         mDirtyKnown = false;
         mReady = false;
     }

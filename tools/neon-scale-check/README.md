@@ -37,7 +37,10 @@ cmake --build build/neon-scale-check-other
 
 The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 `partition` `gl/shader-program.h` plus the generated `shaders.h`), taken from
-`EL_ROOT` and `EL_ROOT/build` so they match the library.
+`EL_ROOT` and `EL_ROOT/build` so they match the library. A mode whose library
+API a checkout lacks is left out of that build: `sequence` (`NeonBypass`),
+`flare-reuse` (`LensFlareRenderer::SetBypass`) and `formats`
+(`core/format-availability.h`).
 
 ## `check`
 
@@ -157,6 +160,15 @@ when:
   over the pixels within the filament's half-width of the edge);
 - the hue variant never reaches the field's composite, or the buffer is ready
   while the neon is off, or not ready once it is on again;
+- in any cell, a texel outside the last write's window
+  (`SharedBuffer::GetLastWriteWindow`) is not 0 (marked `s`), or no cell's
+  window leaves a texel outside it. Every cell changes the scale, so every one
+  reallocates the buffer, and every texture the run allocates with no data
+  starts out 0x3C in every byte (`DrawTargetWatch::InstallFreshTextureFill`):
+  a reallocation not cleared whole leaves that there, where the zeros a
+  desktop GL hands back would pass. With `BeginWrite`'s whole clear after a
+  reallocation removed, this mode passed before this check, fill or no fill;
+  with it, it fails nearly every cell - with the fill, and only with it;
 - after a rect that moves and shrinks at one scale, the buffer differs by a
   single texel from the moved rect's drawn on a fresh effect. Both on effects
   whose hue rate never moved: the hue's phase is the rate integrated over the
@@ -165,9 +177,12 @@ when:
 
 The last is the windowed clear (`SharedBuffer::BeginWrite`: this write's
 window and the last write's). The scenes never reach it - every cell changes
-the scale, which reallocates the buffer and clears it whole - and no frame
-shows a stale texel, since the blit reads only where the write drew, so
-neither `check` nor the `cover` set can catch one. A scratch build that cleared
+the scale, which reallocates the buffer and clears it whole, which the check
+before it holds them to - and a frame shows a stale texel only within the
+blit's reach past the write's window: two texels on `small_rect` at 0.5
+(measured with the whole clear after a reallocation reverted, which put the
+fill in a 4 px column of the frame at 60 levels). So neither `check` nor the
+`cover` set can catch most of one. A scratch build that cleared
 only this write's window left 2790-218880 stale texels (scales 0.125-1.0, up
 to 47/255) and passed everything else; this check fails it at every scale.
 
@@ -266,6 +281,13 @@ that misses one field is hidden on any frame another field it does read moved
 with it. Each frame is drawn by every effect at the same clock (`Update(1/60)`)
 over transparent black, and compared with its alpha; each effect's shared
 buffer is read by a probe renderer after the neon and compared as floats.
+Every texture the run allocates with no data starts out 0x3C in every byte
+(`DrawTargetWatch::InstallFreshTextureFill`), so a skip that leaves a texel
+unwritten shows against `forced`, which clears the shared buffer whole on
+every write, instead of matching it on the zeros a desktop GL hands back:
+with `BeginWrite`'s whole clear after a reallocation removed, 6 sequences
+failed 338 frames of `exact` and `normal` with the fill and passed without
+it.
 
 Each failing frame prints the run, the sequence and frame, the worst level and
 the pixel count, the frame's events and its config; the exit code is 1 if
@@ -288,7 +310,8 @@ every frame). On this tree it found V28 and I76 in
 and with V28's one-line fix applied, V29 in a 100 x 150 run (`exact` failed 1
 frame of 15,000; `normal` only on I76). Apple M2 Pro: the default run takes
 about 14 s; 100 x 150 with `--isolate` (16 effects per frame) took most of an
-hour.
+hour. On 2026-10-29 the default run took 4.5-6.5 minutes on the same machine,
+the range a busy one gave.
 
 Run it after adding an input to any offscreen pass, after touching a skip key
 or a gate in `OnConfigChanged`, or a `LazyBake` schedule. A new skip belongs in
@@ -324,6 +347,228 @@ that is not a function of `Config::lensFlare` belongs in `FlareInputs`, and the
 script should move it. Dropping the sun's position from the key fails the four
 rect-move frames and the three still frames after them, which is the check
 that the script reaches the key.
+
+## `formats`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check formats [--verbose]
+```
+
+The library on a driver that refuses render-target formats - the 8-bit
+fallback rows, which neither Mac reaches, since both render every format the
+library asks for. The refusal is forced through the effect's
+`FormatAvailability` (`SetRefusedFormats`, a verification hook), on a fresh
+effect per run, before `Initialize`; see
+[`docs/design/render-target-format-check-plan.md`](../../docs/design/render-target-format-check-plan.md)
+sections 4 and 6. It prints the GPU and the startup report, then draws 112
+cells six times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
+hue rotating and with the intensity moving (the frames the half-float fields
+serve), plus a flare and a spotlight at 0.5 and at 1.0 - with the neon, the
+flare, the spotlight and a reader of the neon's shared buffer registered:
+
+- **A**, nothing refused: the reference. It must reach half-float targets,
+  link all three field programs and hand the reader an RGBA16F buffer, or the
+  checks on B could not fail.
+- **B**, RGBA16F, RG16F and R16F refused - GLES 3.0 with neither
+  `EXT_color_buffer_half_float` nor `EXT_color_buffer_float`. No offscreen draw
+  may write a refused format (a wrapper in front of `glad_glDrawArrays`,
+  `tools/common/draw-target-watch.h`, reads each draw's target format), no
+  texture alive at the end may have one, the shared buffer must be RGBA8, no
+  field program may link (counted from the library's own "linked" log lines),
+  and every frame must match B with both fields bypassed byte for byte.
+- **B against A**, per layer, variant and scale: the worst cell's largest
+  channel difference and its share of lit channels more than one level off,
+  against `FORMAT_QUALITY_BOUNDS` - measured on an AMD Radeon Pro 5300M and
+  padded, and inside every bound on the Apple M2 Pro too, so a gate on the
+  8-bit rows getting worse, not a judgement that they are good enough. Every scene but one stays within 3 levels; `segments` is
+  ~53 off at every scale, because its boosts of 2.0 are clamped to 1.0 by the
+  emission table's RGBA8 row (its own fallback line says so), and has a bound
+  of its own.
+- **C**, every format the library allocates refused: the neon must be dropped
+  (its emission table has no row left) and no neon cell may draw anything; the
+  flare and the spotlight, with no scaled buffer to be had, must fall back to
+  the 1.0 path, which needs none - every one of their frames byte-identical to
+  A's at 1.0, and the fallback logged once per layer; and the shared buffer
+  must never be ready.
+- **D**, nothing refused, but every full-size allocation in half float failed
+  (`SetFailedAllocations`): the walks' own fallback, for what a probe cannot
+  predict. A fallback must be logged naming the hook, no half-float format
+  drawn into or alive, and every frame must match B's byte for byte - the
+  fallback lands every buffer where B's probe did.
+- **E**, half float unknown to the probe (`SetUnknownFormats`): what a 4 x 4
+  upload that failed for a passing reason - out of memory, a transfer pair the
+  GL rejects - leaves, which must not count as "no". The report must print the
+  three rows UNKNOWN, no row may be skipped or fall back, every half-float
+  target and all three field programs must be reached, the shared buffer must
+  be RGBA16F, and every frame must match A's byte for byte: unknown leaves the
+  allocation to decide, and here it succeeds.
+- **D2** and **D3**, D from a size: `SetFailedAllocations` fails only the
+  allocations of at least a threshold - halfway between the viewport's texels
+  at 0.25 and at 0.5 (144,000 at 1280 x 720) - on retry cells of their own:
+  the flare and the spotlight at 1.0, 0.5 and 0.25, and the neon on `arcs` at
+  0.5 and 0.25, beside A and B drawn on the same cells. Every viewport-sized
+  scaled buffer fails at 0.5 and must allocate again at 0.25, which is the
+  walks' failure memory both ways: a format is held off at the size that
+  failed and above, never below. In D2 (half float fails from that size) the
+  flare's and the spotlight's 0.5 frames must match B's byte for byte, every
+  0.25 frame A's, a fallback must be logged naming the hook, and the shared
+  buffer must be seen as RGBA8 and then RGBA16F. In D3 (every format fails
+  from that size) the flare and the spotlight must draw their 0.5 cells
+  exactly as A draws 1.0, every 0.25 frame must match A's, the fall back to
+  1.0 and the return to the scale must each be logged once per layer, and the
+  shared buffer must be ready only as RGBA16F. The flare's walk goes first, so
+  it takes the hook's failure itself; the spotlight's and the neon's find that
+  failure kept and try nothing. Built with the failure memory ignoring size,
+  both fail.
+- **D4**, **D7**, **D5**, **D6**, **D8** and **S**
+  (`format-check-causes.cpp`): what each cause of a failed allocation may
+  block, and may not. A failure is kept by its cause - out of memory by its
+  total size, tried again below it at once and at any size once it expires
+  (2 s of frame time, doubling with each retry that fails again, up to
+  512 s); anything else by format and attachment count, at every size, for
+  good - and a buffer past `GL_MAX_TEXTURE_SIZE` is refused before any format
+  is tried, keeping nothing. D and D6's failing run hold their failure for the
+  whole run (`SetOutOfMemoryRetry`, infinity): D's moving cells pass ~7 s of
+  frame time, and a retry would re-run a gather B reuses.
+  - **D4**, on the main cells: RGBA16F incomplete with two attachments (a
+    `ForcedFailure` reporting `GL_FRAMEBUFFER_UNSUPPORTED`), the gather's
+    segment attachment. The gather falls back on the segment scenes only;
+    every cell without segments must match A byte for byte and the shared
+    buffer stay RGBA16F. Built with every failure kept by size alone, as
+    before the causes were told apart, 91 of 103 such cells differ and the
+    shared buffer goes to RGBA8.
+  - **D7**: D4's failure under a growing rect - the `segments` scene at 0.5,
+    12 cells each 90 x 45 px larger. A longer perimeter gathers on a coarser
+    grid, so the gather buffer shrinks as the rect grows (192 x 160 down to
+    96 x 64), below the last failure every cell. The incomplete framebuffer
+    must fail once and never be tried again; out of memory on the same cells
+    must be tried again below each failure (7 times on the M2 Pro), which is
+    also the proof the gather did shrink. Built with the incomplete failure
+    kept by size, it fails 7 times and the case fails.
+  - **D5**, on the retry cells with the fields bypassed (the edge ring's is
+    full resolution at every scale) beside its own A: a size limit one px
+    under the viewport at 0.5 (`SetMaxTextureSize`). Every 0.5 scaled buffer
+    is refused before it is tried - logged once each, no allocation fails -
+    so the flare and the spotlight draw their 0.5 cells as A draws 1.0, and
+    at 0.25 everything matches A.
+  - **D6**, on the `segments` cells beside their own A: the segment coverage
+    table's RG16F and RG8 refused - never tried, its fill program never
+    built - then failing every allocation - tried once, both rows failing,
+    the fill program built once before it (nothing knows an allocation fails
+    until it is made). Either way the held-back warning is logged once, the
+    frames stay within 2 levels of A's (1 on the M2 Pro) and the shared
+    buffer RGBA16F; A must build the fill program.
+  - **D8**, on cells of its own beside their own A: out of memory that
+    passes, and out of memory that lasts. Passing, seven ways: only the
+    first allocation of one format fails (`ForcedFailure::count`); the cells
+    are drawn, then a cell passes 3 s of frame time and lets the failure
+    expire, then the cells are drawn again, and the waiting cell's last
+    frame - the one after the buffers move back up - and each of those must
+    match A's byte for byte - every buffer moved back up
+    (`AdaptiveFormatTarget::Refresh`), those a still frame reuses included, and
+    nothing read from the allocation the move left undefined - with
+    something drawn in the 8-bit row meanwhile and the failure cleared,
+    logged once.
+    - RGBA16F, on `arcs`, `segments`, the flare and the spotlight: the
+      emission table takes the failure, in `Initialize`, so the shared
+      buffer (seen as RGBA8 and then RGBA16F), the gather, the four-channel
+      coverage table and the flare's and the spotlight's scaled buffers draw
+      in RGBA8.
+    - The same on `arcs` alone: the config holds across the move, so only
+      the emission bake's generation key re-bakes the table - in the first
+      way the change of cell re-bakes it anyway.
+    - RG16F on `arcs`: the two-channel coverage table takes it, RG8.
+    - RG16F on `segments`: the segment coverage table takes it, RG8.
+    - RGBA16F from the viewport's size (D2's threshold) on `arcs`: only the
+      shared buffer is that large, so nothing else re-runs pass 1b on the
+      still frames after the expiry. In the first way the emission table's
+      move does, which hides the shared buffer's own check.
+    - The same on the flare alone, on throughout: in the first way the neon
+      cells switch it off, which gives its buffer back and hides its cache's
+      check.
+    - RGBA16F at two attachments on `segments` at scale 1/16: only the
+      gather has two, and at that scale its buffer - rounded up to whole
+      `REGION_ALLOC_STEP`s, with a footprint - outgrows the shared buffer
+      (96 x 64 x 2 texels against 80 x 45), so the gather falls alone, and
+      the shared buffer must stay RGBA16F throughout. At 0.5 the shared
+      buffer fell with it and its move re-ran the gather, which hid that a
+      reused still frame never asked about the gather; in the first way the
+      emission table's move re-runs the gather too.
+
+    A failed retry, on `small_rect`: every RGBA16F allocation from the
+    viewport's size fails, so once the failure expires the shared buffer's
+    retry runs out again, and the walk allocates RGBA8 again at the same
+    size - a fresh texture that looks like the old one. It must be tried
+    exactly twice, the frame after it and every texel of the shared buffer
+    (read back) must match a run whose failure is held for the run, which
+    never retries, and every texel outside the last write's window
+    (`SharedBuffer::GetLastWriteWindow`) must be 0 in both - with some there
+    to check: the case fails if the window covers the whole buffer, as a
+    640 x 360 rect's glow does. `small_rect` leaves 86,400 of the 230,400
+    texels outside it; the first version of this check ran on `arcs` and
+    passed with the defect in place. With `BeginWrite`'s whole clear after
+    an allocation reverted, all 86,400 held the gate's fill and the frame
+    differed too; with the fill off as well, the check passed. The same
+    failed retry on the flare's buffer, the flare alone: the walk lands on
+    the RGBA8 it had, the format the cache's key already holds, so only the
+    buffer's generation keeps the cache from blitting the fill - the frame
+    after it must be the held run's.
+
+    A failed retry whose fallback fails too, on `card_outside` (V37): the
+    shared buffer's first RGBA16F allocation runs out of memory and it falls
+    to RGBA8; 3 s on, its retry of RGBA16F and the RGBA8 fallback both run
+    out, so the walk releases it and allocates nothing. All three cells are
+    one still config, so only the buffer's generation - which a loss now
+    moves - stops the frame reusing what it lost. That frame must be the fill
+    alone (`debug.opaqueOnly`'s frame), and the frame after it, 6 s on, once
+    both failures have expired, a fresh run's. Against the build before the
+    fix both fail, 255 and 242 levels off: the blit sampled the released
+    texture, opaque black over everything but the edge ring.
+
+    Lasting: every RGBA16F allocation fails over 40 frames 1 s apart; it must
+    be tried exactly 5 times (at 0, 2, 6, 14 and 30 s - one retry per expiry,
+    each doubling the wait) and end waiting 32 s until 62 s.
+
+    Each guard the library keeps for a passing shortage was removed in turn
+    (2026-10-31, with every buffer a `FormatTarget`, now an
+    `AdaptiveFormatTarget`), and the case failed every time: the six refreshes that move a buffer back up (the emission
+    table, both coverage tables, the gather, the shared buffer, the flare's
+    buffer) and the eight generation keys that keep a cache from reading
+    the allocation a move leaves undefined (the emission bake, the two
+    coverage tables' dirty marks, the gather cache, the reused frame's two,
+    the flare's cache, the shared buffer's whole clear). The emission way on
+    `arcs` alone and the flare's failed retry exist because those two keys
+    passed without them. Before that, the viewport-sized and flare ways
+    came from the first way missing the shared buffer's and the flare's
+    move, and the gather way runs at 1/16 because at 0.5 the shared buffer
+    fell with the gather and hid the reused frame's missing gather check.
+    The fields' input check came from the RG16F-on-`arcs` way, which failed
+    before it existed: the edge ring's field, baked from the 8-bit coverage
+    table, was still composited after the table moved up
+    (`LazyBake::DropIfInputsMoved`).
+  - **S**: the neon, the flare and the spotlight drawn outside an effect,
+    each making its own `FormatAvailability`: five probes by the end of
+    `Initialize` and none after, no GL error, and every frame byte for byte
+    A's for the same cell.
+
+Every run must make exactly the report's probes less the formats a hook
+answers (5 for A, D, D2, D3, D4, both D7 runs, D5, D6 failing and every D8
+run, 3 for D6 refused, 2 for B and E, 0 for C) and leave no GL error - the
+scan of the textures alive at the end included, which looks up to the highest
+name `glGenTextures` returned (`DrawTargetWatch`). Every texture a run
+allocates with no data starts out 0x3C in every byte (`DrawTargetWatch`
+wraps `glTexImage2D`): the GL leaves those texels undefined - a device's may
+hold another buffer's old contents - and a desktop GL hands back zeros, so
+without it a buffer that reads a texel it never cleared or drew would pass on
+every Mac. Every case passes with it, so no buffer the gate reaches does. About 70 s on an M2 Pro; exits non-zero on any failure.
+`--verbose` also prints each run's WARN and ERROR lines and every cell's
+B-against-A numbers, which is how to recalibrate the bounds on another GPU.
+Run it after adding a buffer or a format list: a buffer that allocates without
+asking `FormatAvailability` fails B, which is the point - built with the gather
+buffer's walk not asking, or with the half-float fields' gate removed, it
+fails. A buffer or gate that takes an unknown answer for "no" fails E - built
+with the fields' gate asking `IsRenderable` instead of `MayAllocate`, or with
+the walk skipping unknown rows, it fails.
 
 ## `generate`
 

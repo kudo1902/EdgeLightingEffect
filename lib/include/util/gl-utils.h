@@ -159,6 +159,42 @@ namespace EdgeLighting
             LOG_I("----------------");
         }
 
+        /// The name of a status @c Framebuffer::IsColorRenderable reports: a
+        /// @c glCheckFramebufferStatus result, or 0 - no status, which the
+        /// probe reports both when its upload failed and when the status query
+        /// itself raised an error (the probe's own @c uploadError tells the
+        /// two apart). Unknown values come back as nullptr - print those in hex.
+        inline const char *GetFramebufferStatusName(GLenum status)
+        {
+            switch (status)
+            {
+            case 0:
+            {
+                return "no status";
+            }
+            case GL_FRAMEBUFFER_COMPLETE:
+            {
+                return "GL_FRAMEBUFFER_COMPLETE";
+            }
+            case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+            {
+                return "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT";
+            }
+            case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+            {
+                return "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT";
+            }
+            case GL_FRAMEBUFFER_UNSUPPORTED:
+            {
+                return "GL_FRAMEBUFFER_UNSUPPORTED";
+            }
+            default:
+            {
+                return nullptr;
+            }
+            }
+        }
+
         /// Turns @c GL_SCISSOR_TEST off for the duration of a scope and puts
         /// the host's setting back afterwards.
         ///

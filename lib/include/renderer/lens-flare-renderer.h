@@ -5,7 +5,7 @@
 #include "animation/clock.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "gl/framebuffer.h"
+#include "core/adaptive-format-target.h"
 #include "gl/uniform-buffer.h"
 
 namespace EdgeLighting
@@ -96,17 +96,19 @@ namespace EdgeLighting
         /// belongs here, or a frame that moved only it reuses a stale buffer.
         typedef struct FlareInputs
         {
-            LensFlareConfig flare;      ///< Config::lensFlare - every uniform derived from it.
-            glm::ivec2 target{0};       ///< The buffer's size, px - uResolution.
-            glm::vec2 sunPos{0.0f};     ///< uSunPos, scaled into the buffer.
-            float rotationTurns = 0.0f; ///< The rays' phase, turns - uRotation over 2 PI.
-            uint32_t ghostUploads = 0;  ///< mGhostBlock.GetUploadCount() - GhostBlock.
-            bool dither = false;        ///< uDither: the buffer is the RGBA8 fallback (@ref scaledPassDithers).
+            LensFlareConfig flare;         ///< Config::lensFlare - every uniform derived from it.
+            glm::ivec2 target{0};          ///< The buffer's size, px - uResolution.
+            glm::vec2 sunPos{0.0f};        ///< uSunPos, scaled into the buffer.
+            float rotationTurns = 0.0f;    ///< The rays' phase, turns - uRotation over 2 PI.
+            uint32_t ghostUploads = 0;     ///< mGhostBlock.GetUploadCount() - GhostBlock.
+            bool dither = false;           ///< uDither: the buffer is the RGBA8 fallback (@ref scaledPassDithers).
+            uint32_t bufferGeneration = 0; ///< mScaledBuffer's generation: an allocation leaves undefined texels.
 
             bool operator==(const FlareInputs &o) const
             {
                 return flare == o.flare && target == o.target && sunPos == o.sunPos &&
-                       rotationTurns == o.rotationTurns && ghostUploads == o.ghostUploads && dither == o.dither;
+                       rotationTurns == o.rotationTurns && ghostUploads == o.ghostUploads && dither == o.dither &&
+                       bufferGeneration == o.bufferGeneration;
             }
             bool operator!=(const FlareInputs &o) const { return !(*this == o); }
         } FlareInputs;
@@ -115,19 +117,19 @@ namespace EdgeLighting
         /// scaled pass and blit the buffer as it stands.
         typedef struct ScaledCache
         {
-            bool drawn = false; ///< The buffer holds a flare at all; false whenever it is released, reallocated or a draw fails.
+            bool drawn = false; ///< The buffer holds a flare at all; false whenever it is released or a draw fails - a reallocation is the key's generation.
             FlareInputs inputs; ///< What it was drawn from.
         } ScaledCache;
 
         bool setupShaders();
         void setupGeometry();
-        /// Sizes @c mScaledBuffer in the best format the driver will render
-        /// to, walking SCALED_FORMATS (the .cpp) from @c mScaledFormat and
-        /// leaving it on the tier that allocated. @return false if none did.
+        /// Sizes @c mScaledBuffer in the best format this context may render
+        /// at that size, walking SCALED_FORMATS (the .cpp). @return false if
+        /// none did - then Render draws at 1.0.
         bool resizeScaledBuffer(int width, int height);
-        /// Whether the scaled pass dithers its own write: only into the RGBA8
-        /// fallback, which rounds the haze before the blit could. Into half
-        /// float the blit dithers alone.
+        /// Whether the scaled pass dithers its own write: only into a format
+        /// that rounds the haze before the blit could - the RGBA8 fallback
+        /// (HoldsSubLevels). Into half float the blit dithers alone.
         bool scaledPassDithers() const;
 
         /// Bake the per-ghost distance + colour table into @c mGhostBlock.
@@ -173,15 +175,14 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing. Drawn by @ref RenderOffscreen, read
-        /// by @ref Render. RGBA16F, with an RGBA8 fallback - see
-        /// @c mScaledFormat.
-        Framebuffer mScaledBuffer{"LensFlare.Scaled"};
-        /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
-        /// has accepted for @c mScaledBuffer. Only ever moves forward, so a
-        /// refused format is not retried on every frame although the buffer
-        /// is released between uses. Also picks the scaled pass's
-        /// @c uDither (@ref scaledPassDithers).
-        size_t mScaledFormat = 0;
+        /// by @ref Render. RGBA16F, with an RGBA8 fallback, whose format picks
+        /// the scaled pass's @c uDither (@ref scaledPassDithers).
+        AdaptiveFormatTarget mScaledBuffer{"LensFlare.Scaled", GL_LINEAR,
+                                           "The haze is rounded to 8 bits before the blit reads it."};
+        /// The last frame that wanted the scaled path drew at 1.0, because no
+        /// scaled buffer could be allocated: for logging the switch, both
+        /// ways, once each.
+        bool mScaledFellBack = false;
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref drawFlare.

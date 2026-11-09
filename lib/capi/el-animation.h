@@ -197,7 +197,15 @@ extern "C"
     /** @brief Read the length of one animation cycle (seconds). */
     EL_API el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeconds);
     /** @brief Set the length of one animation cycle (seconds).
-     *  @details 0 means the internal modulator owns its own periodicity. */
+     *  @details 0 means the internal modulator owns its own periodicity - for
+     *           an animation made by @c el_animation_create_field_bound or
+     *           @c el_animation_from_modulator. A preset (every
+     *           @c el_animation_create_* that takes a duration) builds its
+     *           modulator from its duration and needs one of at least 1e-6 s
+     *           (PositiveDurationAnimation::MIN_DURATION_SECONDS), as its
+     *           factory does: less returns @c EL_ERROR_INVALID_PARAMETER and
+     *           leaves the animation as it was. Negative or non-finite
+     *           seconds are refused for every animation. */
     EL_API el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds);
 
     /** @brief Read the playback speed multiplier (1.0 = normal). */
