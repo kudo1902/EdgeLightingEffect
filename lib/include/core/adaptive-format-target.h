@@ -17,40 +17,20 @@ namespace EdgeLighting
     /// neon's emission table, coverage tables, gather buffer and two fields,
     /// the shared buffer, the flare's and the spotlight's scaled buffers.
     ///
-    /// It exists for the two things a buffer's owner has to get right that
-    /// the walk cannot do for it:
-    ///   - **Texels undefined.** Any allocation leaves them so, whatever the
-    ///     size and format say: a retry of a better format that runs out of
-    ///     memory destroys the buffer, and the walk then allocates the format
-    ///     it had at the size it had - a fresh texture under, often, the same
-    ///     name. @ref Ensure and @ref Refresh return ALLOCATED for it, and
-    ///     @ref GetGeneration moves. It moves, too, when the target loses
-    ///     its buffer (a walk that ends with none - FAILED - or @ref Release),
-    ///     so a cache keyed on it never takes a released buffer for the one
-    ///     it drew. Whoever keeps contents across frames either reacts
-    ///     where it calls them, or keys its cache on the generation - never
-    ///     on the size or format.
-    ///   - **Moving back up.** A buffer that fell back past a format whose
-    ///     out-of-memory failure has since expired is moved back up by its
-    ///     next walk - but a frame that reuses the buffer runs no walk.
-    ///     @ref Refresh is that walk, at the size the buffer holds, and does
-    ///     nothing unless a better row may be allocated now: a renderer calls
-    ///     it for every target a frame can skip, in one place, before any
-    ///     skip is decided. A move it makes is an allocation like any other,
-    ///     so the generation keys above see it.
-    ///
-    /// What precision a buffer holds is a separate question - a reallocation
-    /// in the same format recomputes the same texels, so a consumer that only
-    /// cares about precision (the neon's fields, FieldInputFormats) keys on
-    /// the format instead.
+    /// It exists for the one thing a buffer's owner has to get right that the
+    /// walk cannot do for it: **texels undefined.** Any allocation leaves them
+    /// so, whatever the size and format say. @ref Ensure returns ALLOCATED for
+    /// it, and @ref GetGeneration moves. It moves, too, when the target loses
+    /// its buffer (a walk that ends with none - FAILED - or @ref Release), so
+    /// a cache keyed on it never takes a released buffer for the one it drew.
+    /// Whoever keeps contents across frames keys its cache on the generation,
+    /// never on the size or format.
     ///
     /// What the buffer IS - its name, its filter, what falling back costs it -
     /// is fixed at construction; what it walks is handed to each @ref Ensure,
     /// since a buffer's list may follow the config (the neon's coverage
     /// table, its fields). Non-copyable and non-movable: an owner keeps it as
-    /// a member. It keeps the last list it walked, for @ref Refresh, so the
-    /// list has to outlive the target - one of the library's lists
-    /// (LIBRARY_FORMAT_LISTS), or a vector its owner keeps. GL thread only.
+    /// a member. GL thread only.
     /// See docs/design/render-target-format-check-plan.md.
     class AdaptiveFormatTarget
     {
@@ -95,8 +75,7 @@ namespace EdgeLighting
         ///      frame once probed): not refused, and no failure kept that
         ///      this allocation would repeat;
         ///   2. resize to it; if that fails, keep the failure in
-        ///      @p availability by what Resize said failed it and go on to the
-        ///      next row to try, logging "<name>: target unavailable in <row>
+        ///      @p availability and go on to the next row to try, logging "<name>: target unavailable in <row>
         ///      at W x H x A (<cause>), falling back to <next>.
         ///      <fallbackCost>" - a format the probe passed or could not judge
         ///      whose full-size allocation failed (memory, an attachment count
@@ -106,14 +85,10 @@ namespace EdgeLighting
         ///      another frame.
         ///
         /// STATELESS: everything a walk needs to remember is in
-        /// @p availability - the probe results and the failures, each by its
-        /// cause - so a buffer released between uses keeps nothing, every
-        /// walk on a format learns from any walk's failure that says
-        /// something about it, and a format that failed at one size is tried
-        /// again at a smaller one - and, out of memory, at any size once the
-        /// failure expires. A buffer already holding the row the walk lands
-        /// on costs Resize's early-out: HELD. Keeps @p formats - the pointer,
-        /// not the list - for @ref Refresh.
+        /// @p availability - the probe results and the failures - so a buffer
+        /// released between uses keeps nothing, and every walk on a format
+        /// learns from any walk's failure. A buffer already holding the row
+        /// the walk lands on costs Resize's early-out: HELD.
         ///
         /// A list of the host's own: ask its formats from the renderer's
         /// Initialize (FormatAvailability::Ask), or the first walk probes them
@@ -122,21 +97,11 @@ namespace EdgeLighting
         EnsureResult Ensure(FormatAvailability &availability, const FormatList &formats, int width, int height,
                             int attachments = 1);
 
-        /// Move the buffer back up its list, at the size and attachment count
-        /// it holds, when a row above the one it holds may be allocated now -
-        /// an out-of-memory failure it fell back past has expired. HELD
-        /// otherwise, or when it holds nothing. A free lookup while the buffer
-        /// holds its first row.
-        EnsureResult Refresh(FormatAvailability &availability);
-
         /// Moves with every allocation (Framebuffer::GetAllocationCount) and
         /// every loss of a buffer the target held - a walk that ends with none,
         /// or @ref Release - and never otherwise: a cache over the buffer's
-        /// texels keys on it. Without the losses, a retry and its fallback
-        /// that both ran out of memory left the generation where it was, and
-        /// the neon's still frames went on blitting the released shared
-        /// buffer - opaque black over 94% of a 1280 x 720 frame. Compared
-        /// only for equality.
+        /// texels keys on it (V37 was a released buffer a cache still took
+        /// for the one it drew). Compared only for equality.
         uint32_t GetGeneration() const { return mBuffer.GetAllocationCount() + mLosses; }
 
         // --- What it holds, and drawing it ------------------------------------
@@ -177,7 +142,6 @@ namespace EdgeLighting
         Framebuffer mBuffer;       ///< The buffer; its label is the target's name.
         GLint mFilter;             ///< What every allocation is made with.
         std::string mFallbackCost; ///< What the next format costs, for a fallback's log line.
-        FormatList mFormats;       ///< The last list walked, what Refresh walks again; empty before the first.
         uint32_t mLosses = 0;      ///< Buffers this target held and lost - its share of @ref GetGeneration.
     };
 

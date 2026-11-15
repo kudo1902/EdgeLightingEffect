@@ -410,6 +410,14 @@ namespace EdgeLighting
             while (hi - lo > 1.0f)
             {
                 const float mid = (lo + hi) * 0.5f;
+                // Ends that are adjacent floats more than 1 px apart - a throw
+                // past ~1.7e7 px - leave no midpoint between them, and the
+                // loop never ended (SetConfig never returned at a throw of
+                // 1e10). `hi` is the answer either way.
+                if (!(mid > lo && mid < hi))
+                {
+                    break;
+                }
                 if (SolveConeAcross(s, mid) > 0.0f)
                 {
                     lo = mid;
@@ -706,11 +714,9 @@ namespace EdgeLighting
         return true;
     }
 
-    void SpotlightRenderer::Update(float deltaTime, double, const Config &)
+    void SpotlightRenderer::Update(float, double, const Config &)
     {
-        // Outside an effect, the frame time its own FormatAvailability's
-        // out-of-memory failures expire by.
-        AdvanceOwnFormatAvailability(deltaTime);
+        // Nothing moves with time: the strips follow the config alone.
     }
 
     void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double, const Config &config)
@@ -800,10 +806,11 @@ namespace EdgeLighting
         // No scaled buffer could be allocated, in any format - the one way the
         // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
         // no buffer: no uniform that shapes the light differs between the
-        // paths, so this is exactly the 1.0 path's frame. The walk remembers
-        // the failure with its size (FormatAvailability), so the frames after
-        // this try nothing until the size drops below it. Logged when it
-        // starts and when it ends.
+        // paths, so this is exactly the 1.0 path's frame. A failed allocation
+        // is final (FormatAvailability), so the frames after this try nothing;
+        // only a buffer refused for its size alone (past GL_MAX_TEXTURE_SIZE)
+        // can allocate again, once the viewport shrinks. Logged when it starts
+        // and when it ends.
         const bool fellBack = scaled && !scaledReady;
         if (fellBack != mScaledFellBack)
         {
@@ -937,9 +944,9 @@ namespace EdgeLighting
     {
         // Walk SCALED_FORMATS from the best row this context may render at this
         // size (AdaptiveFormatTarget::Ensure). The walk keeps nothing here: a
-        // refused format, or one whose allocation failed this large, is the
-        // effect's FormatAvailability's to remember, so a refusal is never
-        // asked for again although the buffer is released between uses.
+        // refused format, or one whose allocation failed, is the effect's
+        // FormatAvailability's to remember, so neither is asked for again
+        // although the buffer is released between uses.
         return mScaledBuffer.Ensure(GetFormatAvailability(), SCALED_FORMATS, width, height) !=
                AdaptiveFormatTarget::EnsureResult::FAILED;
     }

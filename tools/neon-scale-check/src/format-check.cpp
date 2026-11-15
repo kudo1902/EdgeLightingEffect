@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
-#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -51,7 +50,7 @@ namespace NeonScaleCheck
 
         const std::vector<Cell> cells = MakeCells();
         std::printf("%zu cells a run: every check scene at 1.0, 0.5 and 0.25, still, hue and intensity; "
-                    "a flare and a spotlight at 0.5 and 1.0\n\n",
+                    "a flare and a spotlight, each at 0.5 and 1.0\n\n",
                     cells.size());
 
         const Hooks none;
@@ -61,11 +60,6 @@ namespace NeonScaleCheck
         refuseAll.refused = EVERYTHING;
         Hooks failHalf;
         failHalf.failed.formats = HALF_FLOAT;
-        // D is a failure that holds for the whole run: its moving cells pass
-        // ~7 s of frame time, past the out-of-memory retry, and a retry - one
-        // more failure, the same frames - would re-run a gather B reuses, a
-        // level off in places. D8 is the failure that expires.
-        failHalf.outOfMemoryRetry = std::numeric_limits<double>::infinity();
         Hooks unknownHalf;
         unknownHalf.unknown = HALF_FLOAT;
 
@@ -75,21 +69,6 @@ namespace NeonScaleCheck
         const RunResult c = Run(refuseAll, false, cells);
         const RunResult d = Run(failHalf, false, cells);
         const RunResult e = Run(unknownHalf, false, cells);
-
-        // D2 and D3 on cells of their own, beside A and B drawn on the same
-        // cells, so every run they are compared with has their history.
-        const std::vector<Cell> retryCells = MakeRetryCells();
-        const int64_t threshold = RetryThreshold();
-        Hooks failHalfFrom;
-        failHalfFrom.failed.formats = HALF_FLOAT;
-        failHalfFrom.failed.fromTexels = threshold;
-        Hooks failAllFrom;
-        failAllFrom.failed.formats = EVERYTHING;
-        failAllFrom.failed.fromTexels = threshold;
-        const RunResult aRetry = Run(none, false, retryCells);
-        const RunResult bRetry = Run(refuseHalf, false, retryCells);
-        const RunResult d2 = Run(failHalfFrom, false, retryCells);
-        const RunResult d3 = Run(failAllFrom, false, retryCells);
 
         int failures = 0;
 
@@ -151,63 +130,6 @@ namespace NeonScaleCheck
             failures += (fallbacks == 0) + (drawnFailed != 0) + (aliveFailed != 0) + !shared + (differing != 0);
         }
 
-        // D2: D from a size (RetryThreshold) - half float fails at 0.5 and
-        // must be tried, and allocate, again at 0.25: the walks' failure
-        // memory holds a format off at the size that failed and above, never
-        // below. At 0.5 each scaled buffer lands on RGBA8, as B's probe lands
-        // it; at 0.25 back in half float, as A draws it. On the retry cells,
-        // against A and B drawn on them.
-        std::printf("%zu retry cells a run: the flare and the spotlight at 1.0, 0.5 and 0.25, the neon on `arcs` at "
-                    "0.5 and 0.25; allocations fail from %lld texels\n",
-                    retryCells.size(), static_cast<long long>(threshold));
-        failures += Summarise("D2 - half float fails from that size", d2, Unprobed(failHalfFrom), verbose);
-        {
-            // Summed, not chained: every cell that differs is printed.
-            const bool large =
-                SameFrame(d2, "flare still s500", bRetry, "flare still s500", "B", retryCells) +
-                    SameFrame(d2, "spotlight still s500", bRetry, "spotlight still s500", "B", retryCells) ==
-                2;
-            const bool small =
-                SameFrame(d2, "flare still s250", aRetry, "flare still s250", "A", retryCells) +
-                    SameFrame(d2, "spotlight still s250", aRetry, "spotlight still s250", "A", retryCells) +
-                    SameFrame(d2, "arcs still s250", aRetry, "arcs still s250", "A", retryCells) ==
-                3;
-            const int fallbacks = CountLines(d2.errors, "falling back to", "SetFailedAllocations");
-            const bool sharedBoth = d2.sharedFormats.count(GL_RGBA8) && d2.sharedFormats.count(GL_RGBA16F);
-            std::printf("  at 0.5 as B %s, at 0.25 as A %s, fallbacks logged %d%s, shared buffer RGBA8 then RGBA16F "
-                        "%s\n",
-                        large ? "yes" : "NO!", small ? "yes" : "NO!", fallbacks, fallbacks == 0 ? "!" : "",
-                        sharedBoth ? "yes" : "NO!");
-            failures += !large + !small + (fallbacks == 0) + !sharedBoth;
-        }
-
-        // D3: every format fails from that size. At 0.5 the flare and the
-        // spotlight have no scaled buffer in any format and draw at 1.0 - the
-        // flare's own walk takes the hook's failure, the spotlight's and the
-        // neon's find it kept and try nothing - and the neon's shared buffer
-        // is never ready; at 0.25 all three allocate again, in half float, and
-        // say so once each.
-        failures += Summarise("D3 - every format fails from that size", d3, Unprobed(failAllFrom), verbose);
-        {
-            const bool large =
-                SameFrame(d3, "flare still s500", aRetry, "flare still s1000", "A", retryCells) +
-                    SameFrame(d3, "spotlight still s500", aRetry, "spotlight still s1000", "A", retryCells) ==
-                2;
-            const bool small =
-                SameFrame(d3, "flare still s250", aRetry, "flare still s250", "A", retryCells) +
-                    SameFrame(d3, "spotlight still s250", aRetry, "spotlight still s250", "A", retryCells) +
-                    SameFrame(d3, "arcs still s250", aRetry, "arcs still s250", "A", retryCells) ==
-                3;
-            const int fellBack = CountLines(d3.warnings, "no reduced-scale target could be allocated");
-            const int back = CountLines(d3.infos, "a reduced-scale target allocated again");
-            const bool shared = SharedOnlyIn(d3, GL_RGBA16F);
-            std::printf("  at 0.5 as A at 1.0 %s, at 0.25 as A %s, falls back to 1.0 logged %d (expected 2)%s, back "
-                        "to scale logged %d (expected 2)%s, shared buffer ready only at 0.25, RGBA16F %s\n",
-                        large ? "yes" : "NO!", small ? "yes" : "NO!", fellBack, fellBack == 2 ? "" : "!", back,
-                        back == 2 ? "" : "!", shared ? "yes" : "NO!");
-            failures += !large + !small + (fellBack != 2) + (back != 2) + !shared;
-        }
-
         // E: the probe gives no answer for half float (SetUnknownFormats) - an
         // upload that failed for a passing reason. Unknown is not "no": every
         // walk and both field gates must let the allocation decide, which
@@ -241,9 +163,9 @@ namespace NeonScaleCheck
         }
 
         // C: nothing renders - the neon cannot even hold its emission table,
-        // so no neon cell draws anything. The flare and the spotlight have a
-        // path that needs no buffer: below 1.0 each must fall back to it, log
-        // that once, and draw exactly what A draws at 1.0.
+        // so no neon cell draws anything. The flare and the spotlight each
+        // have a path that needs no buffer: below 1.0 they must fall back to
+        // it, log that once each, and draw exactly what A draws at 1.0.
         failures += Summarise("C - everything refused", c, Unprobed(refuseAll), verbose);
         {
             std::map<std::string, size_t> byName;

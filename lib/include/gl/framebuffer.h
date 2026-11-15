@@ -171,9 +171,8 @@ namespace EdgeLighting
         ///        GL_INVALID_VALUE for a size or attachment count refused
         ///        before allocating, or GL_FRAMEBUFFER_UNSUPPORTED for more
         ///        attachments than the driver allows - and GL_NO_ERROR on
-        ///        success. A format walk keeps a failure by its cause
-        ///        (FormatAvailability): out of memory by size, anything else
-        ///        by format and attachment count.
+        ///        success. A format walk keeps the failure against the format
+        ///        and attachment count (FormatAvailability).
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
                     GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
@@ -565,17 +564,6 @@ namespace EdgeLighting
             }
         }
 
-        /// Restores the default framebuffer. Does NOT touch the viewport - the
-        /// caller is responsible for setting it back to the window size.
-        ///
-        /// Prefer @ref GetBoundId + @ref BindId in a multi-pass renderer:
-        /// "the target I started on" is not always the default framebuffer
-        /// (an offscreen frame capture makes it a real FBO).
-        static void BindDefault()
-        {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        }
-
         /// The id currently bound for drawing; 0 means the window's default
         /// framebuffer. Note this is the DRAW binding
         /// (GL_FRAMEBUFFER_BINDING is GL_DRAW_FRAMEBUFFER_BINDING) - code that
@@ -588,7 +576,7 @@ namespace EdgeLighting
         ///       frame per multi-pass renderer, which is cheap enough that no
         ///       measurement has justified removing it.
         ///
-        ///       Do NOT "optimise" it back to @ref BindDefault. The reason this
+        ///       Do NOT "optimise" it back to binding framebuffer 0. The reason this
         ///       exists is that "the target I was handed" is a real FBO under an
         ///       @c OffscreenCapture, and assuming 0 sends the renderer's output
         ///       to the window while the capture comes back empty.

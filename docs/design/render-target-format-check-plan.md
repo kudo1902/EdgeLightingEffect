@@ -13,6 +13,11 @@ design verified. The measurements in section 3 come from a standalone probe
 run on an AMD Radeon Pro 5300M (macOS GL 4.1, Release, `-O2`), three runs;
 step 1's `IsColorRenderable` reproduces its table.
 
+Since 2026-11-14 a failed allocation is final, out of memory included: the
+out-of-memory expiry, the move back up (`Refresh`) and the `formats` cases
+D2, D3, D7 and D8 that this plan and its later notes describe were removed
+(`docs/guides/upgrade-notes.md` section 12). The rest stands.
+
 The short version: one function asks the driver whether it can render to a
 format (a 4 x 4 texture, an FBO, `glCheckFramebufferStatus`). One object per
 effect - `RenderTargetFormats`, owned by `EdgeLightingEffect` and handed to

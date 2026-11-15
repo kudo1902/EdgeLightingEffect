@@ -67,6 +67,13 @@
 //       their measured bounds, and refusing everything must drop the neon.
 //       See format-check.h.
 //
+//   neon-scale-check fuzz [--seed S] [--write FILE] [--against FILE] [--dump DIR]
+//       A differential gate between two builds: seeded random neon configs,
+//       sequences, fresh effects, small per-frame changes and presets, every
+//       captured frame hashed. --write records the hashes; --against fails on
+//       any frame whose hash differs, and --dump writes those frames. Also
+//       fails on a GL error after any frame. See fuzz.h.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
@@ -76,6 +83,7 @@
 #include "format-check.h"
 #endif
 #include "cover.h"
+#include "fuzz.h"
 #include "harness.h"
 #include "partition.h"
 #ifdef NEON_SCALE_CHECK_SEQUENCE
@@ -1032,6 +1040,10 @@ int main(int argc, char **argv)
     {
         return ClockCheck(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "fuzz") == 0)
+    {
+        return FuzzCheck(argc, argv);
+    }
 #ifdef NEON_SCALE_CHECK_FLARE_REUSE
     if (argc >= 2 && std::strcmp(argv[1], "flare-reuse") == 0)
     {
@@ -1058,6 +1070,7 @@ int main(int argc, char **argv)
                  "                            [--dump DIR] [--verbose]\n"
                  "  neon-scale-check clock [--frames K] [--dump DIR] [--verbose]\n"
                  "  neon-scale-check flare-reuse [--no-time] [--dump DIR] [--verbose]\n"
-                 "  neon-scale-check formats [--verbose]\n");
+                 "  neon-scale-check formats [--verbose]\n"
+                 "  neon-scale-check fuzz [--seed S] [--write FILE] [--against FILE] [--dump DIR] [--verbose]\n");
     return 2;
 }

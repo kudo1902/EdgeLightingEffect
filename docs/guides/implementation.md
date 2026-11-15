@@ -107,6 +107,12 @@ callback. An idle effect never fires it; an effect with a running animation
 fires it on nearly every frame. Renderers can therefore treat the call as
 meaningful, but must still gate their own rebuilds (§5).
 
+`SetConfig` itself calls no renderer and makes no GL call: it writes the base
+and recomposes the active config, and the renderers are told once, by the next
+`Update` (or the next `Render`, when no `Update` comes first), however many
+times it was called in between. So a renderer's rebuilds - LUT bakes, uniform
+blocks, vertex buffers - happen on the frame, at most once.
+
 ## 4. The renderer contract
 
 Subclass `BaseRenderer` ([`renderer/base-renderer.h`](../../lib/include/renderer/base-renderer.h)),
@@ -175,7 +181,7 @@ fields. Two mechanisms depend on it:
   `OnConfigChanged` fires at all;
 - each renderer's internal dirty flags, which decide which rebuilds run.
 
-`NeonRenderer::OnConfigChanged` ([`neon-renderer.cpp:354`](../../lib/src/renderer/neon-renderer.cpp))
+`NeonRenderer::OnConfigChanged` ([`neon-renderer.cpp`](../../lib/src/renderer/neon-renderer.cpp))
 is the pattern: snapshot dirtiness against `mCurrentConfig` before overwriting
 it, then run only the rebuilds whose inputs moved - perimeter samples, draw-quad
 geometry, gradient LUT, segment atlas, arc atlas.
@@ -275,11 +281,12 @@ directory to ship.
   drift. That is why the file is `#define`-based: GLSL ES 3.00 has no
   `constexpr` and rejects the `f` literal suffix, so plain macros are the only
   form valid in both languages.
-- `CMAKE_CONFIGURE_DEPENDS` lists every shader plus `neon-tuning.h`, so editing
-  any of them re-configures on the next build.
+- One list in `lib/CMakeLists.txt` (`EDGE_LIGHTING_SHADER_TEXTS`) names every
+  shader, chunk and tuning header: each is read with its `//` comments
+  stripped and made a configure dependency, so editing any of them
+  re-configures on the next build.
 
-**Adding a shader means updating three places**: the `CMAKE_CONFIGURE_DEPENDS`
-list and the `file(READ ...)` list in `lib/CMakeLists.txt`, and
+**Adding a shader means updating two places**: that list and
 `lib/shaders/shaders.h.in`.
 
 Bulk data reaches the shader three ways:
@@ -375,14 +382,14 @@ for a real UI-shaped host. It is a hand-maintained fork of `demo/`.
 
 [`lib/include/gl/`](../../lib/include/gl) provides move-only RAII wrappers:
 `ShaderProgram` (with uniform-location and last-value caching), `VertexArray`,
-`Framebuffer`, `UniformBuffer`, `Texture` / `Texture2D`. `gl-header.h` is the
+`Framebuffer`, `UniformBuffer`, `Texture2D`. `gl-header.h` is the
 single include for `<glad/glad.h>`. Use these; do not call `glGen*` / `glDelete*`
 directly in renderer code.
 
 Two rules that are easy to get wrong:
 
 - **A multi-pass renderer must return to the framebuffer it was handed**, not to
-  `BindDefault()`. Snapshot `Framebuffer::GetBoundId()` before the offscreen
+  framebuffer 0. Snapshot `Framebuffer::GetBoundId()` before the offscreen
   pass and `Framebuffer::BindId(prev)` after. During a frame capture the
   "backbuffer" is a real FBO, and binding the default one sends the composite to
   the window while the capture comes back empty.
@@ -426,7 +433,8 @@ it was handed (section 10).
 floating debug panel (`DebugUI`). Each frame it snapshots the authored config
 (`GetConfig`), lets `DebugUI::Build` mutate that copy and attach or drive
 animations on the effect, writes it back with `SetConfig` (which reaches the
-renderers through `OnConfigChanged` only when something changed), draws the
+renderers through `OnConfigChanged` at the next `Update`, and only when
+something changed), draws the
 panel, then on the main context draws any backdrop, `Update(dt)` and
 `Render(w, h)`. Sliders showing an animated field read `GetActiveConfig()`, so
 the knob follows the live value, and pin to the base while being dragged. The

@@ -36,9 +36,8 @@ namespace EdgeLighting
     /// The producer allocates and clears it through @ref BeginWrite, which
     /// keeps the version and which texels may hold anything but 0 - so a write
     /// clears only the window it draws into and the one the last write drew,
-    /// rather than the whole viewport-sized buffer. The buffer is a
-    /// AdaptiveFormatTarget, so it moves back up its format list through
-    /// @ref Refresh, and knows an allocation by its generation.
+    /// rather than the whole viewport-sized buffer. The buffer is an
+    /// AdaptiveFormatTarget, and knows an allocation by its generation.
     class SharedBuffer
     {
     public:
@@ -105,9 +104,8 @@ namespace EdgeLighting
         /// clear what may hold anything but 0: @p window - [x0, x1) x [y0, y1)
         /// texels, as x0, y0, x1, y1, where this write draws - and the last
         /// write's window, or the whole buffer when its texels are undefined:
-        /// allocated since the last write - by this call's walk or by
-        /// @ref Refresh, told by the generation - or released. Moves the
-        /// version.
+        /// allocated since the last write, told by the generation, or
+        /// released. Moves the version.
         ///
         /// The caller lifts the host's scissor first and keeps it lifted
         /// through its draw (GLUtils::NoScissorScope): the buffer is the
@@ -119,25 +117,12 @@ namespace EdgeLighting
         /// BaseRenderer::GetFormatAvailability - and starts at the first
         /// format this context may render at this size, so it never fails a
         /// full-size allocation in a format a probe already refused, nor
-        /// retries one that already failed this large; its own fallback is
+        /// tries one whose allocation already failed; its own fallback is
         /// left for a refusal neither predicted.
         /// @return false if no format allocates, in which case nothing is bound
         ///         - binding then would bind the CALLER's framebuffer - and the
         ///         caller must draw nothing.
         bool BeginWrite(const glm::ivec2 &texels, const glm::ivec4 &window, FormatAvailability &availability);
-
-        /// Move the buffer back up its format list once a format it fell back
-        /// past may be allocated again (AdaptiveFormatTarget::Refresh): for a
-        /// producer that skips its write on a frame it reuses, once a frame
-        /// before it decides to - a still frame would otherwise keep the buffer
-        /// where it fell. ALLOCATED leaves the texels undefined: the producer
-        /// may not reuse the buffer that frame, which keying its reuse on
-        /// @ref GetGeneration does, and the next @ref BeginWrite clears it
-        /// whole.
-        AdaptiveFormatTarget::EnsureResult Refresh(FormatAvailability &availability)
-        {
-            return mTarget.Refresh(availability);
-        }
 
         /// Moves with every allocation (AdaptiveFormatTarget::GetGeneration):
         /// what a producer keys its reuse of the buffer on.

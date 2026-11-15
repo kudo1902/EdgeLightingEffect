@@ -73,7 +73,9 @@ namespace EdgeLighting
         /// @returns false if any renderer failed to initialise.
         bool Initialize();
 
-        /// @brief Advance animation time and propagate updates to renderers.
+        /// @brief Advance animation time and propagate updates to renderers:
+        ///        the config, if it moved since they last heard (one
+        ///        BaseRenderer::OnConfigChanged each), then the frame's time.
         /// @param deltaTime Seconds since the last frame.
         void Update(float deltaTime);
 
@@ -85,15 +87,18 @@ namespace EdgeLighting
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);
 
-        /// @brief Replace the base configuration and notify all renderers.
+        /// @brief Replace the base configuration.
         ///
-        /// Writes the BASE config, then recomposes and notifies through the
-        /// same path @ref Update uses. With animations attached that composite
-        /// carries the overlays at their CURRENT values - this frame's advance
-        /// happens in the next @ref Update, which recomposes and notifies
-        /// again. Callers following the documented Update-then-Render contract
-        /// therefore see one notification per frame from Update, and one extra
-        /// on frames where they also changed the base mid-animation.
+        /// Writes the BASE config and recomposes the active one, so @ref
+        /// GetActiveConfig follows at once - with animations attached, carrying
+        /// the overlays at their CURRENT values; this frame's advance happens
+        /// in the next @ref Update. CPU work only: no renderer is called and no
+        /// GL call is made here. The renderers hear of the change
+        /// (BaseRenderer::OnConfigChanged, where they rebuild what it moved)
+        /// ONCE, at the next @ref Update - or the next @ref Render, when no
+        /// Update comes first - however many times this was called in between.
+        /// A change set and set back before then may still notify, with a
+        /// config equal to the last one notified.
         ///
         /// @param config New base configuration to apply.
         void SetConfig(const Config &config);
@@ -223,11 +228,21 @@ namespace EdgeLighting
         const Clock &GetClock() const;
 
     private:
+        /// Rebuild the active config (base + overlays, sanitised) and, if it
+        /// moved, mark the renderers as not having heard. No GL.
         void refreshActiveConfig();
+        /// Hand the active config to every renderer if it moved since they
+        /// last heard (BaseRenderer::OnConfigChanged). Called by @ref Update
+        /// and @ref Render only, so a renderer's GL work stays on the frame.
+        void notifyRenderers();
 
     private:
-        Config mBaseConfig;   ///< Authored config - what SetConfig sets.
-        Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
+        Config mBaseConfig;   ///< Authored config - what SetConfig sets, and GetConfig returns, as set.
+        Config mActiveConfig; ///< Base + animation overlays, sanitised (ConfigValidation) - forwarded to renderers.
+        /// @c mBaseConfig as ConfigValidation::Sanitize leaves it, refreshed by
+        /// SetConfig only: with no animation attached it IS the active config,
+        /// and a frame compares against it without copying or sanitising.
+        Config mSanitizedBase;
         /// Scratch the animated composite is built in, held as a member so the
         /// per-frame path does no heap allocation.
         ///
@@ -267,6 +282,9 @@ namespace EdgeLighting
         /// a newly registered renderer still has an Initialize coming or has
         /// missed it and must be initialised immediately.
         bool mInitialized = false;
+        /// The active config moved since the renderers last heard of it:
+        /// set by @ref refreshActiveConfig, cleared by @ref notifyRenderers.
+        bool mRenderersStale = false;
     };
 
 } // namespace EdgeLighting

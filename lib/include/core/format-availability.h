@@ -136,33 +136,18 @@ namespace EdgeLighting
     /// would clear the frame's pending GL errors.
     ///
     /// It also keeps the other half of what decides a format: the full-size
-    /// allocations that failed though the probe passed the format, each by
-    /// what failed it, so a failure blocks only what it says something about.
-    /// Out of memory is kept as the smallest total size (texels x attachments)
-    /// that failed per format - memory runs out by bytes, whatever the
-    /// buffer's shape or attachment count - and a walk skips that format at
-    /// that size or larger and tries it again below it, so one failure at 4K
-    /// does not cost a smaller buffer its format. And only for a while: memory
-    /// comes back - a video decoder lets go of its frames - so the failure
-    /// expires after @ref OUT_OF_MEMORY_RETRY_SECONDS of frame time
-    /// (@ref Advance), the first walk past it tries the format again at any
-    /// size, and a retry that runs out again doubles the wait, up to
-    /// @ref OUT_OF_MEMORY_RETRY_MAX_SECONDS. An allocation at the failed size
-    /// or larger that succeeds clears it. A buffer that fell back past the
-    /// format moves back up once it may (AdaptiveFormatTarget::Refresh), so one
-    /// passing shortage does not leave the shared buffer at 8 bits for the
-    /// effect's life.
-    /// Anything else - an incomplete framebuffer, an error that is not memory
-    /// - is kept per format AND attachment count, at every size: a driver
-    /// that will not take two RGBA16F attachments says nothing about one, and
-    /// says the same at any size, so trying again smaller would only fail
-    /// again (measured: 7 failed allocations over 12 frames of a growing
-    /// rect, whose gather buffer shrinks, when it was kept by size). Size is
-    /// not what failed it: a buffer wider or taller than GL_MAX_TEXTURE_SIZE
-    /// is refused before any row is tried, recording nothing - that limit is
-    /// the context's, the same for every format. Such a failure does not
-    /// expire: it is the driver's answer, not its state. Either way a buffer
-    /// keeps no memory of its own.
+    /// allocations that failed though the probe passed the format. A failure
+    /// is FINAL for the effect: the format is not tried again at that many
+    /// attachments or more, at any size, whatever failed it - an incomplete
+    /// framebuffer, an error, or out of memory. A driver that will not take
+    /// two RGBA16F attachments says nothing about one, so a one-attachment
+    /// buffer keeps the format. Out of memory is final too, which is the
+    /// simple choice rather than the generous one: a passing shortage leaves
+    /// the buffers it reached on their 8-bit row, and a layer whose every row
+    /// ran out draws nothing, until the effect is created again. A buffer
+    /// wider or taller than GL_MAX_TEXTURE_SIZE is refused before any row is
+    /// tried, recording nothing - that limit is the context's, the same for
+    /// every format. A buffer keeps no memory of its own.
     ///
     /// GL thread only. Creates no GL object until asked, so it can be made
     /// before a context exists. See
@@ -170,19 +155,7 @@ namespace EdgeLighting
     class FormatAvailability
     {
     public:
-        // --- Constants and types ---------------------------------------------
-
-        /// How long, in seconds of frame time (@ref Advance), an out-of-memory
-        /// failure keeps its format off at its size and above before a walk
-        /// may try it again. Long enough that a shortage still going does not
-        /// cost a failed allocation every few frames; short enough that the
-        /// shared buffer is back in half float soon after it passes.
-        static constexpr double OUT_OF_MEMORY_RETRY_SECONDS = 2.0;
-        /// The longest wait: each retry that runs out of memory again doubles
-        /// it, from @ref OUT_OF_MEMORY_RETRY_SECONDS, up to this - so a
-        /// shortage that never passes costs one failed allocation every ~8.5
-        /// minutes once the doubling has reached it.
-        static constexpr double OUT_OF_MEMORY_RETRY_MAX_SECONDS = 512.0;
+        // --- Types -------------------------------------------------------------
 
         /// What the probe says about a format - decided once, in @ref Ask.
         typedef enum class ProbeResult
@@ -214,36 +187,20 @@ namespace EdgeLighting
         } Answer;
 
         /// One full-size allocation that failed though its format's probe
-        /// result let a walk try it, kept by what failed it (see the class
-        /// comment).
+        /// result let a walk try it: the format is not tried again with this
+        /// many attachments or more (see the class comment).
         typedef struct FailedAllocation
         {
             GLint internalFormat = 0;
-            /// GL_OUT_OF_MEMORY failures are memory: @c texels is the smallest
-            /// total (texels x attachments) that ran out since the failure was
-            /// last armed, for any attachment count, and @c attachments is 0.
-            /// Any other failure is this format at this many attachments, at
-            /// every size: @c attachments is the fewest it failed with (more
-            /// fail too) and @c texels is 0.
-            bool outOfMemory = false;
-            int attachments = 0;
-            int64_t texels = 0;
-            /// Out of memory only: the frame time (@ref GetTime) from which it
-            /// blocks nothing, and how long its last failure kept it - doubled
-            /// by a retry that fails again. Infinity and 0 for any other
-            /// failure, which does not expire.
-            double retryAt = 0.0;
-            double wait = 0.0;
+            int attachments = 0; ///< The fewest it failed with.
         } FailedAllocation;
 
         /// Which full-size allocations @ref SetFailedAllocations fails, and how.
         typedef struct ForcedFailure
         {
             std::vector<GLint> formats;      ///< The formats whose allocations fail; none by default.
-            int64_t fromTexels = 0;          ///< Only allocations of at least this many texels x attachments; 0 is every size.
             int fromAttachments = 1;         ///< Only allocations with at least this many attachments.
             GLenum error = GL_OUT_OF_MEMORY; ///< What the failure reports, as Resize would: a GL error or an incomplete status.
-            int count = 0;                   ///< Only the first this many allocations it selects fail - a shortage that passes; 0 fails every one.
         } ForcedFailure;
 
         // --- Construction ----------------------------------------------------
@@ -284,15 +241,13 @@ namespace EdgeLighting
         /// Whether a buffer may allocate @p width x @p height x @p attachments
         /// in @p internalFormat: it is within the texture size limit, the
         /// format renders here or its probe gave no answer - then the
-        /// allocation decides - and no allocation it would repeat has failed
-        /// (see the class comment: out of memory at this total size or
-        /// smaller, anything else at this many attachments or fewer, at any
-        /// size). The walk asks it of each row.
+        /// allocation decides - and it has not failed with this many
+        /// attachments or fewer. The walk asks it of each row.
         bool MayAllocate(GLint internalFormat, GLenum format, GLenum type, int width, int height, int attachments)
         {
             return !isPastSizeLimit(width, height) &&
                    Ask(internalFormat, format, type).result != ProbeResult::REFUSED &&
-                   failedReason(internalFormat, width, height, attachments) == nullptr;
+                   failedReason(internalFormat, attachments) == nullptr;
         }
         /// The same, for one row of a format list.
         bool MayAllocate(const TextureFormat &format, int width, int height, int attachments)
@@ -309,22 +264,6 @@ namespace EdgeLighting
         {
             return getBestRow(formats, width, height, attachments) < formats.count;
         }
-
-        // --- Frame time: what an out-of-memory failure expires by ------------
-
-        /// Move frame time on by @p seconds (a negative or non-finite step
-        /// counts as 0):
-        /// the clock an out-of-memory failure expires by. Called by
-        /// @ref EdgeLightingEffect::Update with the host's frame delta - real
-        /// time between frames, not the effect's Clock, which a host may
-        /// pause while memory comes back - and, for an object a renderer made
-        /// for itself outside an effect, by that renderer's Update
-        /// (BaseRenderer::AdvanceOwnFormatAvailability). A host that never
-        /// calls Update never lets a failure expire.
-        void Advance(double seconds);
-
-        /// The frame time @ref Advance has reached, seconds.
-        double GetTime() const { return mTime; }
 
         // --- The startup report ----------------------------------------------
 
@@ -366,11 +305,6 @@ namespace EdgeLighting
         /// the number of probes made. A hook's answer is not among them.
         const std::vector<Answer> &GetAnswers() const { return mAnswers; }
 
-        /// Every failure kept, in the order first failed: verification reads
-        /// what a run left, as @ref GetAnswers. An expired out-of-memory
-        /// failure stays until an allocation that large succeeds.
-        const std::vector<FailedAllocation> &GetFailedAllocations() const { return mFailedAllocations; }
-
         // --- Verification hooks: a host never calls these --------------------
 
         /// Verification only - a host never calls this. Every internal format
@@ -395,30 +329,11 @@ namespace EdgeLighting
         /// count - fails from now on, though the probe passed it, reporting
         /// @p failure.error: the case the walks' own fallback exists for,
         /// which no driver the project runs on produces. The buffer is
-        /// released as a failed Resize leaves it, the failure is kept by its
-        /// cause as a real one is (out of memory by total size, anything else
-        /// by format and attachment count), and the fallback is logged naming
-        /// this hook. A threshold lets a run drive the walk back up: a format
-        /// that failed large is tried again, and allocates, below it. Per
+        /// released as a failed Resize leaves it, the failure is kept as a
+        /// real one is, and the fallback is logged naming this hook. Per
         /// effect, set before the allocations it should reach, like
-        /// @ref SetRefusedFormats. With a @c count, only that many fail - a
-        /// shortage that passes, which an expired failure must recover from.
-        void SetFailedAllocations(ForcedFailure failure)
-        {
-            mForcedFailure = std::move(failure);
-            mForcedFailuresTaken = 0;
-        }
-
-        /// The same, out of memory: every allocation in @p formats of
-        /// @p fromTexels or more (width x height x attachments; 0, the
-        /// default, is every size), whatever its attachment count.
-        void SetFailedAllocations(std::vector<GLint> formats, int64_t fromTexels = 0)
-        {
-            ForcedFailure failure;
-            failure.formats = std::move(formats);
-            failure.fromTexels = fromTexels;
-            SetFailedAllocations(std::move(failure));
-        }
+        /// @ref SetRefusedFormats.
+        void SetFailedAllocations(ForcedFailure failure) { mForcedFailure = std::move(failure); }
 
         /// Verification only - a host never calls this. Every buffer wider or
         /// taller than @p size is refused before any row is tried, as on a GL
@@ -436,18 +351,10 @@ namespace EdgeLighting
         /// first ask, like @ref SetRefusedFormats; a refusal wins over it.
         void SetUnknownFormats(std::vector<GLint> formats) { mUnknown = std::move(formats); }
 
-        /// Verification only - a host never calls this. How long an
-        /// out-of-memory failure first keeps its format off, in place of
-        /// @ref OUT_OF_MEMORY_RETRY_SECONDS; infinity keeps it off for the
-        /// effect's life, as before failures expired - for a run about a
-        /// failure that holds, whose frames a retry would only perturb. Set
-        /// before the first failure it should reach.
-        void SetOutOfMemoryRetry(double firstSeconds) { mOutOfMemoryRetrySeconds = firstSeconds; }
 
     private:
         /// AdaptiveFormatTarget alone walks a format list
-        /// (AdaptiveFormatTarget::Ensure, AdaptiveFormatTarget::Refresh),
-        /// through the two methods below.
+        /// (AdaptiveFormatTarget::Ensure), through the method below.
         friend class AdaptiveFormatTarget;
 
         // --- Types -----------------------------------------------------------
@@ -480,35 +387,26 @@ namespace EdgeLighting
         /// is kept against a format for any of them.
         bool rejectsOutright(Framebuffer &buffer, const FormatList &formats, int width, int height, int attachments);
 
-        /// Whether @p buffer holds a row of @p formats below the one a walk at
-        /// its own size would now start at - what AdaptiveFormatTarget::Refresh
-        /// asks. False for a buffer that holds nothing, or a format not in the
-        /// list. Free while it holds the first row; otherwise a lookup per row
-        /// above it, no GL call, no log.
-        bool isBelowBestRow(const Framebuffer &buffer, const FormatList &formats);
-
         // --- The walk's steps ------------------------------------------------
 
         /// The walk's question, asked at its allocation: the row (the index)
         /// of the first of @p formats, at or after @p from, that may be
-        /// tried at @p width x @p height x @p attachments - its probe result
-        /// is not REFUSED, and no allocation it would repeat has failed
-        /// (@ref failedReason); @c formats.count if none may. A refused row is
+        /// tried with @p attachments - its probe result is not REFUSED, and it
+        /// has not failed with that many attachments (@ref failedReason);
+        /// @c formats.count if none may. A refused row is
         /// final - the walk tries nothing in it.
         ///
         /// Logs a warning the first time it skips each row for a target,
         /// naming @p target - refused, or skipped for a failure another walk
-        /// (or this one, larger) had, and why - so every buffer's log says
-        /// what the next row costs it; a walk asks every frame, so the skips
-        /// logged are remembered (by the text of the target's and the
-        /// format's names). A walk's own failure is not logged again as a
-        /// skip: its fallback line said it.
+        /// had - so every buffer's log says what the next row costs it; a
+        /// walk asks every frame, so the skips logged are remembered (by the
+        /// text of the target's and the format's names). A walk's own failure
+        /// is not logged again as a skip: its fallback line said it.
         ///
         /// Cheap enough for every frame, which is how often a walk runs (its
         /// Resize early-out is inside it): a lookup over the handful of
         /// answers and failures kept, no GL call, nothing built.
-        size_t firstToTry(const FormatList &formats, size_t from, int width, int height, int attachments,
-                          const char *target);
+        size_t firstToTry(const FormatList &formats, size_t from, int attachments, const char *target);
 
         /// The row - the index - of the first of @p formats that may be
         /// allocated at @p width x @p height x @p attachments
@@ -516,33 +414,15 @@ namespace EdgeLighting
         /// @c formats.count if none may. Logs nothing.
         size_t getBestRow(const FormatList &formats, int width, int height, int attachments);
 
-        /// Why the walk skips @p internalFormat at @p width x @p height x
-        /// @p attachments - a failure kept that an allocation this size would
-        /// repeat, and that has not expired, as a phrase for the log - or
-        /// nullptr if none does.
-        const char *failedReason(GLint internalFormat, int width, int height, int attachments) const;
+        /// Why the walk skips @p internalFormat with @p attachments - a
+        /// failure kept with as many attachments or fewer, as a phrase for
+        /// the log - or nullptr if none.
+        const char *failedReason(GLint internalFormat, int attachments) const;
 
-        /// Keep that an allocation of @p internalFormat at @p width x
-        /// @p height x @p attachments failed with @p failure (what Resize
-        /// reported). GL_OUT_OF_MEMORY by its total size, for a while: no walk
-        /// repeats it at that size or larger until it expires, one smaller
-        /// still may, and the record keeps the smallest size that failed. A
-        /// failure after it expired is a retry that ran out again: it is armed
-        /// afresh at this size, for twice the wait. Anything else by its
-        /// attachment count alone, for good: no walk tries the format again
-        /// with that many attachments or more, at any size, and the record
-        /// keeps the fewest that failed.
-        void recordFailedAllocation(GLint internalFormat, int width, int height, int attachments, GLenum failure);
-
-        /// A walk allocated @p internalFormat - named @p format - for
-        /// @p target at @p width x @p height x @p attachments - a real
-        /// allocation, not Resize's early-out. Clears an expired out-of-memory
-        /// failure of the format that this size answers (as large or larger),
-        /// saying so, and then forgets every target's logged skip of that
-        /// format, so the next shortage is logged again. A lookup over the
-        /// failures kept, none usually.
-        void recordAllocation(GLint internalFormat, int width, int height, int attachments, const char *target,
-                              const char *format);
+        /// Keep that an allocation of @p internalFormat with @p attachments
+        /// failed: no walk tries the format again with that many attachments
+        /// or more.
+        void recordFailedAllocation(GLint internalFormat, int attachments);
 
         /// Record that @p target's skip of the format named @p format is
         /// logged: true if it was not already - the one time to log it. Also
@@ -551,10 +431,8 @@ namespace EdgeLighting
         bool recordSkip(const char *target, const char *format);
 
         /// Whether @ref SetFailedAllocations fails this allocation of
-        /// @p internalFormat at @p texels (x attachments) with
-        /// @p attachments - it names the format, both reach its thresholds,
-        /// and its @c count is not used up - and if so, counts it.
-        bool takeForcedFailure(GLint internalFormat, int64_t texels, int attachments);
+        /// @p internalFormat with @p attachments.
+        bool isForcedFailure(GLint internalFormat, int attachments) const;
 
         /// Whether @p width or @p height is past @ref GetMaxTextureSize.
         bool isPastSizeLimit(int width, int height) const;
@@ -581,11 +459,10 @@ namespace EdgeLighting
         /// after the last) - the first time only, for this target and format.
         void logSkipped(const char *target, const char *format, const char *nextFormat, const Answer &answer);
 
-        /// The same, for a format skipped at @p width x @p height x
-        /// @p attachments for the failure @p reason (@ref failedReason)
-        /// describes - another walk's, or this one's at an earlier size.
-        void logSkippedAfterFailure(const char *target, const char *format, const char *nextFormat, int width,
-                                    int height, int attachments, const char *reason);
+        /// The same, for a format skipped with @p attachments for the failure
+        /// @p reason (@ref failedReason) describes - another walk's.
+        void logSkippedAfterFailure(const char *target, const char *format, const char *nextFormat, int attachments,
+                                    const char *reason);
 
         /// What a failure Resize reported means, for a log line: the GL error
         /// or framebuffer status by name, or in hex.
@@ -602,13 +479,10 @@ namespace EdgeLighting
         std::vector<FailedAllocation> mFailedAllocations;              ///< The full-size failures kept: see recordFailedAllocation.
         std::vector<GLint> mRefused;                                   ///< SetRefusedFormats' list; checked before mAnswers.
         ForcedFailure mForcedFailure;                                  ///< SetFailedAllocations' selection; fails nothing by default.
-        int mForcedFailuresTaken = 0;                                  ///< Allocations mForcedFailure has failed, against its count.
         std::vector<GLint> mUnknown;                                   ///< SetUnknownFormats' list; checked after mRefused, before mAnswers.
         int mMaxTextureSize = 0;                                       ///< GL_MAX_TEXTURE_SIZE, once readLimits has run; 0 before.
         int mMaxTextureSizeOverride = 0;                               ///< SetMaxTextureSize's; 0 for none.
         std::vector<LoggedSkip> mLoggedSkips;                          ///< The skips already logged (recordSkip), so a walk asking every frame is quiet.
-        double mTime = 0.0;                                            ///< Frame time, seconds (Advance).
-        double mOutOfMemoryRetrySeconds = OUT_OF_MEMORY_RETRY_SECONDS; ///< An out-of-memory failure's first wait; SetOutOfMemoryRetry.
     };
 
 } // namespace EdgeLighting

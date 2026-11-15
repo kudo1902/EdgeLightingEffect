@@ -5,20 +5,10 @@
 #include "util/log-util.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <cstdint>
-#include <cstring>
 #include <deque>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
-
-/// Set to 0 to fall back to per-element indexed uniforms (e.g. "colors[0]",
-/// "colors[1]", …) instead of the direct GL array upload (glUniform* v with
-/// count > 1). Some restricted GL implementations or wrappers require this.
-#ifndef UNIFORM_ARRAY_DIRECT
-#define UNIFORM_ARRAY_DIRECT 1
-#endif
 
 namespace EdgeLighting
 {
@@ -103,8 +93,7 @@ namespace EdgeLighting
               mCacheVec2(std::move(other.mCacheVec2)),
               mCacheVec3(std::move(other.mCacheVec3)),
               mCacheVec4(std::move(other.mCacheVec4)),
-              mCacheMat4(std::move(other.mCacheMat4)),
-              mCacheArray(std::move(other.mCacheArray))
+              mCacheMat4(std::move(other.mCacheMat4))
         {
             other.mId = 0;
         }
@@ -128,7 +117,6 @@ namespace EdgeLighting
                 mCacheVec3 = std::move(other.mCacheVec3);
                 mCacheVec4 = std::move(other.mCacheVec4);
                 mCacheMat4 = std::move(other.mCacheMat4);
-                mCacheArray = std::move(other.mCacheArray);
 
                 other.mId = 0;
             }
@@ -287,157 +275,6 @@ namespace EdgeLighting
             glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(value));
         }
 
-        // -------------------------------------------------------------------
-        // Array uniform setters
-        // Cached by memcmp on the value buffer - collapses N per-element calls
-        // into one and skips the upload when the array hasn't changed.
-        //
-        // Contract (applies to every overload below):
-        //   1. count == 0 is a legal no-op - callers pass N=0 when the feature
-        //      is off, and this must NOT log "uniform not found" for arrays
-        //      the linker optimised away. Check `count <= 0` before touching
-        //      getLocation() so the direct and fallback paths behave the same.
-        //   2. Partial uploads leave stale tail elements: `set(..., N)` then
-        //      `set(..., M<N)` writes M elements and elements [M, N) in GL
-        //      keep their old values, while the byte cache now only tracks M.
-        //      Shaders must gate on a companion count uniform.
-        //   3. Do NOT mix the array overload and the scalar overload for the
-        //      same base uniform. `getLocation("foo")` and `getLocation("foo[0]")`
-        //      resolve to the same GL location, but the array upload writes
-        //      mCacheArray while the scalar upload writes mCacheVec*; the two
-        //      caches drift independently and one path will silently skip a
-        //      stale value.
-        //   4. Tight-packing: glUniform*fv reinterprets the array as
-        //      `count * components` contiguous floats. Default GLM packs
-        //      vec2/vec3/vec4 tightly; GLM_FORCE_DEFAULT_ALIGNED_GENTYPES pads
-        //      vec3 to 16 bytes and breaks this path. static_asserts below
-        //      trip a compile error if that ever changes.
-        // -------------------------------------------------------------------
-
-        static_assert(sizeof(glm::vec2) == 2 * sizeof(float),
-                      "glUniform2fv array upload requires tightly packed glm::vec2");
-        static_assert(sizeof(glm::vec3) == 3 * sizeof(float),
-                      "glUniform3fv array upload requires tightly packed glm::vec3 "
-                      "(GLM_FORCE_DEFAULT_ALIGNED_GENTYPES pads to 16 bytes - don't set it)");
-        static_assert(sizeof(glm::vec4) == 4 * sizeof(float),
-                      "glUniform4fv array upload requires tightly packed glm::vec4");
-
-        void SetUniform(const char *name, const float *values, int count)
-        {
-            if (count <= 0)
-            {
-                return;
-            }
-#if UNIFORM_ARRAY_DIRECT
-            GLint loc = getLocation(name);
-            if (loc < 0)
-            {
-                return;
-            }
-
-            if (!isArrayChanged(loc, values, sizeof(float) * static_cast<size_t>(count)))
-            {
-                return;
-            }
-
-            glUniform1fv(loc, count, values);
-#else
-            for (int i = 0; i < count; ++i)
-            {
-                char elemName[128];
-                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
-                SetUniform(elemName, values[i]);
-            }
-#endif
-        }
-
-        void SetUniform(const char *name, const glm::vec2 *values, int count)
-        {
-            if (count <= 0)
-            {
-                return;
-            }
-#if UNIFORM_ARRAY_DIRECT
-            GLint loc = getLocation(name);
-            if (loc < 0)
-            {
-                return;
-            }
-
-            if (!isArrayChanged(loc, values, sizeof(glm::vec2) * static_cast<size_t>(count)))
-            {
-                return;
-            }
-
-            glUniform2fv(loc, count, glm::value_ptr(*values));
-#else
-            for (int i = 0; i < count; ++i)
-            {
-                char elemName[128];
-                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
-                SetUniform(elemName, values[i]);
-            }
-#endif
-        }
-
-        void SetUniform(const char *name, const glm::vec3 *values, int count)
-        {
-            if (count <= 0)
-            {
-                return;
-            }
-#if UNIFORM_ARRAY_DIRECT
-            GLint loc = getLocation(name);
-            if (loc < 0)
-            {
-                return;
-            }
-
-            if (!isArrayChanged(loc, values, sizeof(glm::vec3) * static_cast<size_t>(count)))
-            {
-                return;
-            }
-
-            glUniform3fv(loc, count, glm::value_ptr(*values));
-#else
-            for (int i = 0; i < count; ++i)
-            {
-                char elemName[128];
-                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
-                SetUniform(elemName, values[i]);
-            }
-#endif
-        }
-
-        void SetUniform(const char *name, const glm::vec4 *values, int count)
-        {
-            if (count <= 0)
-            {
-                return;
-            }
-#if UNIFORM_ARRAY_DIRECT
-            GLint loc = getLocation(name);
-            if (loc < 0)
-            {
-                return;
-            }
-
-            if (!isArrayChanged(loc, values, sizeof(glm::vec4) * static_cast<size_t>(count)))
-            {
-                return;
-            }
-
-            glUniform4fv(loc, count, glm::value_ptr(*values));
-#else
-            for (int i = 0; i < count; ++i)
-            {
-                char elemName[128];
-                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
-                SetUniform(elemName, values[i]);
-            }
-#endif
-        }
-
     private:
         /// Compile @p src as a @p type shader. Logs the GL info log on failure
         /// with @p stage ("vertex" / "fragment") and @p programName for context.
@@ -486,21 +323,6 @@ namespace EdgeLighting
             return loc;
         }
 
-        /// Update the byte cache for @p location. Returns @c true if the
-        /// caller should upload because the bytes differ from the cache.
-        bool isArrayChanged(GLint location, const void *data, size_t bytes)
-        {
-            auto &cached = mCacheArray[location];
-            if (cached.size() == bytes && std::memcmp(cached.data(), data, bytes) == 0)
-            {
-                return false;
-            }
-
-            cached.assign(static_cast<const uint8_t *>(data),
-                          static_cast<const uint8_t *>(data) + bytes);
-            return true;
-        }
-
     private:
         GLuint mId = 0;
         std::string mName;
@@ -509,7 +331,7 @@ namespace EdgeLighting
         // are views into mNames, which owns each name: a deque never moves its
         // elements on push_back, and a move hands its storage over whole, so
         // the views stay valid for the program's life. Not keyed on the
-        // pointer: the array fallback passes names built on the stack.
+        // pointer: two call sites may spell one name from different storage.
         std::deque<std::string> mNames;
         std::unordered_map<std::string_view, GLint> mLocations;
 
@@ -521,8 +343,6 @@ namespace EdgeLighting
         std::unordered_map<GLint, glm::vec4> mCacheVec4;
         std::unordered_map<GLint, glm::mat4> mCacheMat4;
 
-        // Raw-byte cache for array uniforms.
-        std::unordered_map<GLint, std::vector<uint8_t>> mCacheArray;
     };
 
 } // namespace EdgeLighting

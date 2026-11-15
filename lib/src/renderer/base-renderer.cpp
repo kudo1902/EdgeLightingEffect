@@ -16,21 +16,9 @@ namespace EdgeLighting
         if (!mFormatAvailability)
         {
             mFormatAvailability = std::make_shared<FormatAvailability>();
-            mOwnsFormatAvailability = true;
             mFormatAvailability->AskReportFormats();
         }
         return *mFormatAvailability;
-    }
-
-    void BaseRenderer::AdvanceOwnFormatAvailability(float deltaTime)
-    {
-        // Only an object this renderer made: the effect's is advanced by the
-        // effect, once a frame - advancing it here too would age its failures
-        // once per renderer.
-        if (mOwnsFormatAvailability)
-        {
-            mFormatAvailability->Advance(deltaTime);
-        }
     }
 
 } // namespace EdgeLighting

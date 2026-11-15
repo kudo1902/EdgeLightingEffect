@@ -17,8 +17,6 @@ namespace EdgeLighting
         // The format walk starts at the best format this context may render
         // at this size - the probe results and every failed allocation are
         // kept in @p availability, so the buffer keeps none.
-        // The target keeps the list's address for its Refresh: @c mFormats,
-        // which this object - neither copied nor moved - keeps.
         if (mTarget.Ensure(availability, FormatList(mFormats.data(), mFormats.size()), texels.x, texels.y) ==
             AdaptiveFormatTarget::EnsureResult::FAILED)
         {
@@ -30,13 +28,11 @@ namespace EdgeLighting
             mReady = false;
             return false;
         }
-        // A buffer allocated since the last write - by the walk above, or by
-        // a Refresh earlier in the frame - holds undefined texels, so the
-        // clear below has to be whole. Told by the generation, not by the
-        // size and format: a retry of a better format that fails destroys the
-        // buffer, and the walk then allocates the format it had at the size
-        // it had - a fresh texture that looks like the old one, often under
-        // the same name.
+        // A buffer allocated since the last write holds undefined texels, so
+        // the clear below has to be whole. Told by the generation, not by the
+        // size and format: a fallback can allocate the format it had at the
+        // size it had - a fresh texture that looks like the old one, often
+        // under the same name.
         if (mTarget.GetGeneration() != mWrittenGeneration)
         {
             mDirtyKnown = false;

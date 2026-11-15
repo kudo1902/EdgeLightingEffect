@@ -157,8 +157,7 @@ is that test, and it has exactly two terms.
   change at all, moves the ring's count like any re-bake. Plus "not baked into
   this allocation" (`mEmission.bake.generation` against the buffer's
   `AdaptiveFormatTarget::GetGeneration`; it was a `baked` flag until 2026-10-31),
-  because a fresh allocation - the first, or a move back up the format list -
-  holds undefined texels and the stored key means nothing until a bake. The light blocks'
+  because a fresh allocation holds undefined texels and the stored key means nothing until a bake. The light blocks'
   counts are only current once `packLightBlocks` has run, so `Render` packs
   before it asks.
 - **`uHuePhase`**, which reaches `neon-emission.frag` in exactly one place:

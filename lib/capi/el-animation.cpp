@@ -144,8 +144,8 @@ el_result_e el_animation_destroy(el_animation_handle_t anim)
 el_animation_handle_t el_animation_create_intensity_pulse(float duration,
                                                           float minIntensity, float maxIntensity)
 {
-    REQUIRE_FINITE("el_animation_create_intensity_pulse", nullptr, duration, minIntensity, maxIntensity);
-    REQUIRE_DURATION("el_animation_create_intensity_pulse", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, minIntensity, maxIntensity);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityPulse>(duration, minIntensity, maxIntensity)};
@@ -162,8 +162,8 @@ el_animation_handle_t el_animation_create_intensity_pulse(float duration,
 el_animation_handle_t el_animation_create_intensity_strobe(float duration,
                                                            float offIntensity, float onIntensity)
 {
-    REQUIRE_FINITE("el_animation_create_intensity_strobe", nullptr, duration, offIntensity, onIntensity);
-    REQUIRE_DURATION("el_animation_create_intensity_strobe", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, offIntensity, onIntensity);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityStrobe>(duration, offIntensity, onIntensity)};
@@ -180,8 +180,8 @@ el_animation_handle_t el_animation_create_intensity_strobe(float duration,
 el_animation_handle_t el_animation_create_intensity_fade_in(float targetIntensity,
                                                             float duration, el_easing_e easing)
 {
-    REQUIRE_FINITE("el_animation_create_intensity_fade_in", nullptr, targetIntensity, duration);
-    REQUIRE_DURATION("el_animation_create_intensity_fade_in", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, targetIntensity, duration);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeIn>(targetIntensity, duration, toEasing(easing))};
@@ -198,8 +198,8 @@ el_animation_handle_t el_animation_create_intensity_fade_in(float targetIntensit
 el_animation_handle_t el_animation_create_intensity_fade_out(float startIntensity,
                                                              float duration, el_easing_e easing)
 {
-    REQUIRE_FINITE("el_animation_create_intensity_fade_out", nullptr, startIntensity, duration);
-    REQUIRE_DURATION("el_animation_create_intensity_fade_out", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, startIntensity, duration);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeOut>(startIntensity, duration, toEasing(easing))};
@@ -216,8 +216,8 @@ el_animation_handle_t el_animation_create_intensity_fade_out(float startIntensit
 el_animation_handle_t el_animation_create_glow_radius_breath(float duration,
                                                              float minRadius, float maxRadius)
 {
-    REQUIRE_FINITE("el_animation_create_glow_radius_breath", nullptr, duration, minRadius, maxRadius);
-    REQUIRE_DURATION("el_animation_create_glow_radius_breath", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, minRadius, maxRadius);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::GlowRadiusBreath>(duration, minRadius, maxRadius)};
@@ -234,8 +234,8 @@ el_animation_handle_t el_animation_create_glow_radius_breath(float duration,
 el_animation_handle_t el_animation_create_bloom_pulse(float duration,
                                                       float minStrength, float maxStrength)
 {
-    REQUIRE_FINITE("el_animation_create_bloom_pulse", nullptr, duration, minStrength, maxStrength);
-    REQUIRE_DURATION("el_animation_create_bloom_pulse", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, minStrength, maxStrength);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::BloomPulse>(duration, minStrength, maxStrength)};
@@ -252,8 +252,8 @@ el_animation_handle_t el_animation_create_bloom_pulse(float duration,
 el_animation_handle_t el_animation_create_hue_rotation_reverse(float peakRate,
                                                                float duration)
 {
-    REQUIRE_FINITE("el_animation_create_hue_rotation_reverse", nullptr, peakRate, duration);
-    REQUIRE_DURATION("el_animation_create_hue_rotation_reverse", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, peakRate, duration);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationReverse>(peakRate, duration)};
@@ -270,8 +270,8 @@ el_animation_handle_t el_animation_create_hue_rotation_reverse(float peakRate,
 el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float peakRate,
                                                                     float duration)
 {
-    REQUIRE_FINITE("el_animation_create_hue_rotation_ease_reverse", nullptr, peakRate, duration);
-    REQUIRE_DURATION("el_animation_create_hue_rotation_ease_reverse", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, peakRate, duration);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationEaseReverse>(peakRate, duration)};
@@ -288,8 +288,8 @@ el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float peakRa
 el_animation_handle_t el_animation_create_segment_travel(float duration,
                                                          float length, float boost)
 {
-    REQUIRE_FINITE("el_animation_create_segment_travel", nullptr, duration, length, boost);
-    REQUIRE_DURATION("el_animation_create_segment_travel", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, length, boost);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentTravel>(duration, length, boost)};
@@ -306,8 +306,8 @@ el_animation_handle_t el_animation_create_segment_travel(float duration,
 el_animation_handle_t el_animation_create_segment_bounce(float duration,
                                                          float length, float boost)
 {
-    REQUIRE_FINITE("el_animation_create_segment_bounce", nullptr, duration, length, boost);
-    REQUIRE_DURATION("el_animation_create_segment_bounce", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, length, boost);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentBounce>(duration, length, boost)};
@@ -325,8 +325,8 @@ el_animation_handle_t el_animation_create_outline_tracer(float duration,
                                                          el_easing_e easing,
                                                          float maxLength)
 {
-    REQUIRE_FINITE("el_animation_create_outline_tracer", nullptr, duration, maxLength);
-    REQUIRE_DURATION("el_animation_create_outline_tracer", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, maxLength);
+    REQUIRE_DURATION(nullptr, duration, true);
     try
     {
         auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing), maxLength)};
@@ -344,8 +344,8 @@ el_animation_handle_t el_animation_create_arc_wipe(float duration,
                                                    float startPosition, float endPosition, float maxLength,
                                                    el_easing_e easing)
 {
-    REQUIRE_FINITE("el_animation_create_arc_wipe", nullptr, duration, startPosition, endPosition, maxLength);
-    REQUIRE_DURATION("el_animation_create_arc_wipe", nullptr, duration, true);
+    REQUIRE_FINITE(nullptr, duration, startPosition, endPosition, maxLength);
+    REQUIRE_DURATION(nullptr, duration, true);
     LOG_I("duration=%f, startPosition=%f, endPosition=%f, maxLength=%f, easing=%d", duration, startPosition, endPosition, maxLength, (int)easing);
     try
     {
@@ -366,7 +366,7 @@ el_animation_handle_t el_animation_create_arc_wipe(float duration,
 el_result_e el_animation_play(el_animation_handle_t anim)
 {
     LOG_I("anim=%p", (void *)anim);
-    VALIDATE_ANIM_PTR(anim, "el_animation_play");
+    VALIDATE_ANIM_PTR(anim);
     if (anim->ptr)
     {
         anim->ptr->Play();
@@ -377,7 +377,7 @@ el_result_e el_animation_play(el_animation_handle_t anim)
 el_result_e el_animation_pause(el_animation_handle_t anim)
 {
     LOG_I("anim=%p", (void *)anim);
-    VALIDATE_ANIM_PTR(anim, "el_animation_pause");
+    VALIDATE_ANIM_PTR(anim);
     if (anim->ptr)
     {
         anim->ptr->Pause();
@@ -388,7 +388,7 @@ el_result_e el_animation_pause(el_animation_handle_t anim)
 el_result_e el_animation_stop(el_animation_handle_t anim)
 {
     LOG_I("anim=%p", (void *)anim);
-    VALIDATE_ANIM_PTR(anim, "el_animation_stop");
+    VALIDATE_ANIM_PTR(anim);
     if (anim->ptr)
     {
         anim->ptr->Stop();
@@ -399,8 +399,8 @@ el_result_e el_animation_stop(el_animation_handle_t anim)
 el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t effect)
 {
     LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
-    VALIDATE_ANIM_PTR(anim, "el_animation_reset");
-    VALIDATE_EFFECT_PTR(effect, "el_animation_reset");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_EFFECT_PTR(effect);
     try
     {
         anim->ptr->Reset(effect->config);
@@ -415,9 +415,9 @@ el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t ef
 
 el_result_e el_animation_update(el_animation_handle_t anim, float dt)
 {
-    REQUIRE_FINITE("el_animation_update", EL_ERROR_INVALID_PARAMETER, dt);
+    REQUIRE_FINITE(EL_ERROR_INVALID_PARAMETER, dt);
     LOG_I("anim=%p, dt=%f", (void *)anim, dt);
-    VALIDATE_ANIM_PTR(anim, "el_animation_update");
+    VALIDATE_ANIM_PTR(anim);
     if (anim->ptr)
     {
         anim->ptr->Update(dt);
@@ -428,8 +428,8 @@ el_result_e el_animation_update(el_animation_handle_t anim, float dt)
 el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t effect)
 {
     LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
-    VALIDATE_ANIM_PTR(anim, "el_animation_apply");
-    VALIDATE_EFFECT_PTR(effect, "el_animation_apply");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_EFFECT_PTR(effect);
     try
     {
         anim->ptr->Apply(effect->config);
@@ -446,8 +446,8 @@ el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t ef
 
 el_result_e el_animation_get_state(el_animation_handle_t anim, el_animation_state_e *outState)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_state");
-    VALIDATE_OUT_PTR(outState, "el_animation_get_state");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outState);
     if (!anim->ptr)
     {
         *outState = EL_ANIM_STATE_STOPPED;
@@ -475,8 +475,8 @@ el_result_e el_animation_get_state(el_animation_handle_t anim, el_animation_stat
 
 el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElapsed)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_elapsed");
-    VALIDATE_OUT_PTR(outElapsed, "el_animation_get_elapsed");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outElapsed);
     *outElapsed = anim->ptr ? static_cast<float>(anim->ptr->GetElapsed()) : 0.0f;
     LOG_D("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
     return EL_SUCCESS;
@@ -484,8 +484,8 @@ el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElaps
 
 el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_elapsed");
-    REQUIRE_FINITE("el_animation_set_elapsed", EL_ERROR_INVALID_PARAMETER, elapsed);
+    VALIDATE_ANIM_PTR(anim);
+    REQUIRE_FINITE(EL_ERROR_INVALID_PARAMETER, elapsed);
     if (!anim->ptr || anim->ptr->GetElapsed() == static_cast<double>(elapsed))
     {
         return EL_SUCCESS;
@@ -497,8 +497,8 @@ el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
 
 el_result_e el_animation_get_progress(el_animation_handle_t anim, float *outProgress)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_progress");
-    VALIDATE_OUT_PTR(outProgress, "el_animation_get_progress");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outProgress);
     *outProgress = anim->ptr ? anim->ptr->GetProgress() : 0.0f;
     LOG_D("anim=%p, progress=%f", (void *)anim, *outProgress);
     return EL_SUCCESS;
@@ -506,8 +506,8 @@ el_result_e el_animation_get_progress(el_animation_handle_t anim, float *outProg
 
 el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_progress");
-    REQUIRE_FINITE("el_animation_set_progress", EL_ERROR_INVALID_PARAMETER, progress);
+    VALIDATE_ANIM_PTR(anim);
+    REQUIRE_FINITE(EL_ERROR_INVALID_PARAMETER, progress);
     if (!anim->ptr || anim->ptr->GetProgress() == progress)
     {
         return EL_SUCCESS;
@@ -521,8 +521,8 @@ el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress
 
 el_result_e el_animation_get_end_action(el_animation_handle_t anim, el_end_action_e *outAction)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_end_action");
-    VALIDATE_OUT_PTR(outAction, "el_animation_get_end_action");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outAction);
     *outAction = anim->ptr ? fromEndAction(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
     LOG_D("anim=%p, action=%d", (void *)anim, (int)*outAction);
     return EL_SUCCESS;
@@ -530,7 +530,7 @@ el_result_e el_animation_get_end_action(el_animation_handle_t anim, el_end_actio
 
 el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_action_e action)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_end_action");
+    VALIDATE_ANIM_PTR(anim);
     auto newVal = toEndAction(action);
     if (!anim->ptr || anim->ptr->GetEndAction() == newVal)
     {
@@ -544,8 +544,8 @@ el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_actio
 el_result_e el_animation_capture_baseline(el_animation_handle_t anim, el_effect_handle_t effect)
 {
     LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
-    VALIDATE_ANIM_PTR(anim, "el_animation_capture_baseline");
-    VALIDATE_EFFECT_PTR(effect, "el_animation_capture_baseline");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_EFFECT_PTR(effect);
     try
     {
         if (anim->ptr)
@@ -565,8 +565,8 @@ el_result_e el_animation_capture_baseline(el_animation_handle_t anim, el_effect_
 
 el_result_e el_animation_get_playback_mode(el_animation_handle_t anim, el_playback_mode_e *outMode)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_playback_mode");
-    VALIDATE_OUT_PTR(outMode, "el_animation_get_playback_mode");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outMode);
     *outMode = anim->ptr ? fromPlaybackMode(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
     LOG_D("anim=%p, mode=%d", (void *)anim, (int)*outMode);
     return EL_SUCCESS;
@@ -574,7 +574,7 @@ el_result_e el_animation_get_playback_mode(el_animation_handle_t anim, el_playba
 
 el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playback_mode_e mode)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_playback_mode");
+    VALIDATE_ANIM_PTR(anim);
     auto newVal = toPlaybackMode(mode);
     if (!anim->ptr || anim->ptr->GetPlaybackMode() == newVal)
     {
@@ -589,8 +589,8 @@ el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playba
 
 el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeconds)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_duration");
-    VALIDATE_OUT_PTR(outSeconds, "el_animation_get_duration");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outSeconds);
     *outSeconds = anim->ptr ? anim->ptr->GetDuration() : 0.0f;
     LOG_D("anim=%p, seconds=%f", (void *)anim, *outSeconds);
     return EL_SUCCESS;
@@ -598,9 +598,9 @@ el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeco
 
 el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_duration");
-    REQUIRE_FINITE("el_animation_set_duration", EL_ERROR_INVALID_PARAMETER, seconds);
-    REQUIRE_DURATION("el_animation_set_duration", EL_ERROR_INVALID_PARAMETER, seconds, false);
+    VALIDATE_ANIM_PTR(anim);
+    REQUIRE_FINITE(EL_ERROR_INVALID_PARAMETER, seconds);
+    REQUIRE_DURATION(EL_ERROR_INVALID_PARAMETER, seconds, false);
     // 0 opts a field-bound animation out of the wrap, but a preset builds its
     // modulator from its duration and takes only one above 0, as its factory
     // does: a 0 s cycle wrote NaN into the config on every frame.
@@ -623,8 +623,8 @@ el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
 
 el_result_e el_animation_get_speed(el_animation_handle_t anim, float *outSpeed)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_get_speed");
-    VALIDATE_OUT_PTR(outSpeed, "el_animation_get_speed");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_OUT_PTR(outSpeed);
     *outSpeed = anim->ptr ? anim->ptr->GetSpeed() : 1.0f;
     LOG_D("anim=%p, speed=%f", (void *)anim, *outSpeed);
     return EL_SUCCESS;
@@ -632,8 +632,8 @@ el_result_e el_animation_get_speed(el_animation_handle_t anim, float *outSpeed)
 
 el_result_e el_animation_set_speed(el_animation_handle_t anim, float speed)
 {
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_speed");
-    REQUIRE_FINITE("el_animation_set_speed", EL_ERROR_INVALID_PARAMETER, speed);
+    VALIDATE_ANIM_PTR(anim);
+    REQUIRE_FINITE(EL_ERROR_INVALID_PARAMETER, speed);
     if (!anim->ptr || anim->ptr->GetSpeed() == speed)
     {
         return EL_SUCCESS;
@@ -649,7 +649,7 @@ el_result_e el_animation_set_on_complete_callback(el_animation_handle_t anim,
                                                   el_animation_on_completed_callback callback, void *userData)
 {
     LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_on_complete_callback");
+    VALIDATE_ANIM_PTR(anim);
     if (!anim->ptr)
     {
         return EL_SUCCESS;
@@ -671,7 +671,7 @@ el_result_e el_animation_set_on_state_changed_callback(el_animation_handle_t ani
                                                        void *userData)
 {
     LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
-    VALIDATE_ANIM_PTR(anim, "el_animation_set_on_state_changed_callback");
+    VALIDATE_ANIM_PTR(anim);
     if (!anim->ptr)
     {
         return EL_SUCCESS;
@@ -744,9 +744,9 @@ el_result_e el_animation_add_field(el_animation_handle_t anim,
                                    el_config_field_e field, el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, field=%d, mod=%p", (void *)anim, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_field");
-    VALIDATE_ENUM(el_config_field_e, field, "el_animation_add_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_ENUM(el_config_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -761,10 +761,10 @@ el_result_e el_animation_add_segment_field(el_animation_handle_t anim,
                                            int32_t index, el_segment_field_e field, el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_segment_field");
-    VALIDATE_INDEX(index, "el_animation_add_segment_field");
-    VALIDATE_ENUM(el_segment_field_e, field, "el_animation_add_segment_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_INDEX(index);
+    VALIDATE_ENUM(el_segment_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -780,9 +780,9 @@ el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
                                                      uint32_t id, el_segment_field_e field, el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, id=%u, field=%d, mod=%p", (void *)anim, id, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_field");
-    VALIDATE_ENUM(el_segment_field_e, field, "el_animation_add_preserved_segment_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_ENUM(el_segment_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -798,14 +798,14 @@ el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t 
                                                           el_color_stop_field_e field, el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, id=%u, stopIndex=%d, field=%d, mod=%p", (void *)anim, id, stopIndex, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_stop_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_stop_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
     if (stopIndex < 0)
     {
         LOG_E("el_animation_add_preserved_segment_stop_field: negative stopIndex");
         return EL_ERROR_INVALID_PARAMETER;
     }
-    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_preserved_segment_stop_field");
+    VALIDATE_ENUM(el_color_stop_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -821,10 +821,10 @@ el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
                                        int32_t index, el_arc_field_e field, el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_arc_field");
-    VALIDATE_INDEX(index, "el_animation_add_arc_field");
-    VALIDATE_ENUM(el_arc_field_e, field, "el_animation_add_arc_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_INDEX(index);
+    VALIDATE_ENUM(el_arc_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -841,10 +841,10 @@ el_result_e el_animation_add_spotlight_field(el_animation_handle_t anim,
                                              el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_spotlight_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_spotlight_field");
-    VALIDATE_INDEX(index, "el_animation_add_spotlight_field");
-    VALIDATE_ENUM(el_spotlight_field_e, field, "el_animation_add_spotlight_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_INDEX(index);
+    VALIDATE_ENUM(el_spotlight_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -861,11 +861,11 @@ el_result_e el_animation_add_arc_stop_field(el_animation_handle_t anim,
                                             el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, arcIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, arcIndex, stopIndex, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_stop_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_arc_stop_field");
-    VALIDATE_INDEX(arcIndex, "el_animation_add_arc_stop_field");
-    VALIDATE_INDEX(stopIndex, "el_animation_add_arc_stop_field");
-    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_arc_stop_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_INDEX(arcIndex);
+    VALIDATE_INDEX(stopIndex);
+    VALIDATE_ENUM(el_color_stop_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {
@@ -882,11 +882,11 @@ el_result_e el_animation_add_segment_stop_field(el_animation_handle_t anim,
                                                 el_modulator_handle_t mod)
 {
     LOG_I("anim=%p, segmentIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, segmentIndex, stopIndex, (int)field, (void *)mod);
-    VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_stop_field");
-    VALIDATE_MOD_PTR(mod, "el_animation_add_segment_stop_field");
-    VALIDATE_INDEX(segmentIndex, "el_animation_add_segment_stop_field");
-    VALIDATE_INDEX(stopIndex, "el_animation_add_segment_stop_field");
-    VALIDATE_ENUM(el_color_stop_field_e, field, "el_animation_add_segment_stop_field");
+    VALIDATE_ANIM_PTR(anim);
+    VALIDATE_MOD_PTR(mod);
+    VALIDATE_INDEX(segmentIndex);
+    VALIDATE_INDEX(stopIndex);
+    VALIDATE_ENUM(el_color_stop_field_e, field);
     auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
     if (!fb)
     {

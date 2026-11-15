@@ -1230,7 +1230,7 @@ fragColor = vec4(result, alpha);</code></pre>
 ...
 prevTarget.Restore();                        // before the fill, the blit and the ring</code></pre>
 
-      <p>Restore the framebuffer - and viewport - the renderer was <em>handed</em>, never <code>BindDefault()</code>. During a frame capture the "backbuffer" is a real FBO, so binding the default one sends the composite to the window and the captured image comes back empty.</p>
+      <p>Restore the framebuffer - and viewport - the renderer was <em>handed</em>, never framebuffer 0. During a frame capture the "backbuffer" is a real FBO, so binding the default one sends the composite to the window and the captured image comes back empty.</p>
     </section>
 
     <!-- ============================================================ -->

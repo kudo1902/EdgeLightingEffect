@@ -1,5 +1,6 @@
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
+#include "core/config-validation.h"
 #include "core/format-availability.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/droplets-renderer.h"
@@ -25,7 +26,7 @@ namespace EdgeLighting
 
     bool EdgeLightingEffect::Initialize()
     {
-        GLUtils::LogExtensions();
+        GLUtils::LogRendererInfo();
         GLUtils::LogCaps();
         // Before any renderer's Initialize, so the report's probes are the
         // effect's: every format walk then finds its answer kept.
@@ -53,11 +54,9 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
-        // The frame delta itself, not the clock's: an out-of-memory failure
-        // expires in real time, and a paused clock must not keep it.
-        mFormatAvailability->Advance(deltaTime);
         mAnimationManager->Update(mClock.Update(deltaTime));
         refreshActiveConfig();
+        notifyRenderers();
 
         const double time = mClock.GetTime();
         for (auto &renderer : mRenderers)
@@ -68,6 +67,10 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
+        // A SetConfig with no Update after it: the renderers hear of it here,
+        // before they draw. Nothing on a frame Update already notified.
+        notifyRenderers();
+
         const double t = mClock.GetTime();
         // Two phases: every layer's offscreen work first, then every layer's
         // composite. A layer that reads another's shared image (SharedBufferRegistry)
@@ -91,6 +94,12 @@ namespace EdgeLighting
             return;
         }
         mBaseConfig = config;
+        // Copy-assigned, so its vectors keep their capacity: no allocation on
+        // a SetConfig that does not grow one.
+        mSanitizedBase = config;
+        ConfigValidation::Sanitize(mSanitizedBase);
+        // CPU only: the composite follows at once (GetActiveConfig), the
+        // renderers hear of it at the next Update or Render (notifyRenderers).
         refreshActiveConfig();
     }
 
@@ -330,11 +339,13 @@ namespace EdgeLighting
     {
         if (mAnimationManager->GetCount() == 0)
         {
-            if (mActiveConfig == mBaseConfig)
+            // The sanitised base (SetConfig keeps it), so a base with a value
+            // out of range does not read as a change on every frame.
+            if (mActiveConfig == mSanitizedBase)
             {
                 return;
             }
-            mActiveConfig = mBaseConfig;
+            mActiveConfig = mSanitizedBase;
         }
         else
         {
@@ -344,6 +355,11 @@ namespace EdgeLighting
             // mScratchConfig for the measurements behind that.
             mScratchConfig = mBaseConfig;
             mAnimationManager->Apply(mScratchConfig);
+            // After the overlays: an animation writes what it likes - a Remap
+            // past a float's range, a NaN - and no C ABI check stands in its
+            // way. Before the comparison, so a NaN cannot read as a change on
+            // every frame.
+            ConfigValidation::Sanitize(mScratchConfig);
             if (mScratchConfig == mActiveConfig)
             {
                 return;
@@ -357,6 +373,16 @@ namespace EdgeLighting
             std::swap(mActiveConfig, mScratchConfig);
         }
 
+        mRenderersStale = true;
+    }
+
+    void EdgeLightingEffect::notifyRenderers()
+    {
+        if (!mRenderersStale)
+        {
+            return;
+        }
+        mRenderersStale = false;
         for (auto &renderer : mRenderers)
         {
             renderer->OnConfigChanged(mActiveConfig);

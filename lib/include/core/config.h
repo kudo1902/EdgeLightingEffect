@@ -1196,12 +1196,13 @@ namespace EdgeLighting
         ///
         /// But this layer does NOT shade the whole viewport: its strips are
         /// bounded to what each lamp lights, so a scale that quarters them
-        /// still pays a full viewport of blit fragments. Measured at
-        /// 1280x720, that only wins once the strips exceed about 4/3 of the
-        /// viewport - roughly six lamps at default settings, or fewer with a
-        /// large @c SpotLight::bloomRadius. Below that it costs more than it
-        /// saves, which is why the default is 1.0 and why this is a knob
-        /// rather than a policy. See docs/design/spotlight-renderer-plan.md.
+        /// still pays a full viewport of blit fragments. Measured in frame
+        /// time (Apple M2 Pro), it costs more than it saves below about six
+        /// lamps (17x on one lamp at 4K) and wins above - sooner with a large
+        /// @c SpotLight::bloomRadius, 0.4x at 0.5 on eight wide, bloomed
+        /// lamps - which is why the default is 1.0 and why this is a knob
+        /// rather than a policy. It also holds a buffer (4 MB at 1080p and
+        /// 0.5). See docs/guides/spotlight-renderer.md section 6.
         ///
         /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
         /// supersampled: the point of the knob is to shade FEWER fragments.

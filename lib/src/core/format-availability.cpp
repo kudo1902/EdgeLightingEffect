@@ -4,10 +4,8 @@
 #include "util/log-util.h"
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 #include <string>
 
 namespace EdgeLighting
@@ -162,8 +160,7 @@ namespace EdgeLighting
         {
             return false;
         }
-        const int64_t texels = static_cast<int64_t>(width) * height * attachments;
-        size_t index = firstToTry(formats, 0, width, height, attachments, target);
+        size_t index = firstToTry(formats, 0, attachments, target);
         while (index < formats.count)
         {
             const TextureFormat &candidate = formats.formats[index];
@@ -174,7 +171,7 @@ namespace EdgeLighting
             // buffer held and reporting the hook's cause - a verification run
             // of this very fallback. Never a buffer that already holds the
             // row: Resize would not allocate.
-            const bool forced = !held && takeForcedFailure(candidate.internalFormat, texels, attachments);
+            const bool forced = !held && isForcedFailure(candidate.internalFormat, attachments);
             GLenum failure = GL_NO_ERROR;
             if (forced)
             {
@@ -184,23 +181,19 @@ namespace EdgeLighting
             else if (buffer.Resize(width, height, candidate.internalFormat, candidate.format, candidate.type, filter,
                                    attachments, &failure))
             {
-                if (!held)
-                {
-                    recordAllocation(candidate.internalFormat, width, height, attachments, target, candidate.name);
-                }
                 return true;
             }
-            recordFailedAllocation(candidate.internalFormat, width, height, attachments, failure);
+            recordFailedAllocation(candidate.internalFormat, attachments);
             // The line below says it; no skip line for it later.
             recordSkip(target, candidate.name);
-            const size_t next = firstToTry(formats, index + 1, width, height, attachments, target);
+            const size_t next = firstToTry(formats, index + 1, attachments, target);
             logFallback(target, candidate.name, next < formats.count ? formats.formats[next].name : nullptr, width,
                         height, attachments, failure, forced, fallbackCost);
             index = next;
         }
         // Nothing allocated - and when no row could even be tried, the buffer
-        // still holds an earlier, smaller allocation nobody may draw into
-        // again at this size. Give it back, as a failed Resize would have.
+        // still holds an earlier allocation nobody may draw into again. Give
+        // it back, as a failed Resize would have.
         buffer.Release();
         return false;
     }
@@ -242,27 +235,7 @@ namespace EdgeLighting
         return true;
     }
 
-    bool FormatAvailability::isBelowBestRow(const Framebuffer &buffer, const FormatList &formats)
-    {
-        // Free while the buffer holds its first row - the case every frame
-        // takes once nothing has failed.
-        if (!buffer.IsValid() || formats.count == 0 || buffer.GetInternalFormat() == formats.formats[0].internalFormat)
-        {
-            return false;
-        }
-        for (size_t held = 1; held < formats.count; ++held)
-        {
-            if (formats.formats[held].internalFormat == buffer.GetInternalFormat())
-            {
-                return getBestRow(FormatList(formats.formats, held), buffer.GetWidth(), buffer.GetHeight(),
-                                  buffer.GetAttachmentCount()) < held;
-            }
-        }
-        return false;
-    }
-
-    size_t FormatAvailability::firstToTry(const FormatList &formats, size_t from, int width, int height,
-                                          int attachments, const char *target)
+    size_t FormatAvailability::firstToTry(const FormatList &formats, size_t from, int attachments, const char *target)
     {
         for (size_t index = from; index < formats.count; ++index)
         {
@@ -274,10 +247,10 @@ namespace EdgeLighting
                 logSkipped(target, candidate.name, nextFormat, answer);
                 continue;
             }
-            const char *failed = failedReason(candidate.internalFormat, width, height, attachments);
+            const char *failed = failedReason(candidate.internalFormat, attachments);
             if (failed)
             {
-                logSkippedAfterFailure(target, candidate.name, nextFormat, width, height, attachments, failed);
+                logSkippedAfterFailure(target, candidate.name, nextFormat, attachments, failed);
                 continue;
             }
             return index;
@@ -298,136 +271,36 @@ namespace EdgeLighting
         return formats.count;
     }
 
-    const char *FormatAvailability::failedReason(GLint internalFormat, int width, int height, int attachments) const
+    const char *FormatAvailability::failedReason(GLint internalFormat, int attachments) const
     {
-        const int64_t perAttachment = static_cast<int64_t>(width) * height;
         for (const FailedAllocation &failed : mFailedAllocations)
         {
-            if (failed.internalFormat != internalFormat)
+            if (failed.internalFormat == internalFormat && attachments >= failed.attachments)
             {
-                continue;
-            }
-            // Memory runs out by bytes: any allocation at least as large in
-            // total repeats it, whatever its shape or attachment count - until
-            // the failure expires, memory being something a GL gets back.
-            if (failed.outOfMemory && mTime < failed.retryAt && perAttachment * attachments >= failed.texels)
-            {
-                return "an allocation of it that large ran out of memory here, too recently to try again";
-            }
-            // Anything else said something about this format at that many
-            // attachments, whatever the size: as many or more fail too.
-            if (!failed.outOfMemory && attachments >= failed.attachments)
-            {
-                return "an allocation of it with that many attachments already failed here, for a reason other than "
-                       "memory - at any size";
+                return "an allocation of it with that many attachments already failed here";
             }
         }
         return nullptr;
     }
 
-    void FormatAvailability::recordFailedAllocation(GLint internalFormat, int width, int height, int attachments,
-                                                    GLenum failure)
+    void FormatAvailability::recordFailedAllocation(GLint internalFormat, int attachments)
     {
-        // Memory by its total size; anything else by its attachment count
-        // alone - size is not what failed it, the texture size limit being
-        // checked before any row is tried.
-        const bool outOfMemory = failure == GL_OUT_OF_MEMORY;
-        const int keyAttachments = outOfMemory ? 0 : attachments;
-        const int64_t texels = outOfMemory ? static_cast<int64_t>(width) * height * attachments : 0;
         for (FailedAllocation &failed : mFailedAllocations)
         {
-            if (failed.internalFormat != internalFormat || failed.outOfMemory != outOfMemory)
+            if (failed.internalFormat == internalFormat)
             {
-                continue;
-            }
-            if (!outOfMemory)
-            {
-                failed.attachments = std::min(failed.attachments, keyAttachments);
+                failed.attachments = std::min(failed.attachments, attachments);
                 return;
             }
-            if (mTime < failed.retryAt)
-            {
-                // Still armed, so this allocation was smaller than the one
-                // that failed: memory is tighter than that said. Kept at the
-                // smaller size, the wait started again but not lengthened -
-                // one shortage, not a retry.
-                failed.texels = std::min(failed.texels, texels);
-                failed.retryAt = mTime + failed.wait;
-                return;
-            }
-            // Expired and run out again: a retry that failed. Armed afresh at
-            // this size - what failed before is older news - for twice the
-            // wait, so a shortage that holds costs fewer and fewer tries.
-            const double longest = std::max(OUT_OF_MEMORY_RETRY_MAX_SECONDS, mOutOfMemoryRetrySeconds);
-            failed.texels = texels;
-            failed.wait = std::min(failed.wait * 2.0, longest);
-            failed.retryAt = mTime + failed.wait;
-            return;
         }
-        FailedAllocation added{internalFormat, outOfMemory, keyAttachments, texels,
-                               std::numeric_limits<double>::infinity(), 0.0};
-        if (outOfMemory)
-        {
-            added.wait = mOutOfMemoryRetrySeconds;
-            added.retryAt = mTime + added.wait;
-        }
-        mFailedAllocations.push_back(added);
+        mFailedAllocations.push_back(FailedAllocation{internalFormat, attachments});
     }
 
-    void FormatAvailability::recordAllocation(GLint internalFormat, int width, int height, int attachments,
-                                              const char *target, const char *format)
-    {
-        // An expired out-of-memory failure this allocation is as large as:
-        // the memory is back. Cleared, so the next shortage waits the first
-        // wait again. A smaller one says nothing about the size that failed.
-        const int64_t texels = static_cast<int64_t>(width) * height * attachments;
-        const auto recovered = std::find_if(mFailedAllocations.begin(), mFailedAllocations.end(),
-                                            [&](const FailedAllocation &failed)
-                                            {
-                                                return failed.internalFormat == internalFormat && failed.outOfMemory &&
-                                                       texels >= failed.texels;
-                                            });
-        if (recovered == mFailedAllocations.end())
-        {
-            return;
-        }
-        LOG_I("%s: target allocated in %s at %d x %d x %d - the out-of-memory failure kept against %s (from %lld "
-              "texels) has passed.",
-              target, format, width, height, attachments, format, static_cast<long long>(recovered->texels));
-        mFailedAllocations.erase(recovered);
-        // And the skips past this format that shortage logged, every walk's: the
-        // next shortage is news, and each walk it sends down gets its line
-        // again. Not on any other allocation - a skip for a refusal, or a
-        // failure that does not expire, is said once.
-        mLoggedSkips.erase(std::remove_if(mLoggedSkips.begin(), mLoggedSkips.end(),
-                                          [format](const LoggedSkip &logged)
-                                          { return logged.format == format; }),
-                           mLoggedSkips.end());
-    }
-
-    bool FormatAvailability::takeForcedFailure(GLint internalFormat, int64_t texels, int attachments)
+    bool FormatAvailability::isForcedFailure(GLint internalFormat, int attachments) const
     {
         const ForcedFailure &forced = mForcedFailure;
-        const bool selected =
-            texels >= forced.fromTexels && attachments >= forced.fromAttachments &&
-            (forced.count <= 0 || mForcedFailuresTaken < forced.count) &&
-            std::find(forced.formats.begin(), forced.formats.end(), internalFormat) != forced.formats.end();
-        if (selected)
-        {
-            ++mForcedFailuresTaken;
-        }
-        return selected;
-    }
-
-    void FormatAvailability::Advance(double seconds)
-    {
-        // A negative step counts as 0, and so does one that is not finite:
-        // NaN or infinity would hold mTime there for good, every out-of-memory
-        // failure reading as expired - a failed allocation every frame.
-        if (std::isfinite(seconds) && seconds > 0.0)
-        {
-            mTime += seconds;
-        }
+        return attachments >= forced.fromAttachments &&
+               std::find(forced.formats.begin(), forced.formats.end(), internalFormat) != forced.formats.end();
     }
 
     int FormatAvailability::GetMaxTextureSize() const
@@ -562,7 +435,7 @@ namespace EdgeLighting
     }
 
     void FormatAvailability::logSkippedAfterFailure(const char *target, const char *format, const char *nextFormat,
-                                                    int width, int height, int attachments, const char *reason)
+                                                    int attachments, const char *reason)
     {
         if (!recordSkip(target, format))
         {
@@ -570,13 +443,13 @@ namespace EdgeLighting
         }
         if (nextFormat)
         {
-            LOG_W("%s: %s skipped at %d x %d x %d - %s; using %s.", target, format, width, height, attachments,
-                  reason, nextFormat);
+            LOG_W("%s: %s skipped with %d attachment(s) - %s; using %s.", target, format, attachments, reason,
+                  nextFormat);
         }
         else
         {
-            LOG_W("%s: %s, the last in its list, skipped at %d x %d x %d - %s.", target, format, width, height,
-                  attachments, reason);
+            LOG_W("%s: %s, the last in its list, skipped with %d attachment(s) - %s.", target, format, attachments,
+                  reason);
         }
     }
 

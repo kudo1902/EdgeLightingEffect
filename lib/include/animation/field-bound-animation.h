@@ -383,69 +383,6 @@ namespace EdgeLighting
             mSpotlightBindings.push_back({index, field, std::move(modulator)});
         }
 
-        // --- Introspection -----------------------------------------------
-
-        /// @brief Read-only view of the scalar-field bindings.
-        const std::vector<ScalarBinding> &GetScalarBindings() const { return mScalarBindings; }
-
-        /// @brief Read-only view of the segment-field bindings.
-        const std::vector<SegmentBinding> &GetSegmentBindings() const { return mSegmentBindings; }
-
-        /// @brief Read-only view of the preserved-segment-field bindings.
-        const std::vector<PreservedSegmentBinding> &GetPreservedSegmentBindings() const
-        {
-            return mPreservedSegmentBindings;
-        }
-
-        /// @brief Read-only view of the preserved-segment-stop-field bindings.
-        const std::vector<PreservedSegmentStopBinding> &GetPreservedSegmentStopBindings() const
-        {
-            return mPreservedSegmentStopBindings;
-        }
-
-        /// @brief Read-only view of the segment-stop-field bindings.
-        const std::vector<SegmentStopBinding> &GetSegmentStopBindings() const
-        {
-            return mSegmentStopBindings;
-        }
-
-        /// @brief Read-only view of the arc-field bindings.
-        const std::vector<ArcBinding> &GetArcBindings() const { return mArcBindings; }
-
-        /// @brief Read-only view of the arc-stop-field bindings.
-        const std::vector<ArcStopBinding> &GetArcStopBindings() const
-        {
-            return mArcStopBindings;
-        }
-
-        /// @brief Read-only view of the spotlight-field bindings.
-        const std::vector<SpotlightBinding> &GetSpotlightBindings() const
-        {
-            return mSpotlightBindings;
-        }
-
-        /// @brief Total number of bindings across every kind.
-        size_t GetBindingCount() const
-        {
-            return mScalarBindings.size() + mSegmentBindings.size() +
-                   mPreservedSegmentBindings.size() + mPreservedSegmentStopBindings.size() +
-                   mSegmentStopBindings.size() + mArcBindings.size() +
-                   mArcStopBindings.size() + mSpotlightBindings.size();
-        }
-
-        /// @brief Drop every binding (leaves state / duration alone).
-        void ClearBindings()
-        {
-            mScalarBindings.clear();
-            mSegmentBindings.clear();
-            mPreservedSegmentBindings.clear();
-            mPreservedSegmentStopBindings.clear();
-            mSegmentStopBindings.clear();
-            mArcBindings.clear();
-            mArcStopBindings.clear();
-            mSpotlightBindings.clear();
-        }
-
         // --- Drive -------------------------------------------------------
 
         /// @brief Evaluate every binding at @p elapsed and write into @p cfg.

@@ -60,6 +60,7 @@ add_executable(neon-scale-check
     src/partition.cpp
     src/shared-buffer.cpp
     src/clock-check.cpp
+    src/fuzz.cpp
     ../common/pass-recorder.cpp
     ../common/draw-target-watch.cpp
 )

@@ -5,6 +5,313 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-11-14 (last) - `neon-scale-check fuzz`: a differential gate over random configs
+
+Not committed; on top of the entries below, which it checks.
+
+- **Why.** Every gate drew fixed scenes or checked one mechanism; nothing
+  compared two builds over the config space and the ways a host moves through
+  it. Validating the uncommitted work against `d6904ea` needed a scratch
+  fuzzer, so it is now a mode of the tool.
+- **What.** `fuzz` (`tools/neon-scale-check/src/fuzz.{h,cpp}`): seeded random
+  values for every `NeonConfig` field, the geometry, six viewports and the
+  background, drawn by the neon and the debug layer (its shared-buffer inset
+  on in about a third) as 600 unrelated configs on one effect, 120 fresh
+  effects, eight runs of 150 frames of small changes and 50 configs under
+  presets - 3,740 frames a seed, each hashed. `--write` from one build,
+  `--against` from the other, which fails on any frame that differs and writes
+  it with `--dump`; any GL error fails it too. Its random sequence is its own
+  (xorshift), so a seed draws the same configs everywhere.
+- **Verified.** Against `d6904ea` (the tool built standalone against it): seeds
+  1 to 7 byte-identical (re-run 2026-11-15, Release against Release; a Debug
+  build against the Release one moved 35 of seed 4's frames by 1 level from CPU
+  rounding alone, so compare within one build type), no GL error. Every gate
+  and a fuzz seed also pass under ASan and UBSan with no report. Against a hash file with one hash altered
+  and one key dropped it fails, names both and dumps the frame. The scratch
+  version before it (no base gradient stops) gave seeds 1 to 6, 22,440 frames,
+  byte-identical. An A/B probe of the other layers, the presets and `SetConfig`
+  sequences found one change, in set-and-set-back sequences - see
+  [`change-summary-2026-11-14.md`](change-summary-2026-11-14.md) section 7.
+
+## 2026-11-14 (after the architecture review) - `SetConfig` no longer calls the renderers
+
+Not committed; on top of the entries below. The owner's pick from an
+architecture review of the same day (24 issues; its list is not recorded as
+items here).
+
+- **Why.** `SetConfig` notified every renderer before it returned, and each
+  `OnConfigChanged` rebuilds on the spot - LUT bakes, uniform blocks, vertex
+  buffers, buffer releases. So setting a config was GL work wherever the host
+  happened to be, and N calls in a frame were N rebuilds.
+- **Now.** `SetConfig` writes the base and recomposes the active config
+  (`refreshActiveConfig`, CPU only, so `GetActiveConfig` still follows at
+  once) and sets `mRenderersStale`. `notifyRenderers` hands the active config
+  to every renderer from `Update`, and from `Render` when no `Update` came
+  first: once, however many `SetConfig` calls came between. A change set and
+  set back before then may notify once with an equal config, which every
+  renderer already tolerates (it is notified of other layers' changes too).
+- **Not changed.** `AddRenderer` still hands a new renderer the current config
+  at once, before `Initialize` included, and the C ABI already deferred
+  (staging reaches the effect in `el_effect_update`). `Update` and `Render`
+  need the GL context as before.
+- **Verified.** A GL-free probe with a counting `CUSTOM` renderer: three
+  `SetConfig` calls notify nothing, `Update` notifies once with the last
+  config, `Render` with no `Update` notifies first, an equal `SetConfig`
+  notifies nothing (8 checks). The page and `cover` sets and the guide figures
+  byte-identical (582 images); all seven gates pass; Release and Debug build.
+  `upgrade-notes.md` section 13 says what a host's own renderer sees.
+
+## 2026-11-14 (last) - The spotlight's resolution scale is back
+
+Not committed; reverses the 2026-11-14 entry below of that name, on the
+owner's call, and keeps the final-failure rule above it.
+
+- **Why.** The removal claimed the scaled path never pays, on the spotlight
+  plan's occlusion-query fragment counts (one lamp 5.3x at 0.5). A blit
+  fragment is one fetch and a dither against a lamp fragment's falloff, bloom
+  window and colour, so the counts say little about a large rig. Measured in
+  wall-clock frame time (the layer alone, 300 `Render`s then one `glFinish`,
+  median of seven rounds, no query in the loop; Apple M2 Pro, Release; lamps
+  scaled with the frame), 0.5 against 1.0 at 720p / 1080p / 4K: one lamp
+  5.24x / 6.28x / 17.1x slower, three lamps 3.23x / 1.98x / 3.62x, five lamps
+  1.28x / 0.93x / 1.19x (break-even), eight lamps 0.66x / 0.60x / 0.72x,
+  eight wide lamps with bloom radius 60 0.40x / 0.34x / 0.41x (0.22x / 0.14x
+  / 0.19x at 0.25, 3.03 -> 0.58 ms at 4K). So the plan's own crossover -
+  about six lamps - holds, and above it the path is worth 1.4x to 7x. A first
+  pass with `GL_TIME_ELAPSED` queries read flatter (five lamps 0.82-0.90x)
+  and was replaced by these. It saves shading, not memory: the buffer is
+  1.8 / 4.0 / 15.8 MB at 0.5. Unmeasured on the AMD 5300M and on the device.
+- **Restored.** `SpotlightConfig::resolutionScale` (default 1.0, held at 1.0
+  under a clipped lamp), `RenderOffscreen`, the scaled buffer and its blit,
+  `spotlight-blit.frag`, `spotlight-dither.glsl`, the two C exports (out of
+  `el-deprecated.h` again), both demos' slider and hints, the gate's
+  spotlight cells (C and D5 count it again: 2 fallbacks, 3 size-limit
+  refusals). Its `Update` no longer advances a format clock; its fallback
+  comments follow the final-failure rule. Every comment and doc that gave the
+  fragment counts as a cost now gives the frame times
+  (`spotlight-renderer.md` section 6).
+- **Verified.** Five spotlight scenes at 1.0 and 0.5 over two clears (twenty
+  frames)
+  byte-identical to the build before the removal; the page and `cover` sets
+  and the guide figures byte-identical (582 images); all seven gates pass;
+  Release builds. `upgrade-notes.md` loses its section 12 (the removal); the
+  final-failure section is 12 now.
+
+## 2026-11-14 (later) - A failed allocation is final, out of memory included
+
+Not committed; on top of the entry below. The owner's call on the
+simplification review's second pass ("format retry machinery").
+
+- **Why.** An out-of-memory failure used to expire after 2 s of frame time
+  (doubling to 512 s), and every renderer then moved each buffer back up its
+  format list once a frame. That took frame time fed through
+  `EdgeLightingEffect::Update` (and `AdvanceOwnFormatAvailability` outside an
+  effect), a refresh list in each renderer, a check that a hue-invariant
+  field was not composited after one of its inputs moved rows, and five
+  `formats` cases to prove all of it - for a shortage neither Mac reaches.
+- **The rule now.** A full-size allocation that fails, for any reason, holds
+  that format at that attachment count and above, at every size, for the
+  effect's life. A buffer that fell back stays where it landed; recreating the
+  effect is the way back. Caches still key on a buffer's generation, which
+  every allocation and every loss moves (V37 stays fixed).
+  The failure reaches every buffer of that format, held or not: forced on
+  the flare's RGBA16F buffer mid-run, the neon's shared and gather buffers
+  went to RGBA8 on their next write, 3 levels from a run with no failure; a
+  field baked before it stayed within its usual 1 level of direct shading.
+- **Decided.** Shown that cost (one failure, any buffer, puts every buffer
+  of the format on its next row until the effect is recreated), the owner
+  kept the rule rather than bring the retry back. Not open. Whether the
+  Tizen device ever fails a full-size allocation is still unmeasured.
+- **Removed.** `FormatAvailability::Advance` / `GetTime` /
+  `SetOutOfMemoryRetry`, `OUT_OF_MEMORY_RETRY_SECONDS` / `_MAX_SECONDS`,
+  `isBelowBestRow`, the size-keyed out-of-memory record,
+  `ForcedFailure::fromTexels` / `count`; `AdaptiveFormatTarget::Refresh`,
+  `SharedBuffer::Refresh`; `BaseRenderer::AdvanceOwnFormatAvailability`;
+  `NeonRenderer::refreshTargets`, `FieldInputFormats`,
+  `LazyBake::DropIfInputsMoved`; the flare's per-frame refresh.
+  `format-availability.{h,cpp}` 1,258 -> 1,010 lines,
+  `adaptive-format-target.{h,cpp}` 228 -> 180. Gate cases D2, D3, D7 and D8
+  (with the failed-retry, V37 and doubling-wait checks) are gone; D5 keeps
+  their cells as its own (`MakeSizeLimitCells`). The `formats` gate's five
+  files are 1,450 lines against 2,177 at the last commit, and it runs in
+  ~5 s rather than ~70.
+- **Verified.** The page and `cover` sets and the guide figures
+  byte-identical (582 images); all seven gates pass; library, C ABI, both
+  demos and the tools build in Release. `upgrade-notes.md` section 12 says
+  what a host sees.
+
+## 2026-11-14 - The spotlight draws at full resolution only
+
+Not committed; on top of the entries below. The owner's call on the
+simplification review's second pass.
+
+- **Why.** The layer already bounds its geometry to what the lamps light, so
+  its reduced-resolution path paid a full viewport of blit fragments: one lamp
+  at 0.5 cost 5.3x its 1.0 frame and only an eight-lamp rig came out ahead
+  (1.36x). The default was 1.0, and any clipped lamp forced 1.0 anyway.
+- **Removed.** `SpotlightConfig::resolutionScale` (and its `operator==` term
+  and `ConfigValidation` line); `SpotlightRenderer::RenderOffscreen`, its
+  `FrameState`, scaled buffer, blit program and quad, the fall-back logging,
+  `HasClippedLamp` / `GetClampedSpotScale` / `UsesScaledBuffer` and the
+  clip-pin log; `spotlight-blit.frag`; the `uDither` uniform; the
+  `spotlight-dither.glsl` chunk, inlined into `spotlight.frag`, its only user;
+  both demos' scale slider and hints. `spotlight-renderer.cpp` 1,373 -> 942
+  lines, its header 296 -> 195. The spotlight no longer touches `FormatAvailability`.
+- **C ABI.** `el_effect_set_spotlight_resolution_scale` /
+  `el_effect_get_spotlight_resolution_scale` moved to `el-deprecated.h`: the
+  setter still refuses a null handle and a non-finite value and otherwise
+  does nothing, the getter returns 1.0. 264 exports, as before.
+- **Gate.** `formats` loses the spotlight's scaled cells: one spotlight cell
+  stays, for case S; D2, D3, D5, C and D8 count the flare alone (D5's
+  size-limit refusals 3 -> 2).
+- **Verified.** Five spotlight scenes (one lamp, three lamps, clipped
+  `KEEP_INSIDE`, `KEEP_OUTSIDE` with a large bloom, eight lamps) over a
+  transparent and an opaque clear, rendered by a scratch build of the tree
+  before the change and by this one: all 10 frames byte-identical. The page
+  and `cover` sets and the guide figures byte-identical (582 images); all
+  seven gates pass; Release and Debug build; the C shims checked from C.
+
+## 2026-11-13 (later) - Dead public C++ API removed
+
+Not committed; on top of the entries below. The review's list of symbols with
+no caller in the library, the C ABI, the demos or the tools. No pixel moved.
+
+- **Removed.** `GLUtils::CheckExtension`, `CheckGLError` / `GL_CHECK_ERROR`
+  and `LogExtensions`; `Framebuffer::BindDefault` (the docs already said never
+  to use it); `Texture2D::SetDataFromFile`, which was the library's only
+  `stbi_load` call in a header; the presets `GlowRadiusCurve`,
+  `BloomStrengthCurve` and `HueRotationRateCurve` (`IntensityCurve`, which the
+  C ABI uses, stays); `FieldBoundAnimation`'s eight binding getters,
+  `GetBindingCount` and `ClearBindings`. `Texture`, whose only subclass was
+  `Texture2D`, is folded into it: `gl/texture.h` is gone and a LUT no longer
+  carries a vptr.
+- **Changed.** `EdgeLightingEffect::Initialize` logs the GL vendor, renderer,
+  version and extension count (`GLUtils::LogRendererInfo`, which nothing
+  called) instead of one INFO line per extension; the format report still
+  names the four extensions that matter.
+- **Kept on purpose.** `NoCullScope` and `CompositeStateScope` have no caller
+  either, but `CLAUDE.md` keeps them for a host that wants them.
+- **For a C++ host.** Anything above that a host called no longer compiles;
+  the C ABI is unchanged (264 exports).
+- **Verified.** Release and Debug build; 582 images byte-identical; all seven
+  gates pass.
+
+## 2026-11-13 - Shader comments stripped at configure time (I84)
+
+Not committed; on top of the 2026-11-12 batch below. From the second pass of
+the simplification review.
+
+- **What changed.** `lib/CMakeLists.txt` kept two hand-written lists of the
+  same 35 files (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`). One list,
+  `EDGE_LIGHTING_SHADER_TEXTS` (`VARIABLE file` pairs), and one loop now read
+  each text, strip its `//` comments - keeping every newline, so a compile
+  error's line number still points into the file - and register the
+  dependency. Adding a shader is two places, not three. The strip is plain
+  text: no injected file may hold a string literal or a `/* */` comment, and
+  none does.
+- **Measured** (Release). `shaders.h` 936 -> 162 KB; each literal is the old
+  one with its comments removed and the same line count. The C ABI dylib
+  2.15 -> 1.38 MB (`__cstring` 1.05 -> 0.28 MB), the static library
+  1.98 -> 1.20 MB. Program compile time not measured.
+- **Verified.** The page set, the `cover` set and the guide figures
+  byte-identical (582 images); all seven gates pass; Debug builds.
+- **Open.** The largest literal is still 34.7 KB, so MSVC's 16 KB limit
+  (C2026) is not cleared - that needs blank lines stripped too, which moves
+  error line numbers, or literals split.
+
+## 2026-11-12 - History out of the neon's comments; the C ABI names itself
+
+Not committed; on top of the 2026-11-09 work below, which shares files with it
+(`neon-renderer.cpp`, `CLAUDE.md`). From a simplification review of the whole
+tree on 2026-11-10; this is its batch that moves no pixel and needs no product
+decision. No pixel moved.
+
+- **What changed.**
+  - 21 comment blocks in `neon-renderer.cpp` and `neon-renderer.h` cut down
+    to their invariant; the measurements and history they carried moved
+    verbatim to [`neon-renderer-notes.md`](../design/neon-renderer-notes.md),
+    the precedent being `neon-frag-notes.md`. `neon-renderer.cpp` 5,116 ->
+    4,955 lines.
+  - The C ABI's validation macros (`VALIDATE_*`, `REQUIRE_FINITE`,
+    `REQUIRE_DURATION`) take the entry point's name from `__func__`, and the
+    four helpers that log under it are passed `__func__`: 538 name literals
+    gone, none of which differed from its function, so every log line reads as
+    before.
+  - Removed, no caller: `ShaderProgram`'s four array `SetUniform` overloads
+    and `UNIFORM_ARRAY_DIRECT`; `renderEmissionPass`'s two unused viewport
+    parameters. `FieldBoundAnimation`'s parallel write and read switches over
+    `AnimatableField` are one (`scalarSlot`).
+  - Tried and dropped: splitting `neon-renderer.cpp` into four files by role
+    with three internal headers. Byte-identical, but it added seven files and
+    their scaffolding and removed no concept - reorganisation, not
+    simplification - so the file is one again.
+- **Verified** (Apple M2 Pro, Release). The page set (210 images), the `cover`
+  set (306) and the guide figures (66) byte-identical to the build before the
+  batch; `check`, `partition`, `shared-buffer`, `clock`, `flare-reuse`,
+  `sequence` and `formats` pass. A C smoke test of each validation macro reads
+  the old messages; a dump of `FieldBoundAnimation` over every field, applied
+  and restored, is identical. Not run: the demos by hand, the AMD 5300M.
+- **Open.** The comment move covered the largest history blocks only: the
+  neon sources are still about half comment. The review's other findings -
+  the format retry machinery, one demo UI instead of two, the coverage
+  table's per-piece masks, the animation presets, the shared buffer's lack of
+  a reader, the deprecated C shims, the dead public API - wait on decisions.
+
+## 2026-11-09 - One validation layer for the config; four hangs and UB closed (I105-I108, V38)
+
+Not committed; on top of `d6904ea`. From the design-and-implementation review
+the same day, whose config fuzzer (random finite values, every layer, ASan +
+recoverable UBSan) hung the CPU, hung the GPU and hit UB within a few hundred
+frames; after this change four seeds of 1,500 frames each run clean.
+
+- **The cause they share.** Ranges lived in prose and in each renderer's own
+  clamps. The C ABI refuses only NaN and infinity, and an animation's overlay
+  reaches the config without even that. So finite but absurd values went
+  straight to the arithmetic:
+  - **I105** - a spotlight throw of 1e10 px: `SolveConeReach`'s 1 px
+    bisection could not finish once its ends were adjacent floats, and
+    `SetConfig` / `el_effect_update` never returned (both APIs reproduced).
+  - **V38** - a negative width outweighing the height: a negative perimeter,
+    every perimeter-relative uniform of the glow coverage bake the wrong sign,
+    and with segments on a GPU hang on every frame that baked (macOS "Caused
+    GPU Hang Error", any viewport size).
+  - **I106** - `GetSubWindow` converting an out-of-range texel index to int
+    before clamping it (UBSan, a 1e10 px rect).
+  - **I107** - the same unmeetable tolerance in `GetGlowInnerReach` and
+    `GetCornerSkip` past ~4e6 px; the fuzzer's first CPU hang sat there.
+  - **I108** - `RgbToHsl` dividing by zero for channels past 1, NaN reaching
+    `ToByte` (UB).
+- **What changed.**
+  - `ConfigValidation` (`core/config-validation.{h,cpp}`): `Sanitize` holds
+    every field to its range - lengths and positions to +/-1e5 px
+    (`MAX_EXTENT_PX`), a rect's sides to 0 or more, every other float to
+    +/-1e6 (`MAX_MAGNITUDE`), the gradient ring to 2048 texels - and maps NaN
+    to 0, since a NaN never equals itself and defeats every change test.
+    `EdgeLightingEffect` applies it to the composited config, after the
+    animation overlays, so both ways a value gets in are covered; it keeps a
+    sanitised copy of the base, refreshed by `SetConfig` alone, so a frame
+    with no animation still compares without copying and the per-frame path
+    still allocates nothing. `GetConfig` returns the base as set; the C ABI's
+    setters and getters are unchanged.
+  - Local guards, for a renderer driven without the effect: every float
+    bisection stops when its midpoint makes no progress (`BisectionStalled`;
+    the spotlight's inline), keeping the side that satisfies its bound;
+    `GetSubWindow` clamps as floats and then converts; `NeonRenderer` draws
+    no glow for a rect with a negative side; `RgbToHsl` divides by
+    max(denominator, chroma), which is the denominator itself for channels in
+    [0, 1]; `ToByte` maps NaN to 0.
+- **Verified.** Every reproduction now returns or draws - the lamp through
+  the effect, through the C ABI and on a bare `SpotlightRenderer`; the
+  GPU-hang config through the effect and a negative rect on a bare
+  `NeonRenderer`, with no GPU error. The fuzzer: four seeds, 1,500 frames
+  each, no hang, no GPU error, no GL error and no ASan or UBSan report.
+  Every gate passes (`check`, `partition`, `shared-buffer`, `clock`,
+  `formats`, `flare-reuse`, `sequence`), and the library still builds
+  clean under `-Wall -Wextra -Wshadow -Wconversion`. Every bound sits far outside every gate scene, so no gate frame can
+  move.
+- **Not done.** No gate runs the fuzzer; the C ABI's `set_*_count` setters
+  are still uncapped; the design review's other findings stand.
+
 ## 2026-11-08 - A lost buffer moves its generation (V37); presets refuse a 0 s duration (I104)
 
 Not committed; on top of `9b0c76e`. Both from a whole-project review the same

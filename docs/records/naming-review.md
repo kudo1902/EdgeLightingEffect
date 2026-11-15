@@ -311,7 +311,7 @@ everything follows:
 | namespace | `Get*` | other |
 | --------- | ------ | ----- |
 | `PathUtils` (since removed with the contour tracer: dead code, used by nothing) | `GetPathAABB`, `GetPathLength`, `GetPointOnPath` | - |
-| `GLUtils` | `GetCap`, `GetExtensions` | `CheckExtension`, `CheckGLError`, `LogCaps`, `LogExtensions`, `LogRendererInfo` |
+| `GLUtils` | `GetCap`, `GetExtensions` | `LogCaps`, `LogRendererInfo` (`CheckExtension`, `CheckGLError` and `LogExtensions` removed 2026-11-13: no caller) |
 | `ColorUtils` | - | `SampleRing`, `SampleSpan`, `SortStops`, `BlendStops`, `RgbToHsv`, ... |
 | `SegmentUtils` | - | `AcquireSegment`, `FillEffectiveSegments`, `FindPreservedSegment`, `ReleaseSegment` |
 | `CaptureUtil` | - | `ReadRegion`, `ReadFramebuffer`, `WritePNG`, `TimestampedPath` |

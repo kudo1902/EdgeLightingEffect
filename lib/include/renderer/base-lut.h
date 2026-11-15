@@ -24,7 +24,7 @@ namespace EdgeLighting
     ///     only way to write the texture is @ref Upload, and the only thing a
     ///     caller can do with it is @ref Bind. Whatever the last bake produced
     ///     is what is on the GPU.
-    ///   - **"Has a texture name" is not "has an image".** @c Texture's
+    ///   - **"Has a texture name" is not "has an image".** @c Texture2D's
     ///     constructor calls @c glGenTextures, so the name exists from the
     ///     moment a LUT is constructed, long before anything is baked into it.
     ///     @ref IsValid answers the question callers actually mean - is there
@@ -35,14 +35,6 @@ namespace EdgeLighting
     /// stores one as a @c BaseLUT*. The destructor is protected rather than
     /// virtual, which turns deleting through a base pointer into a compile
     /// error instead of a lifetime bug.
-    ///
-    /// That buys less than it looks like, and the reason is worth knowing
-    /// before anyone "optimises" further: @c Texture (the member's base) has a
-    /// virtual destructor, so @c Texture2D carries a vptr and every LUT pays
-    /// for one - @c sizeof(Texture2D) is 16 for a 4-byte handle. Nothing in
-    /// the tree deletes through a @c Texture*, so that virtual is currently
-    /// unearned, but removing it is a change to a shared GL wrapper used well
-    /// outside the LUTs and is not this class's call to make.
     class BaseLUT
     {
     public:

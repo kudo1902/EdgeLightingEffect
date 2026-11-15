@@ -406,7 +406,7 @@ Layer (`SpotlightConfig`):
 | `enable` | bool | `false` | - | Master switch |
 | `lamps` | list | empty | first 8 entries | Past `SPOT_MAX_LAMPS = 8` ignored - entries 9+ dropped byte-for-byte, with one logged warning |
 | `clipArea` | `ClipArea` | `0x0 KEEP_INSIDE` | see `ClipArea` | Cut region. `KEEP_INSIDE` also narrows strips (buys fragments back); `KEEP_OUTSIDE` unbounded, cannot |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.125, 1.0]` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Floor is `0.125`, not neon's `0.001` - `0.001` through `0.125` are identical and `0.126` is the first that differs. Fixed blit floor (~922k frags at 720p) so only large rigs win; default `1.0`. Held at `1.0` while any enabled lamp is `clipped` (value kept, transitions logged) |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.125, 1.0]` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Floor is `0.125`, not neon's `0.001` - `0.001` through `0.125` are identical and `0.126` is the first that differs. Fixed full-viewport blit, so it loses below about six lamps and wins above (frame time, M2; spotlight-renderer.md section 6); default `1.0`. Held at `1.0` while any enabled lamp is `clipped` (value kept, transitions logged) |
 
 Caller owns GL state the pass assumes and never sets: cull off (or
 front-face surviving CCW strips), full color+alpha mask, `FUNC_ADD`, no
@@ -446,7 +446,7 @@ bound render the same pixels, so the slider past it is dead.
 | `spotlight.resolutionScale` | `[0.125, 1.0]` | `MIN_RESOLUTION_SCALE` | `0.001` = `0.0625` = `0.125`; `0.126` differs by 7/255 |
 | `neon.numSamples` | `[1, 128]` | `NEON_MAX_LOOP_SAMPLES` | `0` = `1`; `128` = `129` = `512` |
 | `neon.gradientLutSize` | `>= 4`, no upper | `gradient-ring-lut.h:61` | `1` = `2` = `3` = `4`; `5` differs. `512` differs from `256` by 3/255, `4096` from `1024` by 1/255 |
-| `neon.filamentFalloff` | `>= 0.001` | `neon-renderer.cpp:887` | `0` = `0.0005` = `0.001` |
+| `neon.filamentFalloff` | `>= 0.001` | `max(uFilamentFalloff, 1e-3)` in `neon-shade.glsl`, `GetFilamentExtent` in `neon-renderer.cpp` | `0` = `0.0005` = `0.001` |
 | `neon.lineWidth` | `>= 0` | shader gate | `-8` = `-1` = `0` (no filament) |
 | `neon.glowRadius` | `>= 0` | shader gate | `-20` = `-1` = `0` |
 | `neon.glowSideSoftness` | `>= 1 px` | one destination px (the pixel-width floor, `sdRoundBoxFwidth`, in `neon.frag` or `neon-blit.frag`) | `0` through `1.0` identical; `1.05` differs |

@@ -296,7 +296,7 @@ Things to know:
   must switch back to whatever was bound before, which is not necessarily the
   window (a frame capture binds a real FBO). The code captures it with
   `RenderTargetState::Capture()` / `Framebuffer::GetBoundId()` and restores it
-  afterwards, never with `BindDefault()`.
+  afterwards, never by binding framebuffer 0.
 - **Completeness.** A framebuffer is only usable if the driver accepts its
   attachments' formats (`glCheckFramebufferStatus`). RGBA8 is always accepted;
   RGBA16F needs an extension on GLES 3.0 (`EXT_color_buffer_half_float` or
@@ -486,8 +486,8 @@ with and without that ring.
 ### 2.1 How shaders get into the binary
 
 Shaders are not loaded from disk. At **CMake configure time**,
-`lib/CMakeLists.txt` reads every file in `lib/shaders/` with `file(READ ...)`
-and substitutes it into `lib/shaders/shaders.h.in` with `configure_file`,
+`lib/CMakeLists.txt` reads every file in `lib/shaders/` with `file(READ ...)`,
+strips its `//` comments (keeping the newlines), and substitutes it into `lib/shaders/shaders.h.in` with `configure_file`,
 producing `build/lib/generated/shaders.h`. Each shader becomes a C++ raw
 string, for example `EdgeLighting::ShaderSource::NEON_FRAG_SRC`.
 
@@ -540,9 +540,10 @@ composites (`neon-field.frag`, `neon-ring-field.frag`) the same, then
   returns. `#version` stays the first line, which must stay first. Part 7.4 lists what
   each program includes.
 - **Editing a shader or a tuning header re-runs configure automatically** on
-  the next build, because `CMAKE_CONFIGURE_DEPENDS` lists them all.
-- **Adding a new shader file** means updating three places: both lists in
-  `lib/CMakeLists.txt` and `shaders.h.in`. Do not write an `@NAME@`
+  the next build, because the shader list in `lib/CMakeLists.txt` makes each
+  a configure dependency.
+- **Adding a new shader file** means updating two places: that list
+  (`EDGE_LIGHTING_SHADER_TEXTS`) and `shaders.h.in`. Do not write an `@NAME@`
   placeholder in a comment in `shaders.h.in`: `configure_file` expands it
   there too.
 
@@ -626,7 +627,7 @@ RAII wrappers in `lib/include/gl/`:
 | `VertexArray` | one VAO + one VBO | Creates its GL names in the **constructor**, so a context must be current. Does not unbind after use. The attribute format is set once and remembered by the VAO. |
 | `Framebuffer` | FBO + 1-3 colour textures | `Resize` is a no-op when nothing changed, so call it every frame; a format, filter or size change reallocates. `Bind()` also sets the viewport. `Release()` frees memory; never while the FBO is bound mid-pass. |
 | `UniformBuffer` | a std140 UBO | `SetData` skips identical bytes; the caller does the std140 packing. |
-| `Texture` / `Texture2D` | a 2D texture | Uploads switch the active unit to 0; `BaseLUT::Upload` saves and restores it. |
+| `Texture2D` | a 2D texture | Uploads switch the active unit to 0; `BaseLUT::Upload` saves and restores it. |
 | `RenderTargetState` (in `framebuffer.h`) | saved framebuffer + viewport | `Capture()` before going offscreen, `Restore()` after. |
 
 `lib/include/util/capture-util.h` (`OffscreenCapture`, `CaptureUtil::Read*`,
@@ -2605,8 +2606,8 @@ scaled path ships to.
 is visible to `neon.frag`, `neon-gather.frag`, `neon-emission.frag`,
 `neon-blit.frag` and the C++ code at once.
 
-**Add a shader file:** `lib/CMakeLists.txt` (both the
-`CMAKE_CONFIGURE_DEPENDS` list and the `file(READ ...)` list) and
+**Add a shader file:** one line in `lib/CMakeLists.txt`'s
+`EDGE_LIGHTING_SHADER_TEXTS` and its placeholder in
 `lib/shaders/shaders.h.in`. If it needs code another shader has, move that
 code into a `.glsl` chunk injected into both (as `neon-common.glsl` is) rather
 than copying it.

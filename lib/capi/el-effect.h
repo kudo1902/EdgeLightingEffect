@@ -725,15 +725,17 @@ extern "C"
 
     /** @brief Fraction of the viewport the lamps render at before being
      *         bilinear-blitted back. 1.0 (default) draws direct - no offscreen
-     *         buffer, no blit. Clamped to [0.125, 1.0] at draw time.
+     *         buffer, no blit. Clamped to [0.125, 1.0] at draw time, and held
+     *         at 1.0 while any enabled lamp is clipped.
      *  @note  Lossless in shape: the same falloff, shaded into a half-float
      *         buffer and dithered at full resolution by the blit.
      *         But unlike the neon and flare scales this one is NOT
      *         automatically a saving - this layer already bounds its geometry
-     *         to what the lamps light, so the blit's full viewport of
-     *         fragments is a fixed cost. Measured at 1280x720 it only wins
-     *         above roughly six lamps. Leave it at 1.0 unless a profile says
-     *         otherwise. */
+     *         to what the lamps light, so the blit's full viewport is a fixed
+     *         cost. Measured frame time (Apple M2 Pro): slower below about
+     *         six lamps, faster above, and 0.4x at 0.5 on eight wide lamps
+     *         with a large bloom. It costs a buffer too (4 MB at 1080p and
+     *         0.5). Leave it at 1.0 unless the rig is large. */
     EL_API el_result_e el_effect_set_spotlight_resolution_scale(el_effect_handle_t effect, float scale);
     EL_API el_result_e el_effect_get_spotlight_resolution_scale(el_effect_handle_t effect, float *outScale);
 

@@ -144,7 +144,6 @@ namespace NeonScaleCheck
             return flare;
         }
 
-        /// Two lamps alone, at CELL_SCALES[@p s]; fullScaleName as FlareCell's.
         Cell SpotlightCell(size_t s)
         {
             Cell spot;
@@ -196,31 +195,12 @@ namespace NeonScaleCheck
             return cells;
         }
 
-        /// The size cases D2 and D3 fail allocations from, in texels: halfway
-        /// between the viewport at 0.25 and at 0.5, so a viewport-sized scaled
-        /// buffer - the neon's shared buffer, the flare's, the spotlight's -
-        /// fails at 0.5 and allocates at 0.25. Every other buffer the retry
-        /// cells allocate stays below it at either scale (the emission table,
-        /// the gather buffer, the glow coverage table, at most 1024 x 128),
-        /// which their frames matching A's at 0.25 confirms.
-        int64_t RetryThreshold()
-        {
-            const auto viewportTexels = [](size_t s)
-            {
-                return int64_t(int(float(FRAME_WIDTH) * CELL_SCALES[s])) *
-                       int64_t(int(float(FRAME_HEIGHT) * CELL_SCALES[s]));
-            };
-            return (viewportTexels(SCALE_500) + viewportTexels(SCALE_250)) / 2;
-        }
-
-        /// Cases D2 and D3's cells: every layer with a viewport-sized scaled
-        /// buffer drawn at 0.5 and then at 0.25 - large enough to fail, then
-        /// small enough to allocate again - the flare and the spotlight after
-        /// their 1.0 frames, which D3 must draw at 0.5, and the neon on `arcs`,
-        /// which reads the glow coverage table too. The flare first, so its
-        /// own walk takes the hook's failure; the walks after it find that
-        /// failure kept and skip the format without trying it.
-        std::vector<Cell> MakeRetryCells()
+        /// Case D5's cells: every layer with a viewport-sized scaled buffer
+        /// drawn at 0.5 and then at 0.25 - past the size limit, then under
+        /// it - the flare and the spotlight after their 1.0 frames, which each
+        /// must draw at 0.5, and the neon on `arcs`, which reads the glow
+        /// coverage table too.
+        std::vector<Cell> MakeSizeLimitCells()
         {
             std::vector<Cell> cells;
             cells.push_back(FlareCell(SCALE_1000));
@@ -266,38 +246,6 @@ namespace NeonScaleCheck
             return at == std::string::npos ? line : line.substr(at + 2);
         }
 
-        /// The run's reader of the neon's shared buffer: what SharedBufferProbe
-        /// records, plus the buffer as the Render after @ref ReadNext found
-        /// it - read there, while the buffer is still that frame's.
-        class TexelProbe : public SharedBufferProbe
-        {
-        public:
-            /// Read the buffer in the next Render that is handed a ready one.
-            void ReadNext() { mReadNext = true; }
-            /// What that Render read, handed over; empty if it was not ready.
-            SharedRead TakeRead()
-            {
-                mReadNext = false;
-                SharedRead read = std::move(mRead);
-                mRead = SharedRead{};
-                return read;
-            }
-
-        protected:
-            void OnReady(const SharedBuffer &buffer) override
-            {
-                if (mReadNext)
-                {
-                    mRead = SharedRead{ReadSharedTexels(buffer), buffer.GetTexels(), buffer.GetLastWriteWindow()};
-                    mReadNext = false;
-                }
-            }
-
-        private:
-            bool mReadNext = false;
-            SharedRead mRead;
-        };
-
         RunResult Run(const Hooks &hooks, bool bypassFields, const std::vector<Cell> &cells)
         {
             RunResult result;
@@ -310,17 +258,13 @@ namespace NeonScaleCheck
                 effect.GetFormatAvailability()->SetFailedAllocations(hooks.failed);
                 effect.GetFormatAvailability()->SetUnknownFormats(hooks.unknown);
                 effect.GetFormatAvailability()->SetMaxTextureSize(hooks.maxTextureSize);
-                if (hooks.outOfMemoryRetry >= 0.0)
-                {
-                    effect.GetFormatAvailability()->SetOutOfMemoryRetry(hooks.outOfMemoryRetry);
-                }
                 const std::shared_ptr<NeonRenderer> neon = std::make_shared<NeonRenderer>();
                 if (bypassFields)
                 {
                     neon->SetBypass(static_cast<uint32_t>(NeonBypass::GLOW_FIELD) |
                                     static_cast<uint32_t>(NeonBypass::RING_FIELD));
                 }
-                const std::shared_ptr<TexelProbe> probe = std::make_shared<TexelProbe>();
+                const std::shared_ptr<SharedBufferProbe> probe = std::make_shared<SharedBufferProbe>();
                 effect.AddRenderer(neon);
                 effect.AddRenderer(RendererLayer::LENS_FLARE);
                 effect.AddRenderer(RendererLayer::SPOTLIGHT);
@@ -332,16 +276,10 @@ namespace NeonScaleCheck
                 OffscreenCapture capture;
                 for (const Cell &cell : cells)
                 {
-                    if (cell.replaceFailed)
-                    {
-                        effect.GetFormatAvailability()->SetFailedAllocations(cell.failedHere);
-                    }
                     Config config = cell.config;
                     const float baseIntensity = config.neon.intensity;
-                    const int frames = cell.frames > 0 ? cell.frames : FramesFor(cell.variant);
-                    const float deltaTime = cell.deltaTime >= 0.0f      ? cell.deltaTime
-                                            : cell.variant == Variant::STILL ? 0.0f
-                                                                             : 1.0f / 60.0f;
+                    const int frames = FramesFor(cell.variant);
+                    const float deltaTime = cell.variant == Variant::STILL ? 0.0f : 1.0f / 60.0f;
                     for (int f = 0; f < frames; ++f)
                     {
                         if (cell.variant == Variant::INTENSITY)
@@ -355,10 +293,6 @@ namespace NeonScaleCheck
                             std::fprintf(stderr, "neon-scale-check: the capture target failed\n");
                             std::exit(2);
                         }
-                        if (cell.readShared && f + 1 == frames)
-                        {
-                            probe->ReadNext();
-                        }
                         DrawTargetWatch::Begin();
                         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
                         glClear(GL_COLOR_BUFFER_BIT);
@@ -369,7 +303,6 @@ namespace NeonScaleCheck
                             CaptureUtil::Image image;
                             capture.Read(image);
                             result.frames.push_back(image.pixels);
-                            result.sharedReads.push_back(probe->TakeRead());
                         }
                         capture.End();
                         bool error = false;
@@ -407,7 +340,6 @@ namespace NeonScaleCheck
                 }
                 result.glErrorFrames += scanError;
                 result.probes = effect.GetFormatAvailability()->GetAnswers().size();
-                result.failedAllocations = effect.GetFormatAvailability()->GetFailedAllocations();
                 result.sharedReadyFrames = probe->GetReadyFrames();
                 result.sharedFormats = probe->GetFormats();
             }

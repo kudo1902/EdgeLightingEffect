@@ -266,11 +266,8 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float deltaTime, double time, const Config &config)
+    void LensFlareRenderer::Update(float, double time, const Config &config)
     {
-        // Outside an effect, the frame time its own FormatAvailability's
-        // out-of-memory failures expire by.
-        AdvanceOwnFormatAvailability(deltaTime);
         // The rays' rotation, every frame, so a rate that moves while the
         // layer is off is integrated as it moved; drawFlare reads it again.
         mRotation.AdvanceCyclePhase(time, config.lensFlare.rotationRate);
@@ -294,12 +291,6 @@ namespace EdgeLighting
         }
         const float scale = GetClampedFlareScale(config);
         const glm::ivec2 target = GetFlareTargetSize(viewportWidth, viewportHeight, scale);
-
-        // A buffer that fell back past a format it may have again (an
-        // out-of-memory failure that expired) moves back up here, before the
-        // cache below is asked - or a still sun would keep it at 8 bits. The
-        // move is an allocation, which the key's generation sees.
-        mScaledBuffer.Refresh(GetFormatAvailability());
 
         // Nothing the pass reads has moved since the buffer was drawn: it
         // already holds this frame's flare, so Render blits it as it stands.
@@ -419,9 +410,11 @@ namespace EdgeLighting
         // No scaled buffer could be allocated, in any format - the one way the
         // offscreen phase leaves it unready. Draw at 1.0 instead, which needs
         // no buffer: the flare shader is scale invariant, so this is exactly
-        // the 1.0 path's frame. The walk remembers the failure with its size
-        // (FormatAvailability), so the frames after this try nothing until
-        // the size drops below it. Logged when it starts and when it ends.
+        // the 1.0 path's frame. A failed allocation is final
+        // (FormatAvailability), so the frames after this try nothing; only a
+        // buffer refused for its size alone (past GL_MAX_TEXTURE_SIZE) can
+        // allocate again, once the viewport shrinks. Logged when it starts and
+        // when it ends.
         const bool fellBack = scaled && !scaledReady;
         if (fellBack != mScaledFellBack)
         {

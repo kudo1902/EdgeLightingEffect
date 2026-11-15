@@ -17,7 +17,10 @@ for, but changes two things a host can see: the library reads and clears the
 host's pending GL errors at `Initialize` and on frames that allocate, and the
 flare and the spotlight below scale 1.0 draw at 1.0, rather than nothing, when
 memory runs out. Section 9: a preset animation now refuses a duration of 0,
-which used to fill the config with NaN.
+which used to fill the config with NaN. Section 10: the effect clamps
+out-of-range config values before anything draws. Section 11: unused C++
+helpers are gone. Section 12: a failed render-target allocation is final,
+out of memory included.
 
 ## 0. `NeonConfig::resolutionScale` defaults to 0.5, and 1.0 takes the same path
 
@@ -311,7 +314,7 @@ both Macs - no pixel moves. What a host can see:
   texture and a framebuffer each; 0.18 ms on an M2 Pro, 0.22 ms on an AMD
   5300M) and logs a report of them, and in `Framebuffer::Resize` on any frame
   that allocates: the first frames, a resize of the rect or the viewport, a
-  scale change, a layer switched on, a buffer moving back to a better format.
+  scale change, a layer switched on.
   A host that checks `glGetError` after the effect renders loses its own
   errors on those frames - check before calling into the effect, or read the
   warnings. The C ABI's `el_effect_init*` probe the same way.
@@ -320,14 +323,9 @@ both Macs - no pixel moves. What a host can see:
   1.0 path, which needs no buffer - the same picture as at 1.0, at 1.0's cost
   (four times the fragments of 0.5), logged once each way. That happens when
   memory is short, so expect it under memory pressure.
-- **A format that ran out of memory comes back.** A buffer whose allocation
-  ran out of memory falls to the next format in its list (8 bits for most)
-  and is held there for 2 s of frame time, then tried again, the wait doubling
-  with each retry that fails again, up to 512 s. Frame time is the delta the
-  host passes `EdgeLightingEffect::Update` (or `el_effect_update`), not the
-  effect's clock, so pausing the clock does not hold it - but a host that
-  renders without calling Update never retries. Any other failure (an
-  incomplete framebuffer) holds for good, as before.
+- **A failed allocation is final.** A buffer whose full-size allocation
+  fails falls to the next format in its list (8 bits for most) and stays
+  there for the effect's life; out of memory included (section 12).
 - **A driver without half-float targets** lands every buffer on its 8-bit row
   from the first frame, with no failed allocation and no ERROR line, and
   never compiles the hue-invariant fields' programs. The picture is what such
@@ -342,14 +340,13 @@ both Macs - no pixel moves. What a host can see:
   `GetAllocationCount`, which moves on every allocation: compare it, not the
   size or format, to know a buffer's contents were replaced.
 - **A host's own renderer** compiles unchanged. `BaseRenderer` gains private
-  members and two protected methods, `GetFormatAvailability` and
-  `AdvanceOwnFormatAvailability`, so rebuild it with the library. A host
+  members and a protected method, `GetFormatAvailability`, so rebuild it with
+  the library. A host
   renderer with a buffer in a format a driver may refuse can hold it as an
   `AdaptiveFormatTarget` (`core/adaptive-format-target.h`), as the library's
   do - named, filtered and given its fallback cost at construction, sized by
   `Ensure` with a `FormatList` (one of `LIBRARY_FORMAT_LISTS`, or its own
-  array), moved back up by `Refresh` once a frame before it decides to skip a
-  write, and any cache over it keyed on `GetGeneration` - which moves when
+  array), and any cache over it keyed on `GetGeneration` - which moves when
   the target allocates and when it loses its buffer (a walk that ends FAILED,
   or `Release`), so the key alone tells a cache its texels are gone. A format of its own
   outside the library's lists is not in the startup report: ask it from the
@@ -357,13 +354,11 @@ both Macs - no pixel moves. What a host can see:
   probes it mid-frame and clears the frame's pending GL errors.
   `SharedBuffer::Format` is now a typedef of `TextureFormat`, what every
   format list holds, so a host's list still compiles. Drawn outside an effect, such a renderer gets an object of its
-  own from `GetFormatAvailability`, whose out-of-memory failures expire only
-  if its `Update` calls `AdvanceOwnFormatAvailability(deltaTime)`, as the
-  library's renderers do.
+  own from `GetFormatAvailability`.
 - **`EdgeLightingEffect::GetFormatAvailability()`** is public, for reading
   the answers (`GetAnswers`). Its setters (`SetRefusedFormats`,
-  `SetFailedAllocations`, `SetUnknownFormats`, `SetMaxTextureSize`,
-  `SetOutOfMemoryRetry`) are verification hooks for `neon-scale-check
+  `SetFailedAllocations`, `SetUnknownFormats`, `SetMaxTextureSize`) are
+  verification hooks for `neon-scale-check
   formats`: a host never calls them. Nothing changed in the C ABI.
 
 ## 9. A preset refuses a duration of 0 (I104)
@@ -388,7 +383,105 @@ one above 0, which let 1e-40 s, whose reciprocal is infinity, through:
   derive from `PositiveDurationAnimation` (`animation/neon-animations.h`).
   A preset constructed with 0 holds its cycle's start rather than write NaN.
 
-## 10. Nothing else a host can see moved
+## 10. Out-of-range config values are clamped before anything draws (I105-I108, V38)
+
+Finite but absurd values used to reach the renderers: a spotlight throw of
+1e10 px made `SetConfig` (and `el_effect_update`) never return, a rect whose
+negative width outweighed its height hung the GPU, and a 1e10 px rect hit
+undefined behaviour. The effect now holds the composited config - base plus
+animation overlays - to `ConfigValidation`'s ranges before any renderer sees
+it:
+
+- **Lengths and positions** to +/-1e5 px, a **rect's width and height** to 0
+  or more, **every other float** to +/-1e6, `gradientLutSize` to 2048, and
+  **NaN** to 0. Every bound is far outside any value a host means, so no
+  in-range config draws differently.
+- **`GetActiveConfig` returns the clamped values; `GetConfig` and the C ABI
+  getters return what was set.** A UI slider bound to the active config shows
+  the clamp.
+- **A host driving a renderer without `EdgeLightingEffect`** should call
+  `ConfigValidation::Sanitize` on what it hands over. The renderers carry
+  local guards against the hangs, not a range check of every field.
+
+Nothing in the C ABI changed: its setters still accept any finite value.
+
+## 11. Unused C++ helpers are removed
+
+Nothing in the library, the C ABI, the demos or the tools called these, so
+they were removed on 2026-11-13. A C++ host that did no longer compiles:
+
+- `GLUtils::CheckExtension`, `GLUtils::CheckGLError` and its `GL_CHECK_ERROR`
+  macro, `GLUtils::LogExtensions`;
+- `Framebuffer::BindDefault` - return to the framebuffer you were handed
+  (`Framebuffer::GetBoundId` / `BindId`), never to 0;
+- `Texture2D::SetDataFromFile`, and the `Texture` base class, folded into
+  `Texture2D` (`gl/texture.h` is gone);
+- the presets `GlowRadiusCurve`, `BloomStrengthCurve` and
+  `HueRotationRateCurve` - a `FieldBoundAnimation` over the field does the
+  same;
+- `FieldBoundAnimation`'s binding getters, `GetBindingCount` and
+  `ClearBindings`.
+
+`EdgeLightingEffect::Initialize` also logs the GL vendor, renderer, version
+and extension count instead of one line per extension.
+
+## 12. A failed allocation is final, out of memory included
+
+Until 2026-11-14 a buffer that ran out of memory fell back, waited 2 s of
+frame time (doubling with each retry that failed again, up to 512 s) and was
+tried again in its better format, and every renderer moved each of its buffers
+back up once a frame. That is gone: a full-size allocation that fails, for any
+reason, holds that format at that attachment count and above for the effect's
+life. What a host can see:
+
+- **After a real out-of-memory failure** the format that failed is off for
+  every buffer with that many attachments or more, not only the one that
+  failed: a buffer already holding it is reallocated in its 8-bit row the
+  next time it is written. Measured with a forced failure of the flare's
+  RGBA16F buffer mid-run: the neon's shared buffer and gather buffer, both
+  holding RGBA16F, went to RGBA8 on the next frame, and the frames after were
+  up to 3 levels from a run with no failure. With the neon's shared buffer on
+  8 bits its output dither no longer hides the contour rings in the glow's
+  dark tail (R7), and the hue-invariant fields stop for good after one failed
+  bake. A layer whose every row ran out of memory draws without it - the neon
+  drops to the fill, the flare and the spotlight draw at 1.0. All of it holds
+  until the effect is created again: destroying and recreating the effect (or
+  `el_effect_destroy` and a new `el_effect_create`) is how a host that knows
+  memory came back gets the better formats back. On a GPU that renders every
+  format and never runs out, no frame changes: the gates' 582 images are
+  byte-identical.
+- **C++:** `FormatAvailability::Advance`, `GetTime`, `SetOutOfMemoryRetry`,
+  `OUT_OF_MEMORY_RETRY_SECONDS` and `OUT_OF_MEMORY_RETRY_MAX_SECONDS`,
+  `GetFailedAllocations`, `AdaptiveFormatTarget::Refresh`,
+  `SharedBuffer::Refresh` and `BaseRenderer::AdvanceOwnFormatAvailability`
+  are removed; `ForcedFailure` loses `fromTexels` and `count`. A host renderer
+  that called `Refresh` or `AdvanceOwnFormatAvailability` drops the call.
+  Nothing changed in the C ABI.
+
+## 13. `SetConfig` no longer calls the renderers
+
+`EdgeLightingEffect::SetConfig` used to notify every renderer before it
+returned, and each rebuilt what the change moved - LUT bakes, uniform blocks,
+vertex buffers - on the spot: GL work on whatever the host was doing when it
+set the config, once per call.
+
+- **Now** `SetConfig` writes the base and recomposes the active config
+  (`GetActiveConfig` follows at once, as before) and nothing else. The
+  renderers hear of the change once, from the next `Update` - or the next
+  `Render` when no `Update` comes first - however many `SetConfig` calls came
+  in between.
+- **What a host sees.** Nothing in the frames: a host that calls `Update` then
+  `Render` draws what it drew. Three `SetConfig` calls in a frame cost one
+  rebuild, not three.
+- **A host's own renderer** (`RendererLayer::CUSTOM`) gets `OnConfigChanged`
+  from `Update` or `Render`, not from inside `SetConfig`; code that read state
+  it rebuilt there right after `SetConfig` reads it after `Update` now. A
+  change set and set back before the next `Update` may still notify once, with
+  a config equal to the last one.
+- **The C ABI is unchanged**: staging already reached the effect only in
+  `el_effect_update`.
+
+## 14. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

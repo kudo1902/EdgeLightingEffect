@@ -604,10 +604,9 @@ namespace EdgeLighting
         /// @par Written
         /// Only by @ref NeonRenderer::renderEmissionPass, on its way out, after
         /// the draw - the only thing that ever writes the buffer, which is
-        /// allocated in @ref NeonRenderer::Initialize and again only to move
-        /// back up its format list (@ref NeonRenderer::refreshTargets). So the
-        /// record never has to be reset: @c generation says whether it
-        /// describes the allocation the buffer holds.
+        /// allocated in @ref NeonRenderer::Initialize. So the record never has
+        /// to be reset: @c generation says whether it describes the allocation
+        /// the buffer holds.
         ///
         /// @par Read
         /// By @ref NeonRenderer::isEmissionTableStale, which says the table
@@ -705,9 +704,8 @@ namespace EdgeLighting
         ///   - @c drawn - the last gather succeeded;
         ///   - @c mGather.buffer is still allocated - it is released when the
         ///     layer is disabled, which @c drawn alone would not see - and has
-        ///     not been allocated since (@c generation): a move back up its
-        ///     format list (@ref NeonRenderer::refreshTargets) leaves undefined
-        ///     texels and the same region;
+        ///     not been allocated since (@c generation): a reallocation leaves
+        ///     undefined texels and may keep the same region;
         ///   - @ref NeonRenderer::getGatherInputs equals @c inputs - among
         ///     them the emission table's version (@ref EmissionBake), so a
         ///     fresh table makes the gather run again;
@@ -733,74 +731,31 @@ namespace EdgeLighting
             uint32_t generation = 0; ///< The generation it was drawn into (AdaptiveFormatTarget::GetGeneration).
         } GatherCache;
 
-        /// The formats a field's bake read its inputs in: the emission table
-        /// (through the gather), the glow coverage table (0 while the config
-        /// does not read it) and its segment table (0 when there is none), and
-        /// the gather buffer. Each is a function of the config - but its
-        /// PRECISION is not: a buffer moves rows with no config change, back up
-        /// when an out-of-memory failure expires
-        /// (AdaptiveFormatTarget::Refresh), or down when a new one is kept
-        /// against a walk that runs again. A field baked from the other rows
-        /// describes another image, so it is composited only while these hold
-        /// (@ref getFieldInputFormats). By FORMAT, not by generation: a
-        /// reallocation in the same format - a retry that failed, a gather
-        /// region that grew - recomputes the same texels, which a field may
-        /// keep reading. 0 for a buffer that holds nothing.
-        typedef struct FieldInputFormats
-        {
-            GLint emission = 0;
-            GLint cover = 0;
-            GLint segments = 0;
-            GLint gather = 0;
-
-            bool operator==(const FieldInputFormats &other) const
-            {
-                return emission == other.emission && cover == other.cover && segments == other.segments &&
-                       gather == other.gather;
-            }
-            bool operator!=(const FieldInputFormats &other) const { return !(*this == other); }
-        } FieldInputFormats;
-
         /// When a field is baked and when it is read - the schedule the
         /// shading's field (@c mGlowField.schedule) and the edge ring's (@c mRingField.schedule)
         /// share. A field outlives the frame it was baked on; a config change
         /// (@ref OnConfigChanged calls @ref Invalidate), the viewport and a
-        /// gradient ring upload - a cross-fade frame - invalidate it, and so
-        /// does an input buffer that moved rows since its bake
-        /// (@ref FieldInputFormats, checked by @ref NeonRenderer::RenderOffscreen
-        /// right before each composite).
+        /// gradient ring upload - a cross-fade frame - invalidate it.
         ///
         /// The bake is LAZY: only a config that has held for a frame is baked
-        /// (@c settled), so an animation that changes the config every frame
-        /// keeps shading directly and never pays a bake it cannot reuse - a
-        /// bake AND a composite on every frame measured 5-7% slower than
-        /// shading directly.
+        /// (@c settled), so an animation that changes the config every frame keeps
+        /// shading directly and never pays a bake it cannot reuse.
         ///
-        /// Except on the FIRST frame a renderer draws a config the field can
-        /// serve, which builds the field's programs and bakes it at once,
-        /// while still shading directly. Building alone is not enough: this
-        /// driver finishes a program's compile on its first DRAW, in the
-        /// target and blend state it draws with, so a bake program only linked
-        /// there left a ~125 ms stall on the bake frame after it (~155 ms all
-        /// told, AMD Radeon Pro 5300M). And that frame still shades directly
-        /// so that the shading program's first draw lands there too -
-        /// compositing instead deferred THAT stall to the first config change.
-        /// The price is one bake an animated config may not reuse, once per
-        /// renderer.
+        /// Except on the FIRST frame a renderer draws a config the field can serve,
+        /// which builds the field's programs and bakes it at once, while still
+        /// shading directly: a driver may finish a program's compile on its first
+        /// DRAW, in the target and blend state it draws with, so the bake's, the
+        /// composite's and the shading's first draws all belong on that one frame.
+        /// The price is one bake an animated config may not reuse, once per renderer.
         ///
-        /// The neon's INTENSITY is the one config change that does not
-        /// invalidate a field (I56): neon.frag's output is near enough
-        /// I * G with G fixed while only the intensity moves, so a field baked
-        /// at intensity I0 serves intensity I as Fa * I / I0 (@c Decision::gain).
-        /// Near enough, not exactly: the bloom's reach and the quad's fade and
-        /// hole also follow the intensity, and the field holds them as they
-        /// were at I0 - up to 2 levels on the default look across
-        /// IntensityPulse's 0.4-1.0, 6 on a 1.5 bloom (docs/neon-reduced-scale-
-        /// plan.md, D1). So only while the intensity is MOVING, and only below
-        /// I0, whose quad covers every dimmer one's; a brighter frame bakes
-        /// again at its own intensity, so a pulse settles on its peak after
-        /// one cycle; and the frame the intensity stops on bakes again too,
-        /// exactly - a held config never shows a scaled field.
+        /// The neon's INTENSITY is the one config change that does not invalidate a
+        /// field (I56): a field baked at intensity I0 serves intensity I as
+        /// Fa * I / I0 (@c Decision::gain). Near enough, not exactly - the bloom's
+        /// reach and the quad's fade and hole follow the intensity too - so only
+        /// while the intensity is MOVING, and only below I0, whose quad covers every
+        /// dimmer one's; a brighter frame bakes again at its own intensity, and the
+        /// frame the intensity stops on bakes again too, exactly - a held config
+        /// never shows a scaled field.
         ///
         /// @par One frame
         /// @ref Decide, in this order - the first row that holds decides:
@@ -822,16 +777,12 @@ namespace EdgeLighting
         ///     change to the neon or the geometry but the intensity alone, and
         ///     clears @c current itself when it releases the buffer for a
         ///     config that cannot use it.
-        ///   - @ref NeonRenderer::RenderOffscreen calls @ref DropIfInputsMoved
-        ///     once the gather has run, before either composite: a field whose
-        ///     inputs moved rows since its bake shades directly that frame and
-        ///     is baked again on the next.
         ///   - A failed program build sets @c unavailable
         ///     (@ref NeonRenderer::ensureFieldPrograms,
         ///     @ref NeonRenderer::ensureRingFieldPrograms); nothing else does.
         ///   - A driver that cannot render the field's half-float format never
-        ///     gets this far, nor a field whose allocation already failed at
-        ///     this size or larger: @ref NeonRenderer::RenderOffscreen asks the
+        ///     gets this far, nor a field whose allocation already failed:
+        ///     @ref NeonRenderer::RenderOffscreen asks the
         ///     effect's FormatAvailability (MayAllocate, with the field's
         ///     size) before it builds the programs or calls @ref Decide, every
         ///     frame, since the format follows the segments and the size the
@@ -859,7 +810,6 @@ namespace EdgeLighting
             glm::ivec2 viewport{0};         ///< The viewport it was decided for.
             uint32_t gradientUploads = 0;   ///< The gradient ring's upload count it was decided for.
             float intensity = 0.0f;         ///< NeonConfig::intensity it was baked at (I0).
-            FieldInputFormats inputFormats; ///< What its bake read its inputs in (@ref DropIfInputsMoved).
 
             /// The schedule's step for a frame whose config the field can
             /// serve, drawn at @p frameViewport with the gradient ring at
@@ -885,34 +835,12 @@ namespace EdgeLighting
             /// current if it @p baked. A bake fails only when the buffer cannot
             /// be allocated - a format this driver does not render is turned
             /// away before it - and that failure is the effect's
-            /// FormatAvailability's to remember, with its size: the gate then
-            /// keeps the field off at that size or larger and lets it try again
-            /// below, so a failed bake does NOT set @c unavailable.
-            void OnBaked(bool baked, float bakedIntensity, const FieldInputFormats &bakedFrom)
+            /// FormatAvailability's to remember: the gate then keeps the field
+            /// off, so a failed bake does NOT set @c unavailable.
+            void OnBaked(bool baked, float bakedIntensity)
             {
                 current = baked;
                 intensity = bakedIntensity;
-                inputFormats = bakedFrom;
-            }
-
-            /// Whether a field held from an earlier frame may be composited
-            /// over inputs in @p frameFormats: drop it - shade directly this
-            /// frame, bake again on the next - when an input moved rows since
-            /// its bake. The config has held, so the next frame is
-            /// @c settled: a field used straight after its first-frame bake
-            /// never set that, and without it the next frame would shade
-            /// directly too, waiting out a config change there was none of.
-            /// Call once the gather has run or been skipped, before the
-            /// composite; @p decision is this frame's, and a frame that bakes
-            /// reads @p frameFormats anyway.
-            void DropIfInputsMoved(Decision &decision, const FieldInputFormats &frameFormats)
-            {
-                if (decision.use && !decision.bake && frameFormats != inputFormats)
-                {
-                    decision.use = false;
-                    current = false;
-                    settled = true;
-                }
             }
         } LazyBake;
 
@@ -1121,43 +1049,28 @@ namespace EdgeLighting
             /// each: the gate decides before any walk could log it.
             bool segTableBlocked = false;
 
-            /// Which pieces of @c mGlowCover.buffer have to be re-baked: bit 2b is
-            /// band b's straight, bit 2b + 1 its corner, all eight when the shape
-            /// moves. NOT set on every config change, as the emission table's
-            /// flag used to be: the bake
-            /// reads the two light blocks (the arcs and the effective segments),
-            /// the rect's width, height, corner radius and winding, and the glow
-            /// radius - every one of them in @ref renderGlowCoverPass or the
-            /// blocks it binds - so @ref OnConfigChanged gates it on exactly
-            /// those, as the light blocks once were gated. The bake is the costly
-            /// pass (0.14-0.27 ms on an AMD Radeon Pro 5300M), and "any change"
-            /// re-ran it every frame under an intensity or colour animation, or an
-            /// animation of another LAYER's fields, none of which it reads.
+            /// Which pieces of @c mGlowCover.buffer have to be re-baked: bit 2b is band
+            /// b's straight, bit 2b + 1 its corner. @ref OnConfigChanged sets them on
+            /// exactly what the bake reads - the two light blocks, the rect's width,
+            /// height, corner radius and winding, and the glow radius (I34) - so add an
+            /// input to @ref renderGlowCoverPass and it joins that gate.
             ///
-            /// Per PIECE because each piece's texels integrate the lights over that
-            /// piece alone: a changed arc or segment dirties only the pieces its
-            /// old and new supports reach (GetGlowCoverDirtyArcPieces,
-            /// GetGlowCoverDirtySegmentPieces), so a segment
-            /// travelling along one straight re-bakes that band rather than the
-            /// table - 1.18-1.91x on such frames on an Apple M2 Pro
-            /// (neon-perf-plan.md, item 5). The shape, the winding and the
-            /// glow radius dirty all eight, as do the brightest arc's intensity
-            /// and any light covering the whole ring.
+            /// Per PIECE, because each piece's texels integrate the lights over that
+            /// piece alone: a changed arc or segment dirties only the pieces its old and
+            /// new supports reach (GetGlowCoverDirtyArcPieces,
+            /// GetGlowCoverDirtySegmentPieces). The shape, the winding and the glow
+            /// radius dirty all eight, as do the brightest arc's intensity and any light
+            /// covering the whole ring. Per LIGHT TYPE, because a piece's arc channels
+            /// (.r / .g) depend on the arcs and the geometry alone and its segment
+            /// channels (.b / .a) on the segments alone: the bake integrates and writes
+            /// only the kind a piece needs.
             ///
-            /// Accumulated, never assigned, because OnConfigChanged can run more than once between frames, and
-            /// cleared only by the bake - so a change made while the bake is
-            /// skipped (a ring lit uniformly) is still pending when it next runs.
-            /// Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
+            /// Accumulated, never assigned, because OnConfigChanged can run more than
+            /// once between frames, and cleared only by the bake - so a change made while
+            /// the bake is skipped (a ring lit uniformly) is still pending when it next
+            /// runs. Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
             /// Never depends on time. Starts with every piece - the buffer holds
             /// undefined texels until the first bake.
-            ///
-            /// And per LIGHT TYPE: a piece's arc channels (.r / .g) depend on the
-            /// arcs and the geometry alone, its segment channels (.b / .a) on the
-            /// segments alone. So the two kinds keep separate masks, and the bake
-            /// integrates and writes only the kind a piece needs - arcs animating
-            /// over still segments no longer re-integrate every segment's bell
-            /// in each dirty piece (1.35 -> 0.36 ms of bake with 4 + 4 on an AMD
-            /// Radeon Pro 5300M). The geometry dirties both.
             uint32_t dirtyArcPieces = 0xFFu;     ///< Pieces whose arc channels need a bake; GLOW_COVER_ALL_PIECES in the .cpp.
             uint32_t dirtySegmentPieces = 0xFFu; ///< Pieces whose segment channels need a bake, likewise.
 
@@ -1259,39 +1172,21 @@ namespace EdgeLighting
         /// viewport that decision holds for.
         typedef struct OffscreenState
         {
-            /// Whether the offscreen phase's buffers - @c mGather.buffer and
-            /// @c mScaled, at every scale - still hold exactly what this
-            /// frame's passes 1a and 1b would draw into them, so @ref Render can
-            /// skip both and never leave the caller's framebuffer.
-            ///
-            /// The gather has a skip of its own since I55 (@ref GatherCache), which
-            /// a still frame meets too; pass 1b has no other. So what this flag
-            /// alone saves is pass 1b's shading - the glow's field serves only hue
-            /// and intensity frames, and is not consulted on a frame that reuses
-            /// the buffers - and the trip off the caller's framebuffer and back,
-            /// with the target capture it takes.
+            /// Whether the offscreen phase's buffers - @c mGather.buffer and @c mScaled -
+            /// still hold exactly what this frame's passes 1a and 1b would draw into
+            /// them, so @ref Render can skip both and never leave the caller's
+            /// framebuffer. The gather has a skip of its own (@ref GatherCache); what this
+            /// flag alone saves is pass 1b and the trip off the caller's framebuffer.
             ///
             /// Both passes are pure functions of the config, the viewport, the two
-            /// tables they read (emission, glow coverage) and - only through the
-            /// hue rotation - the time; both buffers persist between frames and
-            /// nothing else writes them. So: cleared by @ref OnConfigChanged on ANY
-            /// change to the neon's config or the geometry (pass 1b reads too much
-            /// of the former for a narrower gate to be worth its risk), but not on
-            /// another layer's, which nothing here reads and an animation of which
-            /// would otherwise clear it every frame; set by @ref Render on every
-            /// frame whose offscreen phase drew or reused both, unless the reduced
-            /// buffer holds the field's composite rather than the shading (I56: the
-            /// frame the intensity stops on redraws pass 1b exactly); and honoured
-            /// only on a frame whose emission table is current
-            /// (@ref isEmissionTableStale, which carries the hue phase and the ring's
-            /// cross-fade), whose glow coverage table needs no bake, and whose
-            /// viewport is @c viewport. Byte-identical. With the gather's own
-            /// skip in place, a still frame without this flag is 4.2x slower
-            /// at scale 0.5 (3.1-5.5x across neon-scale-check's twelve scenes),
-            /// 10.3x at 1.0 and 2.1x at 0.125; frames whose config changes are
-            /// unaffected, since every change clears it (AMD Radeon Pro 5300M,
-            /// 1920 x 1080, 2026-10-08). First built as neon-perf-plan.md
-            /// item 4.
+            /// tables they read and - only through the hue - the time, and nothing else
+            /// writes their buffers. So: cleared by @ref OnConfigChanged on ANY change to
+            /// the neon's config or the geometry, but not on another layer's (I47); set
+            /// on every frame whose offscreen phase drew or reused both, unless the
+            /// reduced buffer holds the field's composite rather than the shading (I56);
+            /// and honoured only on a frame whose emission table is current
+            /// (@ref isEmissionTableStale), whose glow coverage table needs no bake, and
+            /// whose viewport is @c viewport. Byte-identical.
             bool reusable = false;
 
             /// The viewport, px, the offscreen buffers were drawn for. The regions
@@ -1302,8 +1197,7 @@ namespace EdgeLighting
             /// The generations of @c mScaled and @c mGather.buffer they were
             /// drawn into (AdaptiveFormatTarget::GetGeneration): @c reusable
             /// holds only while both are the buffers' own, since any
-            /// allocation - a move back up the format list
-            /// (@ref refreshTargets) above all - leaves undefined texels.
+            /// allocation leaves undefined texels.
             uint32_t scaledGeneration = 0;
             uint32_t gatherGeneration = 0;
         } OffscreenState;
@@ -1366,19 +1260,6 @@ namespace EdgeLighting
         bool ensureFillProgram();
 
         // --- Buffers: allocated in the best format the driver gives ----------
-        /// Move every offscreen buffer a frame can skip writing back up its
-        /// format list once a format it fell back past may be allocated again
-        /// (AdaptiveFormatTarget::Refresh) - the emission table, both coverage
-        /// tables, the gather buffer and the shared buffer - at the size each
-        /// holds. The ONE place that happens, once a frame, before anything
-        /// decides to skip a pass: a skip then needs nothing about formats,
-        /// only the buffer's generation in its key (@ref EmissionBake,
-        /// @ref GatherCache, @ref OffscreenState), which every move changes.
-        /// The coverage tables, re-baked by piece, are marked dirty here. A
-        /// new buffer whose write a frame can skip belongs on this list. The
-        /// fields walk on every frame they bake, and hold one format each.
-        void refreshTargets();
-
         /// Make sure @c mEmission.buffer is allocated, in the best row of
         /// EMISSION_FORMATS this context may render - by @ref Initialize, and
         /// again on a frame after a failed move left it without a buffer.
@@ -1588,12 +1469,6 @@ namespace EdgeLighting
         ///      version is part of the key.
         GatherInputs getGatherInputs(const Config &config, int viewportWidth, int viewportHeight) const;
 
-        /// The formats the fields' bakes read their inputs in now - see
-        /// @ref FieldInputFormats. The coverage table counts only while
-        /// @p config reads it, so a table released for going unread does not
-        /// drop a field that never read it.
-        FieldInputFormats getFieldInputFormats(const Config &config) const;
-
         // --- Uniform uploads the passes share --------------------------------
         /// The transform and the rect's shape - uMVP, uRectSize,
         /// uCornerRadius - for @p shader at @p scale: everything the gather
@@ -1674,7 +1549,7 @@ namespace EdgeLighting
         /// @pre @c mEmission.buffer is allocated, which @ref Initialize
         ///      guarantees for the renderer's lifetime - hence no failure to
         ///      report and nothing to allocate here.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float huePhase, const Config &config);
+        void renderEmissionPass(float huePhase, const Config &config);
 
         /// Pass 0b: bake the glow coverage table into @c mGlowCover.buffer -
         /// for each piece of the emitter, the arcs' and the segments' coverage

@@ -72,6 +72,7 @@ Studies of specific mechanisms:
 | -------- | ---------- |
 | [`emission-prepass.md`](design/emission-prepass.md) | The per-sample emission table: why it exists, what it is keyed on, and its before / after. |
 | [`neon-frag-notes.md`](design/neon-frag-notes.md) | The measured history behind `neon.frag`'s lines, one section per block in shader order. |
+| [`neon-renderer-notes.md`](design/neon-renderer-notes.md) | The measured history behind `NeonRenderer`'s C++ comments, moved out of the code on 2026-11-12. |
 | [`corner-crease-and-filament-nyquist.md`](design/corner-crease-and-filament-nyquist.md) | The analytic emission's corner and filament defects and their fixes. Read before touching the halo / bloom or filament blocks. |
 | [`glow-side-comparison.md`](design/glow-side-comparison.md) | Edges as coverage on the graded output, and the one-sided cut moved into the blit. |
 | [`glow-inner-reach.md`](design/glow-inner-reach.md) | The glow quad's interior hole with no cutoff set, and the proof it changes no pixel. |
@@ -92,6 +93,7 @@ is the `time` section of
 | document | what it is |
 | -------- | ---------- |
 | [`progress-log.md`](records/progress-log.md) | Dated entries, newest first. |
+| [`change-summary-2026-11-14.md`](records/change-summary-2026-11-14.md) | What the work of 2026-11-09 to 2026-11-14 on top of `d6904ea` changes and why, in one place: config validation, the comment moves, shader comment stripping, the dead API, final allocation failures, the spotlight scale's round trip and the deferred `SetConfig`. |
 | [`review-findings.md`](records/review-findings.md) | The open defects and rough edges in full, with repros, the state table, and a one-line index of every item ever found (the closed items' full text is in git - see Removed below). Check here before assuming a behaviour is intended. |
 | [`naming-review.md`](records/naming-review.md) | Identifier audit against `AGENTS.md`. Read before renaming anything. |
 

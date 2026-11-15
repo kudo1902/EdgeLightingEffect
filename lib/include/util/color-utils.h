@@ -113,7 +113,13 @@ namespace EdgeLighting
             float d = mx - mn;
             if (d > 1e-10f)
             {
-                s = (l > 0.5f) ? d / (2.0f - mx - mn) : d / (mx + mn);
+                // For channels in [0, 1] the denominator is never below the
+                // chroma d, so max() changes nothing there. Past that range -
+                // (1.5, 0.5, 0.5) has 2 - mx - mn = 0 - it divided by zero,
+                // HslToRgb turned the infinity into NaN, and ToByte converted
+                // the NaN (UB); out of gamut the saturation now caps at 1.
+                const float denominator = (l > 0.5f) ? (2.0f - mx - mn) : (mx + mn);
+                s = d / std::max(denominator, d);
                 if (mx == r)
                 {
                     h = std::fmod((g - b) / d, 6.0f);
@@ -229,7 +235,11 @@ namespace EdgeLighting
         /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
         inline unsigned char ToByte(float v)
         {
-            return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
+            // Not std::clamp: a NaN fails both of its comparisons and comes
+            // back NaN, and converting that to unsigned char is undefined.
+            // Identical for every other value; NaN takes 0.
+            const float scaled = v * 255.0f + 0.5f;
+            return scaled > 0.0f ? static_cast<unsigned char>(std::min(scaled, 255.0f)) : 0;
         }
 
         /// @p stops ordered ascending by position, as @ref SampleRing and

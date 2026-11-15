@@ -28,39 +28,6 @@ namespace EdgeLighting
             return result;
         }
 
-        /// Check whether a named GL extension is supported by the current context.
-        inline bool CheckExtension(const char *name)
-        {
-            if (!name)
-            {
-                return false;
-            }
-            for (const auto &ext : GetExtensions())
-            {
-                if (ext == name)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        /// Log all available extensions (optionally filtered by substring match).
-        /// Pass an empty string to log every extension.
-        inline void LogExtensions(const char *filter = "")
-        {
-            std::string f(filter ? filter : "");
-            std::vector<std::string> all = GetExtensions();
-            LOG_I("--- Extensions (%zu total) ---", all.size());
-            for (const auto &ext : all)
-            {
-                if (f.empty() || ext.find(f) != std::string::npos)
-                {
-                    LOG_I("  %s", ext.c_str());
-                }
-            }
-        }
-
         /// Print driver / renderer info strings to the log.
         inline void LogRendererInfo()
         {
@@ -80,55 +47,6 @@ namespace EdgeLighting
             LOG_I("Extensions: %d", numExts);
             LOG_I("---------------");
         }
-
-        /// Check and log any pending GL error. Returns true if no error.
-        /// @param context  Optional label for the log message (e.g. the calling function name).
-        /// Prefer the GL_CHECK_ERROR macro which automatically includes file + line.
-        inline bool CheckGLError(const char *context = nullptr)
-        {
-            GLenum err = glGetError();
-            if (err == GL_NO_ERROR)
-            {
-                return true;
-            }
-
-            const char *label = context ? context : "?";
-            const char *desc = "unknown";
-            switch (err)
-            {
-            case GL_INVALID_ENUM:
-                desc = "GL_INVALID_ENUM";
-                break;
-            case GL_INVALID_VALUE:
-                desc = "GL_INVALID_VALUE";
-                break;
-            case GL_INVALID_OPERATION:
-                desc = "GL_INVALID_OPERATION";
-                break;
-            case GL_OUT_OF_MEMORY:
-                desc = "GL_OUT_OF_MEMORY";
-                break;
-            case GL_INVALID_FRAMEBUFFER_OPERATION:
-                desc = "GL_INVALID_FRAMEBUFFER_OPERATION";
-                break;
-            }
-
-            // GLES 3.0 / desktop 3.3 may not define GL_STACK_* errors, so skip them.
-
-            LOG_E("[%s] GL error: %s (0x%x)", label, desc, err);
-
-            // Flush any additional queued errors.
-            while ((err = glGetError()) != GL_NO_ERROR)
-            {
-                LOG_E("[%s] GL error (chained): 0x%x", label, err);
-            }
-            return false;
-        }
-
-        /// Macro wrapper that passes file:line as context automatically.
-#define GL_UTILS_STR(x) #x
-#define GL_UTILS_XSTR(x) GL_UTILS_STR(x)
-#define GL_CHECK_ERROR() ::EdgeLighting::GLUtils::CheckGLError(__FILE__ ":" GL_UTILS_XSTR(__LINE__))
 
         /// Return the value of a GL integer cap (e.g. GL_MAX_TEXTURE_SIZE).
         inline int GetCap(GLenum cap)

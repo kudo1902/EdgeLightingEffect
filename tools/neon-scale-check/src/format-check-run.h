@@ -56,34 +56,11 @@ namespace NeonScaleCheck
             std::string group; ///< What its quality bound is kept per: layer, variant, scale.
             Config config;
             Variant variant;
-            /// For a flare or spotlight cell below 1.0: the name of the same
+            /// For a flare cell below 1.0: the name of the same
             /// layer's cell at 1.0, which case C must draw - with no buffer to
             /// be had, the layer falls back to 1.0. Empty otherwise.
             std::string fullScaleName;
-            /// Frames it draws; 0 for its variant's (FramesFor).
-            int frames = 0;
-            /// What each frame passes Update, seconds - the frame time an
-            /// out-of-memory failure expires by; negative for its variant's
-            /// (0 still, 1/60 moving).
-            float deltaTime = -1.0f;
-            /// Read the neon's shared buffer back on its last frame
-            /// (RunResult::sharedReads) - every texel, outside the glow's
-            /// window too, which no frame shows.
-            bool readShared = false;
-            /// Replace the run's SetFailedAllocations hook with @c failedHere
-            /// before this cell's first frame - a shortage that changes
-            /// partway through a run, which one hook for the run cannot draw.
-            bool replaceFailed = false;
-            FormatAvailability::ForcedFailure failedHere;
         } Cell;
-
-        /// The neon's shared buffer as a cell's last frame left it.
-        typedef struct SharedRead
-        {
-            std::vector<float> texels; ///< RGBA floats, bottom row first; empty when not read or not ready.
-            glm::ivec2 size{0};        ///< Its texels across and down.
-            glm::ivec4 window{0};      ///< SharedBuffer::GetLastWriteWindow: every texel outside it should be 0.
-        } SharedRead;
 
         /// What a run's FormatAvailability is told, through its verification
         /// hooks.
@@ -93,19 +70,14 @@ namespace NeonScaleCheck
             FormatAvailability::ForcedFailure failed;   ///< SetFailedAllocations: fails nothing by default.
             std::vector<GLint> unknown;                  ///< SetUnknownFormats.
             int maxTextureSize = 0;                      ///< SetMaxTextureSize: 0 lowers nothing.
-            double outOfMemoryRetry = -1.0;              ///< SetOutOfMemoryRetry; negative keeps the library's.
         } Hooks;
 
         /// Everything one run left to judge.
         typedef struct RunResult
         {
             std::vector<RGBA> frames;             ///< Each cell's last frame, over transparent black.
-            /// Per cell, the shared buffer on its last frame - read for a
-            /// cell with readShared whose buffer was ready; empty otherwise.
-            std::vector<SharedRead> sharedReads;
             bool neonPresent = false;             ///< The neon survived Initialize.
             size_t probes = 0;                    ///< FormatAvailability::GetAnswers().size() at the end.
-            std::vector<FormatAvailability::FailedAllocation> failedAllocations; ///< What it kept at the end.
             int glErrorFrames = 0;                ///< Frames after which glGetError was not GL_NO_ERROR.
             std::map<GLint, long> drawFormats;    ///< Offscreen draws by the format they wrote.
             std::map<GLint, int> aliveFormats;    ///< Textures alive at the end, by format.
@@ -133,12 +105,10 @@ namespace NeonScaleCheck
         const Scene *FindScene(const char *id);
 
         /// The main cells: every check scene at 1.0, 0.5 and 0.25, still, hue
-        /// and intensity; a flare and a spotlight at 0.5 and 1.0.
+        /// and intensity; a flare and a spotlight, each at 0.5 and 1.0.
         std::vector<Cell> MakeCells();
-        /// Cases D2, D3 and D5's cells - see MakeRetryCells in the .cpp.
-        std::vector<Cell> MakeRetryCells();
-        /// The size cases D2 and D3 fail allocations from, in texels.
-        int64_t RetryThreshold();
+        /// Case D5's cells - see MakeSizeLimitCells in the .cpp.
+        std::vector<Cell> MakeSizeLimitCells();
 
         /// The message part of a library log line ("[...][LEVEL] file: func(line) > message").
         std::string MessageOf(const std::string &line);
@@ -190,7 +160,7 @@ namespace NeonScaleCheck
         /// FORMAT_QUALITY_BOUNDS, printed. Returns the failures.
         int CheckQualityBounds(const RunResult &a, const RunResult &b, const std::vector<Cell> &cells, bool verbose);
 
-        /// Cases D4, D7, D5, D6, D8 and S (format-check-causes.cpp): what each cause
+        /// Cases D4, D5, D6 and S (format-check-causes.cpp): what each cause
         /// of a failed allocation may block, and a renderer outside an effect.
         /// @p a is case A's run on @p cells, the reference. Returns the
         /// failures.

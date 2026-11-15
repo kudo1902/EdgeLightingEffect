@@ -8,181 +8,103 @@ namespace EdgeLighting
 {
     namespace
     {
-        void writeScalar(Config &cfg, AnimatableField field, float value)
+        /// The scalar leaf @p field names in @p cfg - a float in a Config or a
+        /// const one, as @p cfg is - or nullptr for a value that names none.
+        /// One switch for the write and the read: a field added to
+        /// AnimatableField is mapped here once.
+        template <typename ConfigType>
+        auto scalarSlot(ConfigType &cfg, AnimatableField field) -> decltype(&cfg.neon.intensity)
         {
             switch (field)
             {
             case AnimatableField::NEON_INTENSITY:
             {
-                cfg.neon.intensity = value;
-                break;
+                return &cfg.neon.intensity;
             }
             case AnimatableField::NEON_LINE_WIDTH:
             {
-                cfg.neon.lineWidth = value;
-                break;
+                return &cfg.neon.lineWidth;
             }
             case AnimatableField::NEON_GLOW_RADIUS:
             {
-                cfg.neon.glowRadius = value;
-                break;
+                return &cfg.neon.glowRadius;
             }
             case AnimatableField::NEON_BLOOM_STRENGTH:
             {
-                cfg.neon.bloomStrength = value;
-                break;
+                return &cfg.neon.bloomStrength;
             }
             case AnimatableField::NEON_FILAMENT_FALLOFF:
             {
-                cfg.neon.filamentFalloff = value;
-                break;
+                return &cfg.neon.filamentFalloff;
             }
             case AnimatableField::NEON_GLOW_SIDE_SOFTNESS:
             {
-                cfg.neon.glowSideSoftness = value;
-                break;
+                return &cfg.neon.glowSideSoftness;
             }
             case AnimatableField::NEON_HUE_ROTATION_RATE:
             {
-                cfg.neon.hueRotationRate = value;
-                break;
+                return &cfg.neon.hueRotationRate;
             }
             case AnimatableField::LENS_FLARE_PERIMETER_POSITION:
             {
-                cfg.lensFlare.perimeterPosition = value;
-                break;
+                return &cfg.lensFlare.perimeterPosition;
             }
             case AnimatableField::LENS_FLARE_PERIMETER_OFFSET:
             {
-                cfg.lensFlare.perimeterOffset = value;
-                break;
+                return &cfg.lensFlare.perimeterOffset;
             }
             case AnimatableField::LENS_FLARE_SIZE:
             {
-                cfg.lensFlare.size = value;
-                break;
+                return &cfg.lensFlare.size;
             }
             case AnimatableField::LENS_FLARE_INTENSITY:
             {
-                cfg.lensFlare.intensity = value;
-                break;
+                return &cfg.lensFlare.intensity;
             }
             case AnimatableField::LENS_FLARE_SPREAD:
             {
-                cfg.lensFlare.spread = value;
-                break;
+                return &cfg.lensFlare.spread;
             }
             case AnimatableField::LENS_FLARE_GHOST_SPACING:
             {
-                cfg.lensFlare.ghostSpacing = value;
-                break;
+                return &cfg.lensFlare.ghostSpacing;
             }
             case AnimatableField::LENS_FLARE_GHOST_SIZE:
             {
-                cfg.lensFlare.ghostSize = value;
-                break;
+                return &cfg.lensFlare.ghostSize;
             }
             case AnimatableField::LENS_FLARE_GHOST_OFFSET:
             {
-                cfg.lensFlare.ghostOffset = value;
-                break;
+                return &cfg.lensFlare.ghostOffset;
             }
             case AnimatableField::LENS_FLARE_GHOST_TINT:
             {
-                cfg.lensFlare.ghostTint = value;
-                break;
+                return &cfg.lensFlare.ghostTint;
             }
             case AnimatableField::LENS_FLARE_RAY_DENSITY:
             {
-                cfg.lensFlare.rayDensity = value;
-                break;
+                return &cfg.lensFlare.rayDensity;
             }
             case AnimatableField::LENS_FLARE_ROTATION_RATE:
             {
-                cfg.lensFlare.rotationRate = value;
-                break;
+                return &cfg.lensFlare.rotationRate;
             }
+            }
+            return nullptr;
+        }
+
+        void writeScalar(Config &cfg, AnimatableField field, float value)
+        {
+            if (float *slot = scalarSlot(cfg, field))
+            {
+                *slot = value;
             }
         }
 
         float readScalar(const Config &cfg, AnimatableField field)
         {
-            switch (field)
-            {
-            case AnimatableField::NEON_INTENSITY:
-            {
-                return cfg.neon.intensity;
-            }
-            case AnimatableField::NEON_LINE_WIDTH:
-            {
-                return cfg.neon.lineWidth;
-            }
-            case AnimatableField::NEON_GLOW_RADIUS:
-            {
-                return cfg.neon.glowRadius;
-            }
-            case AnimatableField::NEON_BLOOM_STRENGTH:
-            {
-                return cfg.neon.bloomStrength;
-            }
-            case AnimatableField::NEON_FILAMENT_FALLOFF:
-            {
-                return cfg.neon.filamentFalloff;
-            }
-            case AnimatableField::NEON_GLOW_SIDE_SOFTNESS:
-            {
-                return cfg.neon.glowSideSoftness;
-            }
-            case AnimatableField::NEON_HUE_ROTATION_RATE:
-            {
-                return cfg.neon.hueRotationRate;
-            }
-            case AnimatableField::LENS_FLARE_PERIMETER_POSITION:
-            {
-                return cfg.lensFlare.perimeterPosition;
-            }
-            case AnimatableField::LENS_FLARE_PERIMETER_OFFSET:
-            {
-                return cfg.lensFlare.perimeterOffset;
-            }
-            case AnimatableField::LENS_FLARE_SIZE:
-            {
-                return cfg.lensFlare.size;
-            }
-            case AnimatableField::LENS_FLARE_INTENSITY:
-            {
-                return cfg.lensFlare.intensity;
-            }
-            case AnimatableField::LENS_FLARE_SPREAD:
-            {
-                return cfg.lensFlare.spread;
-            }
-            case AnimatableField::LENS_FLARE_GHOST_SPACING:
-            {
-                return cfg.lensFlare.ghostSpacing;
-            }
-            case AnimatableField::LENS_FLARE_GHOST_SIZE:
-            {
-                return cfg.lensFlare.ghostSize;
-            }
-            case AnimatableField::LENS_FLARE_GHOST_OFFSET:
-            {
-                return cfg.lensFlare.ghostOffset;
-            }
-            case AnimatableField::LENS_FLARE_GHOST_TINT:
-            {
-                return cfg.lensFlare.ghostTint;
-            }
-            case AnimatableField::LENS_FLARE_RAY_DENSITY:
-            {
-                return cfg.lensFlare.rayDensity;
-            }
-            case AnimatableField::LENS_FLARE_ROTATION_RATE:
-            {
-                return cfg.lensFlare.rotationRate;
-            }
-            }
-            return 0.0f;
+            const float *slot = scalarSlot(cfg, field);
+            return slot ? *slot : 0.0f;
         }
 
         // No auto-grow: the slot must already exist (size the pool via the C

@@ -40,7 +40,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, V29, I13, I18, I82, I83, I84, I86, I88, I90, I91, I92 |
+| open | V9, V16, V18, V29, I13, I18, I82, I83, I86, I88, I90, I91, I92 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-eighth pass |
 
@@ -501,23 +501,6 @@ caches state, as DALi's does, draws its next frame on stale assumptions. The
 fix is both lists in `BaseRenderer` and `EdgeLightingEffect::Render`'s docs,
 and an opt-in save / restore scope beside the existing `GLUtils` guards.
 
-### I84. The embedded shader text is 85% comments - OPEN
-
-*From the Thirty-fourth pass.*
-
-**Measured** on `build/lib/generated/shaders.h` with a regular expression that
-drops `//` and `/* */` comments and blank lines: 692 KB of shader source
-across the library's programs, 105 KB without comments. `NEON_FRAG_SRC` is
-150 KB, 32 KB without; `neon-tuning.h` alone injects about 50 KB of prose into
-each of the seven neon shader sources, ten programs between them - the emission
-pre-pass is 54 KB of source for 5 KB of code. All of it is compiled into the
-library and handed to the driver's compiler, whose first-frame cost several
-items above went to lengths to cut. Stripping comments in `lib/CMakeLists.txt`
-before `configure_file` - GLSL has no string literals, so it is safe on the
-shader files; the tuning headers' `#define` lines survive it - would remove
-both costs, and one more if the `PLATFORM_WINDOWS` branch is ever finished:
-MSVC refuses a string literal over 16 KB (C2026).
-
 ### I86. The C ABI logs on paths a host calls every frame - OPEN
 
 *From the Thirty-fifth pass.*
@@ -720,7 +703,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I81 | fixed | uniform lookups key on a string_view into names stored once; no allocation per call |
 | [I82](#i82-the-output-dither-is-added-where-the-glow-is-0---open) | open | the output dither is added where the glow is an exact 0: noise over the host's pixels on a non-8-bit target, no blend skip, and the "changes no pixel" proofs of the interior hole and the corner skip predate it |
 | [I83](#i83-what-the-library-leaves-changed-in-the-hosts-gl-state-is-not-documented---open) | open | the GL state a frame leaves changed (VAO and array buffer, program 0, texture units 0-7, uniform-buffer bindings 0-3, blending on) is undocumented, and unpack state and the read framebuffer are assumed without being listed |
-| [I84](#i84-the-embedded-shader-text-is-85-comments---open) | open | 692 KB of embedded shader source is 85% comments (`neon-tuning.h`'s ~50 KB of prose in each of seven neon sources); a configure-time strip would cut library size and driver lexing, and clear MSVC's 16 KB literal limit |
+| I84 | fixed | the embedded shader source was 85% comments; `lib/CMakeLists.txt` now reads every injected text from one list and strips its `//` comments, keeping newlines so error line numbers hold - `shaders.h` 936 -> 162 KB, the C ABI dylib 2.15 -> 1.38 MB (`__cstring` 1.05 -> 0.28 MB), every image byte-identical, all gates pass (2026-11-13). The largest literal is still 34.7 KB, so MSVC's 16 KB limit is not cleared |
 | V33 | fixed | an HSV or HSL blend toward an achromatic stop took its hue as 0 and swept toward red; an achromatic endpoint (saturation 0, or HSV value 0) now takes the other stop's hue - blue -> white HSV mid (1.0, 0.5, 1.0) -> (0.5, 0.5, 1.0); RGB unchanged |
 | V34 | fixed | the colour cross-fade restarted on every bake, so a stop edited each frame lagged (23% of a one-second drag shown at its end); a fade retargeted in flight now chases the new target exponentially at a time constant of a third of the duration - lag 0.77 -> 0.09; a change from rest keeps the smoothstep |
 | I85 | fixed | `CaptureUtil::ReadRegion` tested `GL_SAMPLES`, the DRAW framebuffer's, so a single-sample capture read after `End` was refused under a multisampled window; the pre-check is gone (glReadPixels' own INVALID_OPERATION is named instead) and a host pack buffer is unbound for the read and restored |
@@ -736,12 +719,15 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I93 | changed | the library learned which render-target formats a driver renders only by failing a full-size allocation - nothing at startup said so, the half-float fields built their three programs before finding out, and no tool could reach the 8-bit fallback rows (both Macs render every format); one `FormatAvailability` per effect (`RenderTargetFormats` until 2026-10-31) now probes each format once (`Framebuffer::IsColorRenderable`: a 4 x 4 texture and `glCheckFramebufferStatus`), logs a startup report, and is asked by every format walk at its allocation and by both fields before their programs are built, and `neon-scale-check formats` refuses formats through it - every frame on both Macs unchanged (the `cover` set byte-identical); half float refused: no refused format drawn, no field program built, every scene within 3 levels of the unrefused frame but `segments` (~53, its boosts of 2.0 clamped by the emission table's RGBA8 row); 0.22 ms at startup on the AMD 5300M; same-day reviews: 13 findings (12 fixed), 7 and 4 (all fixed), then an architecture review, 6 (4 fixed) - a probe with no status for a reason that says nothing about the format is kept as unknown and the full-size allocation decides, where it had been a permanent 'no'; every full-size failure is recorded with its size, so no buffer keeps a tier and a format is tried again below the size that failed; `Resize` fails on its allocation's own GL error, not completeness alone; the flare and the spotlight draw at 1.0 when no scaled buffer allocates; a code review (2026-10-28) found an out-of-memory failure still kept for the effect's life, and against every larger buffer of its format, so one passing shortage left the shared buffer at 8 bits (its contour rings back) for good - it now expires after 2 s of frame time, doubling with each retry that fails again up to 512 s, and every buffer that fell back past it moves back up, those a still frame reuses included (`formats` case D8); a second code review (2026-10-29) found three defects in that, all fixed, each with a `formats` check that fails without its fix - a retry that ran out again reallocated the shared buffer at its size and format, so `BeginWrite` cleared only the glow's window and left every other texel undefined (`Framebuffer::GetAllocationCount` now tells it), a reused still frame never asked about a gather that fell alone (its buffer outgrows the shared one at scale 1/16), and a field dropped for a moved input waited two frames to bake again, not one; an architecture review (2026-10-31) traced those to the move-up and stale-texel checks being hand-placed at 13 sites, and one type now owns each buffer and its format list (`FormatTarget`, since 2026-11-01 `AdaptiveFormatTarget`): moved back up in one place per renderer, every cache over its texels keyed on its generation, one row type for every list. A review of that type (2026-11-01) named each buffer once, moved the walk into `FormatAvailability` behind two private calls and named the library's lists once, the startup report's rows coming from them - so the report is no longer a hand-kept copy. Open from the architecture reviews: the five verification hooks live in the production class, where one injected seam would do; the `formats` gate reads log text, and one expected-zero check (case E's skips) has no positive control; each invariant is restated in five to eight documents, which drift; a failure of one buffer demotes the others of its format, and which buffer takes a retry follows the walk order - by design, but undecided; see [`render-target-format-check-plan.md`](../design/render-target-format-check-plan.md) |
 | V37 | fixed | a shared-buffer move back up whose retry and RGBA8 fallback both ran out of memory released the buffer without moving its generation, so every still frame after it reused the released buffer and blitted texture 0 - opaque black over 864,252 of 921,600 px at 1280 x 720, everything but the edge ring, for as long as the config held; a target's generation now moves when it loses its buffer (`AdaptiveFormatTarget::GetGeneration`), that frame draws the fill alone and the buffer comes back as each failure expires - `formats` D8 checks it on `card_outside`, and fails both checks (255 and 242 levels) against the build before |
 | I104 | fixed | `el_animation_set_duration(a, 0)` - and `SetDuration(0)` - took 0 for a preset that builds its oscillator from its duration: a frequency of infinity, NaN in the config every frame, never equal to itself, so no renderer could skip work again; the 13 duration-built presets now refuse anything under 1e-6 s, 0 included - 1e-40 s is above 0 and its reciprocal is infinity too (`Animation::AcceptsDuration`, `PositiveDurationAnimation::MIN_DURATION_SECONDS`, which the C factories check as well), `SetDuration` returns false, the C ABI `EL_ERROR_INVALID_PARAMETER`, as their factories always did, and a constructor handed 0 holds its cycle's start rather than divide by it |
+| I105 | fixed | the spotlight's reach solve (`SolveConeReach`) bisected to a 1 px tolerance, which a throw past ~1.7e7 px cannot meet: its ends became adjacent floats and the loop never ended - one lamp at `throwLength` 1e10 with `spreadFalloff` 0 and `SetConfig` / `el_effect_update` never returned (reproduced through both APIs); the bisection now stops when its midpoint makes no progress, and `ConfigValidation` holds every length to 1e5 px |
+| V38 | fixed | a rect whose negative width outweighed its height gave the neon a negative perimeter, and the glow coverage bake, handed every length as a fraction of it, hung the GPU on every frame that baked it with segments on (macOS "Caused GPU Hang Error", any viewport size; found by fuzzing) - -640 or +1e10 did not hang; `ConfigValidation` keeps a rect's sides at 0 or more, and `NeonRenderer` draws no glow for a negative side it is handed directly |
+| I106 | fixed | `GetSubWindow` converted a texel index to int before clamping it, so a rect 1e10 px off the viewport was a float-to-int overflow and a signed overflow after it (UBSan); it now clamps as floats and converts, identical for every index a float holds exactly |
+| I107 | fixed | `GetGlowInnerReach` and `GetCornerSkip` bisect to 0.25 px, which a crossing past ~4e6 px cannot meet - the fuzzer's first hang sat in `GetCornerArcBound`; both stop on a stalled midpoint (`BisectionStalled`), keeping the cautious side, and `ConfigValidation` keeps the inputs far below that |
+| I108 | fixed | an HSL blend of a stop with channels past 1 - (1.5, 0.5, 0.5) - divided its saturation by 2 - mx - mn = 0, `HslToRgb` turned the infinity into NaN, and `ToByte` converted the NaN to unsigned char (UB; the only report the config fuzzer left once I105-I107 and V38 were fixed); the saturation divides by max(denominator, chroma) - unchanged for channels in [0, 1], 1 past them - and `ToByte` maps NaN to 0 |
 
-One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
-virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
-nothing uses, but it lives in a shared GL wrapper with a blast radius well
-outside the LUTs. It is recorded at the point where someone would trip over it
-rather than tracked as a defect here.
+`Texture`'s virtual destructor, measured in I9 and deliberately left off this
+list, is gone: on 2026-11-13 `Texture`, whose only subclass was `Texture2D`,
+was folded into it, so a LUT no longer carries a vptr.
 
 If any of these comes back, the fastest way to reproduce a VISUAL item is the
 harness described at the top of this document - the configs for every case are

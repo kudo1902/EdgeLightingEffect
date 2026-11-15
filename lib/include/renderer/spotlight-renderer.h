@@ -69,8 +69,10 @@ namespace EdgeLighting
     /// or the flare's bargain: those shade the whole viewport, so quartering
     /// their fragments always beats a blit. This pass already bounds itself to
     /// what the lamps light, so the blit's full viewport of fragments is a
-    /// FIXED cost it may not earn back - measured, it wins only above about
-    /// six lamps at default settings. The default is 1.0 for that reason.
+    /// FIXED cost it may not earn back - measured in frame time, it loses
+    /// below about six lamps and wins above (0.6-0.7x at 0.5 on eight lamps,
+    /// 0.4x on a wide, bloomed rig). The default is 1.0 for that reason; see
+    /// docs/guides/spotlight-renderer.md section 6.
     ///
     /// **The geometry is the interesting part.** Each lamp gets a strip of
     /// @c SPOT_STRIP_SEGMENTS quads that hugs the region where that lamp

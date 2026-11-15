@@ -121,7 +121,10 @@ namespace EdgeLighting
         /// @param config     Current active configuration.
         virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) = 0;
 
-        /// Called when the configuration changes (e.g. on key press).
+        /// Called when the configuration a renderer sees has changed: by the
+        /// effect from its Update or its Render, never from SetConfig, so at
+        /// most once a frame and where the frame's GL work belongs - and once,
+        /// with the current config, when the renderer is registered.
         /// @param config  The new configuration to adapt to.
         virtual void OnConfigChanged(const Config &config) = 0;
 
@@ -154,14 +157,6 @@ namespace EdgeLighting
         /// base-renderer.cpp, since this header only declares the class.
         FormatAvailability &GetFormatAvailability();
 
-        /// Move the frame time of the object this renderer made for itself
-        /// (@ref GetFormatAvailability, outside an effect) on by
-        /// @p deltaTime, so its out-of-memory failures expire as an effect's
-        /// do (FormatAvailability::Advance); a no-op on the effect's object,
-        /// which the effect advances once a frame for all its renderers. A
-        /// renderer with an AdaptiveFormatTarget calls this from its Update.
-        void AdvanceOwnFormatAvailability(float deltaTime);
-
     private:
         /// Only the effect hands a renderer its registry, once, as it registers
         /// it - so no renderer can be pointed at another effect's after it has
@@ -182,7 +177,6 @@ namespace EdgeLighting
         void setFormatAvailability(const std::shared_ptr<FormatAvailability> &availability)
         {
             mFormatAvailability = availability;
-            mOwnsFormatAvailability = false;
         }
 
     private:
@@ -190,9 +184,6 @@ namespace EdgeLighting
         /// See @ref GetFormatAvailability. A shared_ptr to a declared-only
         /// type is fine here: its deleter is captured where it is made.
         std::shared_ptr<FormatAvailability> mFormatAvailability;
-        /// @c mFormatAvailability is one this renderer made, outside an
-        /// effect - see @ref AdvanceOwnFormatAvailability.
-        bool mOwnsFormatAvailability = false;
     };
 
 } // namespace EdgeLighting

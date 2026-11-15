@@ -144,68 +144,71 @@ struct el_modulator_handle_impl
 // ==========================================================================
 // Validation helpers
 // ==========================================================================
-#define VALIDATE_EFFECT_PTR(effect, fn)      \
-    do                                       \
-    {                                        \
-        if (!(effect))                       \
-        {                                    \
-            LOG_E("%s: effect is null", fn); \
-            return EL_ERROR_INVALID_HANDLE;  \
-        }                                    \
+// Each one logs under the name of the entry point it expands in (__func__),
+// so no call site spells that name out. Never use one inside a lambda, whose
+// __func__ is "operator()".
+#define VALIDATE_EFFECT_PTR(effect)                \
+    do                                             \
+    {                                              \
+        if (!(effect))                             \
+        {                                          \
+            LOG_E("%s: effect is null", __func__); \
+            return EL_ERROR_INVALID_HANDLE;        \
+        }                                          \
     } while (0)
 
-#define VALIDATE_ANIM_PTR(anim, fn)         \
-    do                                      \
-    {                                       \
-        if (!(anim))                        \
-        {                                   \
-            LOG_E("%s: anim is null", fn);  \
-            return EL_ERROR_INVALID_HANDLE; \
-        }                                   \
+#define VALIDATE_ANIM_PTR(anim)                  \
+    do                                           \
+    {                                            \
+        if (!(anim))                             \
+        {                                        \
+            LOG_E("%s: anim is null", __func__); \
+            return EL_ERROR_INVALID_HANDLE;      \
+        }                                        \
     } while (0)
 
-#define VALIDATE_MOD_PTR(mod, fn)           \
-    do                                      \
-    {                                       \
-        if (!(mod))                         \
-        {                                   \
-            LOG_E("%s: mod is null", fn);   \
-            return EL_ERROR_INVALID_HANDLE; \
-        }                                   \
+#define VALIDATE_MOD_PTR(mod)                   \
+    do                                          \
+    {                                           \
+        if (!(mod))                             \
+        {                                       \
+            LOG_E("%s: mod is null", __func__); \
+            return EL_ERROR_INVALID_HANDLE;     \
+        }                                       \
     } while (0)
 
-#define VALIDATE_OUT_PTR(ptr, fn)                 \
-    do                                            \
-    {                                             \
-        if (!(ptr))                               \
-        {                                         \
-            LOG_E("%s: out pointer is null", fn); \
-            return EL_ERROR_INVALID_PARAMETER;    \
-        }                                         \
+#define VALIDATE_OUT_PTR(ptr)                           \
+    do                                                  \
+    {                                                   \
+        if (!(ptr))                                     \
+        {                                               \
+            LOG_E("%s: out pointer is null", __func__); \
+            return EL_ERROR_INVALID_PARAMETER;          \
+        }                                               \
     } while (0)
 
 /// Rejects a foreign integer that names no enumerator of @c type (one of the
 /// isValid* predicates below). A C caller can pass any int through an enum
 /// parameter, and a static_cast to the C++ enum would store it unchecked.
-#define VALIDATE_ENUM(type, value, fn)                                 \
-    do                                                                 \
-    {                                                                  \
-        if (!isValid(static_cast<type>(value)))                        \
-        {                                                              \
-            LOG_E("%s: invalid %s value %d", fn, #type, (int)(value)); \
-            return EL_ERROR_INVALID_PARAMETER;                         \
-        }                                                              \
+#define VALIDATE_ENUM(type, value)                                           \
+    do                                                                       \
+    {                                                                        \
+        if (!isValid(static_cast<type>(value)))                              \
+        {                                                                    \
+            LOG_E("%s: invalid %s value %d", __func__, #type, (int)(value)); \
+            return EL_ERROR_INVALID_PARAMETER;                               \
+        }                                                                    \
     } while (0)
 
 /// Rejects a negative index before it is cast to size_t.
-#define VALIDATE_INDEX(index, fn)                 \
-    do                                            \
-    {                                             \
-        if ((index) < 0)                          \
-        {                                         \
-            LOG_E("%s: negative %s", fn, #index); \
-            return EL_ERROR_INVALID_PARAMETER;    \
-        }                                         \
+#define VALIDATE_INDEX(index)                           \
+    do                                                  \
+    {                                                   \
+        if ((index) < 0)                                \
+        {                                               \
+            LOG_E("%s: negative %s", __func__, #index); \
+            return EL_ERROR_INVALID_PARAMETER;          \
+        }                                               \
     } while (0)
 
 /// Whether every value in @p values is finite. One NaN in the config makes
@@ -225,29 +228,29 @@ inline bool AllFinite(std::initializer_list<double> values)
 
 /// Rejects a call any of whose float arguments is NaN or infinite, returning
 /// @p failure (EL_ERROR_INVALID_PARAMETER, or nullptr from a factory).
-#define REQUIRE_FINITE(fn, failure, ...)                             \
-    do                                                               \
-    {                                                                \
-        if (!AllFinite({__VA_ARGS__}))                               \
-        {                                                            \
-            LOG_E("%s: non-finite argument (%s)", fn, #__VA_ARGS__); \
-            return failure;                                          \
-        }                                                            \
+#define REQUIRE_FINITE(failure, ...)                                       \
+    do                                                                     \
+    {                                                                      \
+        if (!AllFinite({__VA_ARGS__}))                                     \
+        {                                                                  \
+            LOG_E("%s: non-finite argument (%s)", __func__, #__VA_ARGS__); \
+            return failure;                                                \
+        }                                                                  \
     } while (0)
 
 /// Rejects a negative duration - or, when @p strict (a preset's), one below
 /// PositiveDurationAnimation::MIN_DURATION_SECONDS: "above 0" let 1e-40 s
 /// through, whose reciprocal is infinity, and the preset wrote NaN.
-#define REQUIRE_DURATION(fn, failure, duration, strict)                                                         \
-    do                                                                                                          \
-    {                                                                                                           \
-        const float minimumDuration =                                                                           \
-            (strict) ? EdgeLighting::PositiveDurationAnimation::MIN_DURATION_SECONDS : 0.0f;                    \
-        if (!((duration) >= minimumDuration))                                                                   \
-        {                                                                                                       \
-            LOG_E("%s: duration %g must be at least %g", fn, (double)(duration), (double)minimumDuration);      \
-            return failure;                                                                                     \
-        }                                                                                                       \
+#define REQUIRE_DURATION(failure, duration, strict)                                                              \
+    do                                                                                                           \
+    {                                                                                                            \
+        const float minimumDuration =                                                                            \
+            (strict) ? EdgeLighting::PositiveDurationAnimation::MIN_DURATION_SECONDS : 0.0f;                     \
+        if (!((duration) >= minimumDuration))                                                                    \
+        {                                                                                                        \
+            LOG_E("%s: duration %g must be at least %g", __func__, (double)(duration), (double)minimumDuration); \
+            return failure;                                                                                      \
+        }                                                                                                        \
     } while (0)
 
 /// Short-circuit setter that only logs + assigns when the incoming value

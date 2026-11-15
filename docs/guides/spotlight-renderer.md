@@ -654,7 +654,7 @@ beats a blit. This layer already bounds its geometry to what the lamps light,
 so the blit's full viewport of fragments is a **fixed cost it may never earn
 back**.
 
-Measured with an occlusion query at 1280x720 (fragments, and as a percentage of
+Counted with an occlusion query at 1280x720 (fragments, and as a percentage of
 the 921,600-fragment viewport):
 
 | scene | scale 1.0 | scale 0.5 | scale 0.25 |
@@ -663,14 +663,36 @@ the 921,600-fragment viewport):
 | five-lamp fan | 1,131,073 (123%) | 1,204,301 (131%) | 992,285 (108%) |
 | eight lamps | 1,900,287 (206%) | **1,396,661 (152%)** | **1,040,340 (113%)** |
 
-A single lamp at 0.5 costs **5.3x more** than at 1.0. The crossover is where
-the full-res strips exceed `blit / (1 - scale^2)`: at 0.5 that is about 1.23M
-fragments, which the five-lamp fan sits just under and the eight-lamp rig
-clears - winning 1.36x at 0.5 and 1.83x at 0.25. At 0.75 nothing in range wins
-at all.
+**Those are fragments, not time, and they overstate the blit** - a blit
+fragment is one filtered fetch and a dither; a lamp fragment runs the falloff,
+the bloom window and the colour - though the crossover they predict, about six
+lamps, holds. Measured wall-clock time per frame (the layer alone, `Render`
+300 times then one `glFinish`, median of seven rounds, no timer query in the
+loop; Apple M2 Pro, Release, 2026-11-14), as the time at that scale over the
+time at 1.0 - below 1 is faster; lamp positions, throws, apertures and bloom
+radii scaled with the frame height:
 
-**Lower it only for a large rig, and measure.** Both demo UIs warn inline once
-the scale drops below 1.0.
+| scene | 1280x720: 1.0 / 0.5 / 0.25 | 1920x1080: 1.0 / 0.5 / 0.25 | 3840x2160: 1.0 / 0.5 / 0.25 |
+| ----- | -------------------------- | --------------------------- | --------------------------- |
+| one lamp | 0.013 ms / 5.24x / 5.03x | 0.011 ms / 6.28x / 6.18x | 0.027 ms / 17.1x / 14.3x |
+| three lamps | 0.021 ms / 3.23x / 3.14x | 0.037 ms / 1.98x / 1.84x | 0.138 ms / 3.62x / 2.89x |
+| five lamps | 0.053 ms / 1.28x / 1.28x | 0.102 ms / 0.93x / **0.68x** | 0.484 ms / 1.19x / 0.87x |
+| eight lamps | 0.101 ms / **0.66x / 0.67x** | 0.224 ms / **0.60x / 0.32x** | 0.933 ms / **0.72x / 0.49x** |
+| eight wide lamps, bloom radius 60 | 0.302 ms / **0.40x / 0.22x** | 0.750 ms / **0.34x / 0.14x** | 3.029 ms / **0.41x / 0.19x** |
+
+So a small rig never earns the blit back (one lamp at 4K is 17x slower at
+0.5 - 0.03 ms against 0.46), five lamps is about break-even, and from eight
+lamps, or with cones and blooms that cover much of the frame, the scaled path
+wins - 2.4x to 2.9x at 0.5 and up to 7x at 0.25 on the widest rig. `GL_TIME_ELAPSED`
+queries around `Render` read the same order but flatter (five lamps 0.82x to
+0.90x at 0.5), so use them as ratios only. The scaled buffer is the price in
+memory: 1.8 MB at 720p, 4.0 MB at 1080p and 15.8 MB at 4K at 0.5 (a quarter of
+that at 0.25), allocated only while the scale is below 1.0. Unmeasured on the
+AMD 5300M and the Tizen device. (The layer's scaled path was removed on
+2026-11-14 as never paying and restored the same day on these times.)
+
+**Lower it for a large rig (about eight lamps, or wide blooms), and measure.**
+Both demo UIs warn inline once the scale drops below 1.0.
 
 Two other cost facts worth having:
 
