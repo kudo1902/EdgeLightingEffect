@@ -28,11 +28,16 @@ namespace NeonScaleCheck
         /// GLES 3.0 with neither EXT_color_buffer_half_float nor
         /// EXT_color_buffer_float: no 16-bit float target renders.
         inline const std::vector<GLint> HALF_FLOAT = {GL_RGBA16F, GL_RG16F, GL_R16F};
+        /// Every format finer than 8 bits: half float and the ten-bit format
+        /// of the reduced buffers (the neon's shared buffer, the flare's),
+        /// which GLES 3.0 renders with no extension - so no conforming driver
+        /// is this one. It is what puts EVERY buffer on its 8-bit row.
+        inline const std::vector<GLint> ABOVE_8_BITS = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGB10_A2};
         /// Every format the library allocates: nothing renders.
-        inline const std::vector<GLint> EVERYTHING = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
+        inline const std::vector<GLint> EVERYTHING = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGB10_A2, GL_RGBA8, GL_RG8};
         /// The startup report's rows (FormatAvailability::LogReport): what a
         /// run probes, less what a hook answers instead.
-        inline constexpr GLint REPORT_ROWS[] = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGBA8, GL_RG8};
+        inline constexpr GLint REPORT_ROWS[] = {GL_RGBA16F, GL_RG16F, GL_R16F, GL_RGB10_A2, GL_RGBA8, GL_RG8};
 
         inline constexpr float CELL_SCALES[] = {1.0f, 0.5f, 0.25f};
         inline constexpr const char *CELL_SCALE_TAGS[] = {"s1000", "s500", "s250"};
@@ -156,9 +161,10 @@ namespace NeonScaleCheck
         /// Lines of @p lines holding @p needle and, if given, @p also.
         int CountLines(const std::vector<std::string> &lines, const char *needle, const char *also = nullptr);
 
-        /// B against A, the worst cell per group against
+        /// @p b (called @p label) against A, the worst cell per group against
         /// FORMAT_QUALITY_BOUNDS, printed. Returns the failures.
-        int CheckQualityBounds(const RunResult &a, const RunResult &b, const std::vector<Cell> &cells, bool verbose);
+        int CheckQualityBounds(const RunResult &a, const RunResult &b, const char *label,
+                               const std::vector<Cell> &cells, bool verbose);
 
         /// Cases D4, D5, D6 and S (format-check-causes.cpp): what each cause
         /// of a failed allocation may block, and a renderer outside an effect.

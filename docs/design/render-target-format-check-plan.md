@@ -18,6 +18,14 @@ out-of-memory expiry, the move back up (`Refresh`) and the `formats` cases
 D2, D3, D7 and D8 that this plan and its later notes describe were removed
 (`docs/guides/upgrade-notes.md` section 12). The rest stands.
 
+Since 2026-11-16 (I109) there is a fifth list, `RGB10_A2_THEN_RGBA8`, walked
+by the neon's shared buffer and the flare's scaled buffer, which were on
+`RGBA16F_THEN_RGBA8` when this plan was written: the report has six rows, a
+driver without half-float targets keeps those two buffers at ten bits, and
+`formats` case B8 refuses RGB10_A2 as well to reach their RGBA8 rows. Where
+this plan says the shared buffer is RGBA16F, or falls to RGBA8 with half float
+refused, read that as its state then.
+
 The short version: one function asks the driver whether it can render to a
 format (a 4 x 4 texture, an FBO, `glCheckFramebufferStatus`). One object per
 effect - `RenderTargetFormats`, owned by `EdgeLightingEffect` and handed to

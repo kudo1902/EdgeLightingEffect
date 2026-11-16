@@ -54,6 +54,10 @@ namespace NeonTools
             const int channels = 1 + (g == r) + (b == r) + (a == r);
             const bool contiguous = (g == r || g == 0) && (b == r || b == 0) && (a == r || a == 0) &&
                                     !(g == 0 && (b != 0 || a != 0)) && !(b == 0 && a != 0);
+            if (componentType == GL_UNSIGNED_NORMALIZED && r == 10 && g == 10 && b == 10 && a == 2)
+            {
+                return GL_RGB10_A2;
+            }
             if (!contiguous)
             {
                 return 0;
@@ -151,6 +155,11 @@ namespace NeonTools
             }
             switch (type)
             {
+            case GL_UNSIGNED_INT_2_10_10_10_REV:
+            {
+                // Packed: one 32-bit word a texel, RGBA only (RGB10_A2).
+                return format == GL_RGBA ? 4 : 0;
+            }
             case GL_UNSIGNED_BYTE:
             {
                 return channels;

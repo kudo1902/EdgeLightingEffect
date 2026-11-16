@@ -24,13 +24,15 @@ namespace EdgeLighting
     } TextureFormat;
 
     /// Whether @p internalFormat stores values between 8-bit levels - a float
-    /// format. A buffer in one keeps a gradient unrounded, so whatever reads
-    /// it back dithers once; an 8-bit one has already rounded it, so the pass
-    /// that writes it dithers too.
+    /// format, or ten bits a channel (a quarter level). A buffer in one keeps
+    /// a gradient finer than the output, so whatever reads it back dithers
+    /// once; an 8-bit one has already rounded it, so the pass that writes it
+    /// dithers too.
     inline bool HoldsSubLevels(GLint internalFormat)
     {
         switch (internalFormat)
         {
+        case GL_RGB10_A2:
         case GL_R16F:
         case GL_RG16F:
         case GL_RGB16F:
@@ -101,6 +103,17 @@ namespace EdgeLighting
         {GL_RG16F, GL_RG, GL_HALF_FLOAT, "RG16F"},
         {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, "RG8"},
     };
+    /// Ten bits a channel, then 8: for OUTPUT - colour in [0, 1], already
+    /// tone-mapped - that is read back filtered and dithered on its way to
+    /// an 8-bit target. Half the bytes of RGBA16F, and a quarter level is all
+    /// the dither needs (it adds half a level). Its alpha is 2 bits, so only
+    /// for a buffer whose alpha its readers can rebuild from the colour.
+    /// RGB10_A2 is colour-renderable in GL 3.3 core and GLES 3.0 with no
+    /// extension, so the 8-bit row is for a driver that breaks that rule.
+    inline constexpr TextureFormat RGB10_A2_THEN_RGBA8[] = {
+        {GL_RGB10_A2, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, "RGB10_A2"},
+        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
+    };
     /// Half float alone, one channel: for a buffer with no use at 8 bits -
     /// the neon's fields, which shade directly without one.
     inline constexpr TextureFormat R16F_ONLY[] = {{GL_R16F, GL_RED, GL_HALF_FLOAT, "R16F"}};
@@ -108,7 +121,7 @@ namespace EdgeLighting
     inline constexpr TextureFormat RG16F_ONLY[] = {{GL_RG16F, GL_RG, GL_HALF_FLOAT, "RG16F"}};
     /// Every list above: what the startup report asks.
     inline constexpr FormatList LIBRARY_FORMAT_LISTS[] = {RGBA16F_THEN_RGBA8, RG16F_THEN_RG8, R16F_ONLY,
-                                                          RG16F_ONLY};
+                                                          RG16F_ONLY, RGB10_A2_THEN_RGBA8};
 
     class Framebuffer;
 

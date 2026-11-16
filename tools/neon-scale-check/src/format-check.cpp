@@ -56,6 +56,8 @@ namespace NeonScaleCheck
         const Hooks none;
         Hooks refuseHalf;
         refuseHalf.refused = HALF_FLOAT;
+        Hooks refuseAbove8;
+        refuseAbove8.refused = ABOVE_8_BITS;
         Hooks refuseAll;
         refuseAll.refused = EVERYTHING;
         Hooks failHalf;
@@ -66,6 +68,7 @@ namespace NeonScaleCheck
         const RunResult a = Run(none, false, cells);
         const RunResult b = Run(refuseHalf, false, cells);
         const RunResult bBypassed = Run(refuseHalf, true, cells);
+        const RunResult b8 = Run(refuseAbove8, false, cells);
         const RunResult c = Run(refuseAll, false, cells);
         const RunResult d = Run(failHalf, false, cells);
         const RunResult e = Run(unknownHalf, false, cells);
@@ -78,23 +81,25 @@ namespace NeonScaleCheck
         {
             const bool sawHalf = a.drawFormats.count(GL_RGBA16F) && a.drawFormats.count(GL_RG16F);
             const bool allFields = a.fieldLinks.size() == 3;
-            const bool shared = SharedOnlyIn(a, GL_RGBA16F);
-            std::printf("  reaches half-float targets %s, all three field programs %s, shared buffer RGBA16F %s\n",
+            const bool shared = SharedOnlyIn(a, GL_RGB10_A2);
+            std::printf("  reaches half-float targets %s, all three field programs %s, shared buffer RGB10_A2 %s\n",
                         sawHalf ? "yes" : "NO!", allFields ? "yes" : "NO!", shared ? "yes" : "NO!");
             failures += !sawHalf + !allFields + !shared;
         }
 
         // B: no refused format anywhere, no field, frames as the bypassed run.
+        // The reduced buffers need no half float: the shared buffer keeps its
+        // ten bits.
         failures += Summarise("B - half float refused", b, Unprobed(refuseHalf), verbose);
         {
             int drawnRefused = 0;
             int aliveRefused = 0;
             CountInFormats(b, HALF_FLOAT, drawnRefused, aliveRefused);
-            const bool shared = SharedOnlyIn(b, GL_RGBA8);
+            const bool shared = SharedOnlyIn(b, GL_RGB10_A2);
             const bool noFields = b.fieldLinks.empty();
             const int differing = CountDiffering(b, bBypassed, "the fields-bypassed run", cells, verbose);
             std::printf("  draws into a refused format %d%s, refused textures alive %d%s, shared buffer only "
-                        "RGBA8 %s, field programs linked %zu%s, cells differing from the fields-bypassed run "
+                        "RGB10_A2 %s, field programs linked %zu%s, cells differing from the fields-bypassed run "
                         "%d%s\n",
                         drawnRefused, drawnRefused ? "!" : "", aliveRefused, aliveRefused ? "!" : "",
                         shared ? "yes" : "NO!", b.fieldLinks.size(), noFields ? "" : "!", differing,
@@ -103,13 +108,31 @@ namespace NeonScaleCheck
         }
         failures += Summarise("B with both fields bypassed", bBypassed, Unprobed(refuseHalf), verbose);
 
-        // B against A, per group: the 8-bit rows' cost.
-        failures += CheckQualityBounds(a, b, cells, verbose);
+        // B against A, per group: what the half-float buffers' 8-bit rows cost.
+        failures += CheckQualityBounds(a, b, "B", cells, verbose);
+
+        // B8: nothing finer than 8 bits renders, so the reduced buffers take
+        // their 8-bit rows too - the shared buffer's and the flare's, which B
+        // leaves in ten bits. No conforming driver refuses RGB10_A2; this is
+        // the gate on those two rows, against the same bounds.
+        failures += Summarise("B8 - nothing finer than 8 bits renders", b8, Unprobed(refuseAbove8), verbose);
+        {
+            int drawnRefused = 0;
+            int aliveRefused = 0;
+            CountInFormats(b8, ABOVE_8_BITS, drawnRefused, aliveRefused);
+            const bool shared = SharedOnlyIn(b8, GL_RGBA8);
+            std::printf("  draws into a refused format %d%s, refused textures alive %d%s, shared buffer only "
+                        "RGBA8 %s\n",
+                        drawnRefused, drawnRefused ? "!" : "", aliveRefused, aliveRefused ? "!" : "",
+                        shared ? "yes" : "NO!");
+            failures += (drawnRefused != 0) + (aliveRefused != 0) + !shared;
+        }
+        failures += CheckQualityBounds(a, b8, "B8", cells, verbose);
 
         // D: the probe passes half float and every full-size allocation of it
         // fails (SetFailedAllocations) - the fallback the walks keep for what
         // a probe cannot predict. It has to land every buffer where B's probe
-        // landed it: the same 8-bit rows, the same frames, byte for byte.
+        // landed it: the same rows, the same frames, byte for byte.
         failures += Summarise("D - half float passes the probe, its allocations fail", d, Unprobed(failHalf), verbose);
         {
             int drawnFailed = 0;
@@ -121,10 +144,10 @@ namespace NeonScaleCheck
                 fallbacks += err.find("falling back to") != std::string::npos &&
                              err.find("SetFailedAllocations") != std::string::npos;
             }
-            const bool shared = SharedOnlyIn(d, GL_RGBA8);
+            const bool shared = SharedOnlyIn(d, GL_RGB10_A2);
             const int differing = CountDiffering(d, b, "B", cells, verbose);
             std::printf("  fallbacks logged %d%s, draws into a failed format %d%s, failed-format textures alive "
-                        "%d%s, shared buffer only RGBA8 %s, cells differing from B %d%s\n",
+                        "%d%s, shared buffer only RGB10_A2 %s, cells differing from B %d%s\n",
                         fallbacks, fallbacks == 0 ? "!" : "", drawnFailed, drawnFailed ? "!" : "", aliveFailed,
                         aliveFailed ? "!" : "", shared ? "yes" : "NO!", differing, differing ? "!" : "");
             failures += (fallbacks == 0) + (drawnFailed != 0) + (aliveFailed != 0) + !shared + (differing != 0);
@@ -151,10 +174,10 @@ namespace NeonScaleCheck
                 skipsOrFallbacks += err.find("falling back to") != std::string::npos;
             }
             const bool allFields = e.fieldLinks.size() == 3;
-            const bool shared = SharedOnlyIn(e, GL_RGBA16F);
+            const bool shared = SharedOnlyIn(e, GL_RGB10_A2);
             const int differing = CountDiffering(e, a, "A", cells, verbose);
             std::printf("  report rows UNKNOWN %zu%s, skips or fallbacks logged %d%s, reaches half-float targets "
-                        "%s, all three field programs %s, shared buffer RGBA16F %s, cells differing from A %d%s\n",
+                        "%s, all three field programs %s, shared buffer RGB10_A2 %s, cells differing from A %d%s\n",
                         e.unknownRows.size(), unknownReported ? "" : "!", skipsOrFallbacks,
                         skipsOrFallbacks ? "!" : "", sawHalf ? "yes" : "NO!", allFields ? "yes" : "NO!",
                         shared ? "yes" : "NO!", differing, differing ? "!" : "");

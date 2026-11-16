@@ -58,7 +58,7 @@ uniform float uRingRadiusSq;  // Squared radius outside which a ghost's ring ter
 uniform float uRingFloor;     // Lower bound sin(l * 30) must clear before a ghost's ring term can be non-zero. Same derivation.
 uniform float uHexRadiusSq;   // Squared radius, in the hex sprite's own units, outside which its coverage is exactly zero. Same derivation.
 uniform float uHexPx;         // How far the hex sprite's argument steps per pixel: FLARE_HEX_SCALE / uResolution.y. Its closed-form edge width.
-uniform float uDither;        // 1 where this pass writes an 8-bit target (the caller's at 1.0, the RGBA8 fallback buffer), 0 into the half-float buffer, whose blit dithers.
+uniform float uDither;        // 1 where this pass writes an 8-bit target (the caller's at 1.0, the RGBA8 fallback buffer), 0 into the ten-bit buffer, whose blit dithers.
 
 // Per-ghost table as a std140 uniform block, baked by the renderer: xyz is a
 // ghost's final colour, w its distance along the sun axis.
@@ -343,17 +343,18 @@ void main()
 
     // Clamped here rather than by the target: the core and the rays run past
     // 1, which an 8-bit target - the caller's at 1.0, the old scaled buffer -
-    // clamped on the write, but the half-float buffer below 1.0 stores as
-    // they are, and the blit's bilinear read would then spread the saturated
-    // core a texel wider than it draws at 1.0. On an 8-bit target the same
-    // value either way.
+    // clamped on the write, as the ten-bit scaled buffer does. Kept explicit:
+    // the blit rebuilds the coverage from this colour, which holds only while
+    // it is clamped as the alpha above is, and a float buffer here once
+    // stored the values past 1 as they were - the blit's bilinear read then
+    // spread the saturated core a texel wider than it draws at 1.0.
     color = min(color, vec3(1.0));
 
     // DITHER (V32). The haze lights the whole frame in gradients that cross an
     // 8-bit level only every 20 to 600 px, and rounding them draws wide
     // contour rings. Half a level of noise before the rounding spreads each
     // band edge over the band. Skipped where the flare drew nothing (an exact
-    // 0 stays 0 on any target) and, on the half-float buffer, left to the
+    // 0 stays 0 on any target) and, on the ten-bit buffer, left to the
     // blit - see lens-flare-dither.glsl.
     if (uDither > 0.0 && alpha > 0.0) {
         color = max(color + flareDitherOffset(gl_FragCoord.xy), 0.0);

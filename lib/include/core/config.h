@@ -429,12 +429,14 @@ namespace EdgeLighting
         /// does not scale are most of an animated frame. See
         /// neon-reduced-scale-plan.md.
         ///
-        /// Memory: an RGBA8 buffer at this scale over the part of the frame
-        /// the glow can reach - never more than the whole viewport at it - and
-        /// an RGBA16F gather buffer (two attachments with segments) over the
-        /// same area at the gather's scale. At 1920 x 1080: 2.15 MB at 0.5 and
-        /// 0.6 MB at 0.25 for a full-screen rect, 1.8 / 0.54 MB for a
-        /// 900 x 540 one. Released when the layer is disabled.
+        /// Memory: an RGB10_A2 buffer (4 bytes a texel) over the WHOLE
+        /// viewport at this scale, whatever the rect - it is the buffer the
+        /// neon shares with other renderers - plus a small RGBA16F gather
+        /// buffer (two attachments with segments) and, where a config uses
+        /// them, the half-float fields and coverage tables. At 1920 x 1080:
+        /// 2.0 MB at 0.5 and 0.5 MB at 0.25 for the buffer, 2.4-4.8 MB in
+        /// all at 0.5 on the scenes measured. Released when the layer is
+        /// disabled.
         float resolutionScale = 0.5f;
 
         /// Number of perimeter gather samples per fragment. Capped at

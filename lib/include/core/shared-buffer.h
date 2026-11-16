@@ -80,9 +80,12 @@ namespace EdgeLighting
         /// The viewport it was drawn for, px: uv (0, 0) to (1, 1) spans it.
         glm::ivec2 GetViewport() const { return mViewport; }
 
-        /// The sized internal format it is allocated in, e.g. GL_RGBA16F - so a
+        /// The sized internal format it is allocated in, e.g. GL_RGB10_A2 - so a
         /// reader can tell whether it holds gradients finer than an 8-bit
-        /// level. Valid while allocated (@ref GetTextureId nonzero).
+        /// level (HoldsSubLevels), and how much alpha it has: a ten-bit buffer
+        /// keeps 2 bits, so its producer says how a reader rebuilds the
+        /// coverage (the neon's: the brightest colour channel). Valid while
+        /// allocated (@ref GetTextureId nonzero).
         GLint GetInternalFormat() const { return mTarget.GetInternalFormat(); }
 
         /// Writes so far. Compared only for equality.

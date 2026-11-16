@@ -287,8 +287,9 @@ marked **source break** stop a host compiling until it follows them.
   - The lens flare is dithered (V32, fixed 2026-10-21): every pixel it lights
     moves by up to a level, so a flare frame is no longer comparable bit for
     bit with one from before; two dithered builds still are. Below
-    `resolutionScale` 1.0 its buffer is half float, twice the memory (4.1 MB
-    at 1080p and 0.5), with an RGBA8 fallback that is logged once.
+    `resolutionScale` 1.0 its buffer is finer than 8 bits, with an RGBA8
+    fallback that is logged once (half float then; RGB10_A2 since section 14,
+    2.0 MB at 1080p and 0.5).
   - The flare's thin sparkle needles, between its rays, are no longer cut down
     the middle (V36, fixed 2026-10-21): each takes the mean length of the two
     rays beside it. At most about a level, on under 1% of the frame; the main
@@ -481,7 +482,59 @@ set the config, once per call.
 - **The C ABI is unchanged**: staging already reached the effect only in
   `el_effect_update`.
 
-## 14. Nothing else a host can see moved
+## 14. The reduced buffers are ten bits a channel, and the glow field is given back (I109, I110)
+
+The neon's reduced buffer - its shared buffer, the whole viewport at
+`resolutionScale` - and the lens flare's scaled buffer are `GL_RGB10_A2`, where
+they were `GL_RGBA16F`: 4 bytes a texel in place of 8. Both hold finished
+colour in [0, 1], which needs no float, only more than 8 bits for the blit's
+dither. Textures, Apple M2 Pro:
+
+| scene | 1080p | 4K |
+| --- | --- | --- |
+| production-style band (glow outside, 20 px cutoff), neon at 0.5 | 4.40 -> 2.42 MB | 17.18 -> 9.27 MB |
+| mid rect, 3 arcs + 3 segments, hue rotating | 6.75 -> 4.77 MB | 22.35 -> 14.43 MB |
+| neon at 1.0, mid rect | 19.43 -> 11.52 MB | 72.39 -> 40.75 MB |
+| every layer, flare and spotlight at 0.5 | 14.66 -> 10.71 MB | 53.99 -> 38.17 MB |
+
+What a host can see:
+
+- **Frames move by at most 1 level** (alpha by 2) against the build before, on
+  about a sixth of the lit pixels: the buffer now rounds to a quarter level
+  before the blit's dither, where half float rounded far below it. Measured
+  on the 306 `cover` frames (100% of lit pixels within 1); `check` stays
+  inside every bound. A frame from before and one from after are not
+  comparable byte for byte.
+- **Over a coloured background, a few pixels move further.** On 49 of 1,494
+  random-config frames (`fuzz`), up to 0.02% of the lit pixels moved by 2 to
+  5 levels: where the hue changes within one buffer texel, the coverage the
+  blit rebuilds - the brightest channel of the filtered colour - is slightly
+  less than the stored alpha was (the filtered brightest channel), so the
+  background shows through by that much more. Neither consistently closer to
+  nor further from the 1.0 frame. Figures:
+  [`ten-bit-buffers-visual-check.md`](../design/ten-bit-buffers-visual-check.md).
+- **A driver without half-float render targets** (GLES 3.0 with neither
+  `EXT_color_buffer_half_float` nor `EXT_color_buffer_float`) used to put the
+  reduced buffer on RGBA8, where the dark tail's contour rings come back (R7).
+  RGB10_A2 is colour-renderable in GLES 3.0 with no extension, so that driver
+  now keeps ten bits there. The startup report has a row for it.
+- **A reader of the neon's shared buffer must not read its alpha.** RGB10_A2
+  keeps 2 bits of it. The coverage is the brightest colour channel - every
+  pass that writes the buffer writes exactly that - so a reader rebuilds it as
+  `max(r, g, b)` after its fetch, as `neon-blit.frag` does, and declares its
+  sampler `highp` (GLSL ES gives `sampler2D` lowp by default). The library's
+  own readers do; a host's custom renderer that read `.a` has to change.
+- The spotlight's scaled buffer stays RGBA16F: it screens alpha separately, so
+  its coverage is not the brightest channel.
+
+The glow's hue-invariant field (0.8 MB at 1080p for a 960 x 540 rect, up to
+6.7 MB at 4K for a full-screen two-sided glow with segments) is released once
+no frame has used it for 5 s of frame time. It was kept for the effect's life
+after an intensity animation stopped with the hue still, because no config
+change follows the last moving frame. The frame that next wants it bakes it
+again; no pixel moves.
+
+## 15. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

@@ -408,6 +408,10 @@ namespace NeonScaleCheck
             {
                 return "R16F";
             }
+            case GL_RGB10_A2:
+            {
+                return "RGB10_A2";
+            }
             case GL_RGBA8:
             {
                 return "RGBA8";
@@ -578,11 +582,13 @@ namespace NeonScaleCheck
             return count;
         }
 
-        int CheckQualityBounds(const RunResult &a, const RunResult &b, const std::vector<Cell> &cells, bool verbose)
+        int CheckQualityBounds(const RunResult &a, const RunResult &b, const char *label,
+                               const std::vector<Cell> &cells, bool verbose)
         {
             int failures = 0;
-            std::printf("B against A, worst cell per group (max levels / %% of lit channels more than 1 off; "
-                        "bound in brackets):\n");
+            std::printf("%s against A, worst cell per group (max levels / %% of lit channels more than 1 off; "
+                        "bound in brackets):\n",
+                        label);
             std::map<std::string, std::pair<int, double>> worst;
             std::map<std::string, std::string> worstCell;
             for (size_t i = 0; i < cells.size(); ++i)

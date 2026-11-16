@@ -229,9 +229,10 @@ namespace EdgeLighting
         ///
         /// This one stores arc intensity and stacked segment boosts, which
         /// routinely exceed 1.0; the gather buffer stores data that a shading
-        /// pass re-amplifies; the reduced buffer stores output, in [0, 1], but
-        /// output the blit dithers on its way out (R7), which 8 bits of storage
-        /// would already have rounded - see SCALED_FORMATS.
+        /// pass re-amplifies. The reduced buffer stores output, in [0, 1], which
+        /// needs no float - only more than 8 bits, for the blit's dither (R7):
+        /// see SCALED_FORMATS, the one list here that does not start at half
+        /// float.
         constexpr auto &EMISSION_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// Glow-coverage-table formats in PREFERENCE ORDER, best first - walked
@@ -255,6 +256,16 @@ namespace EdgeLighting
         /// that a ring which has settled uniform gives back its 0.5-1 MB.
         constexpr float GLOW_COVER_RELEASE_SECONDS = 5.0f;
 
+        /// How long, in seconds of frame time, the glow's field may go without
+        /// a frame that bakes or composites it before Update releases it. An
+        /// intensity animation that stops with the hue still leaves frames
+        /// that reuse the offscreen buffers and never read the field again,
+        /// and no config change to say so: 0.8 MB at 1080p for a 960 x 540
+        /// rect, 6.7 MB at 4K for a full-screen two-sided glow with segments.
+        /// Long enough that a pause between two animations keeps it; the
+        /// frame that next wants it bakes it again.
+        constexpr float GLOW_FIELD_RELEASE_SECONDS = 5.0f;
+
         /// Gather-buffer formats in PREFERENCE ORDER, best first - walked by
         /// AdaptiveFormatTarget::Ensure, from
         /// @ref NeonRenderer::renderGatherPass.
@@ -275,13 +286,25 @@ namespace EdgeLighting
         constexpr auto &GATHER_FORMATS = RGBA16F_THEN_RGBA8;
 
         /// The reduced buffer's formats, best first - walked by
-        /// SharedBuffer::BeginWrite (@c mScaled). Half float first: every pixel the
-        /// blit draws comes from this buffer, and the output dither (R7, neonDither)
-        /// only breaks up gradients that reach it unrounded - in RGBA8 the halo's and
-        /// bloom's tails are one-level plateaus before the blit reads them, and the
-        /// contour rings stay. Half float is filterable in GLES 3.0 core; RGBA8 for a
-        /// driver that will not render it.
-        constexpr auto &SCALED_FORMATS = RGBA16F_THEN_RGBA8;
+        /// SharedBuffer::BeginWrite (@c mScaled). Ten bits a channel first:
+        /// every pixel the blit draws comes from this buffer, and the output
+        /// dither (R7, neonDither) only breaks up gradients that reach it finer
+        /// than an 8-bit level - in RGBA8 the halo's and bloom's tails are
+        /// one-level plateaus before the blit reads them, and the contour rings
+        /// stay. A quarter level is enough for a dither of half a level, and
+        /// the buffer holds OUTPUT - tone-mapped, in [0, 1) - so nothing clamps.
+        ///
+        /// Not RGBA16F, which it was: this buffer is the whole viewport at the
+        /// scale, 82-92% of the neon's texture memory in every scene measured,
+        /// and half float is 8 bytes a texel against 4 (15.8 -> 7.9 MB at 4K
+        /// and 0.5). Its alpha is 2 bits, which costs nothing: every pass that
+        /// writes the buffer writes alpha = the brightest channel, so
+        /// neon-blit.frag rebuilds it from the colour - and so must any other
+        /// reader (SharedBuffer). RGB10_A2 is colour-renderable and filterable
+        /// in GL 3.3 core and GLES 3.0 with no extension, so a driver without
+        /// half-float render targets keeps ten bits here too; RGBA8 for one
+        /// that breaks that rule.
+        constexpr auto &SCALED_FORMATS = RGB10_A2_THEN_RGBA8;
 
         /// Smallest resolution scale the passes will honour. Not a taste
         /// judgement about how blurry is too blurry - it keeps the scaled
@@ -2187,6 +2210,25 @@ namespace EdgeLighting
         {
             mGlowCover.unreadSeconds = 0.0f;
         }
+
+        // The glow's field likewise, once no frame has baked or composited it
+        // for GLOW_FIELD_RELEASE_SECONDS (RenderOffscreen resets the count on
+        // a frame that does). Not current any more, so the frame that next
+        // wants it bakes it (LazyBake::Decide).
+        if (!mGlowField.buffer.IsValid())
+        {
+            mGlowField.unusedSeconds = 0.0f;
+        }
+        else
+        {
+            mGlowField.unusedSeconds += std::max(deltaTime, 0.0f);
+            if (mGlowField.unusedSeconds >= GLOW_FIELD_RELEASE_SECONDS)
+            {
+                mGlowField.buffer.Release();
+                mGlowField.schedule.current = false;
+                mGlowField.unusedSeconds = 0.0f;
+            }
+        }
     }
 
     void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, double time, const Config &config)
@@ -2369,6 +2411,11 @@ namespace EdgeLighting
         {
             field = mGlowField.schedule.Decide(viewport, mGradientLUT.GetUploadCount(), !fieldProgramsBuilt,
                                                config.neon.intensity, intensityMoving);
+        }
+        if (field.use || field.bake)
+        {
+            // In use this frame: Update's release count starts again.
+            mGlowField.unusedSeconds = 0.0f;
         }
         // The edge ring factored the same way (pass 1r bakes its field, pass
         // 2r composites it in pass 2c's place), on a schedule of its own - it

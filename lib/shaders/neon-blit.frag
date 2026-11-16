@@ -74,7 +74,9 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uSource;
+// highp: GLSL ES gives a sampler2D lowp by default, which need not carry the
+// buffer's ten bits (desktop GL ignores the qualifier).
+uniform highp sampler2D uSource;
 
 // vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
 // NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
@@ -108,7 +110,12 @@ uniform float uOutsideCutoffSoftness;
 
 void main() {
     vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
-    vec4 src = texture(uSource, uv); // premultiplied colour + coverage alpha
+    vec4 src = texture(uSource, uv); // premultiplied colour
+    // The coverage alpha, rebuilt: every pass that writes the buffer writes
+    // alpha = the brightest channel, and the buffer (RGB10_A2) keeps only 2
+    // bits of it. After the filter, so a pixel between two hues takes the
+    // brightest channel of the colour it draws.
+    src.a = max(src.r, max(src.g, src.b));
 
     // GlowSide::BOTH pays nothing, and the branch that arranges that is safe
     // BECAUSE uGlowSide IS A UNIFORM: every invocation in the draw takes the
@@ -183,7 +190,7 @@ void main() {
     fragColor = src * cut;
 
     // The output dither (neon-grade.glsl): this is the write to the caller's
-    // framebuffer, so the place the reduced buffer's half-float precision
+    // framebuffer, so the place the reduced buffer's ten-bit precision
     // finally meets 8 bits.
     fragColor.rgb = neonDither(fragColor.rgb);
 }

@@ -26,8 +26,14 @@ namespace EdgeLighting
         constexpr GLuint GHOST_BLOCK_BINDING = 3;
 
         /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
-        /// pair the neon and the spotlight use, for the same reason (V32 in
-        /// review-findings.md).
+        /// pair the neon's reduced buffer uses, for the same reason (V32 in
+        /// review-findings.md): finer than 8 bits, so the blit's dither has
+        /// something to work on. Ten bits rather than the half float it was
+        /// first (the measurements below are that buffer's): the flare writes
+        /// colour clamped to [0, 1] and alpha = its brightest channel, so a
+        /// quarter level of colour is all the blit needs and it rebuilds the
+        /// alpha (lens-flare-blit.frag) - at half the bytes, 2.0 MB instead
+        /// of 4.0 at 1080p and 0.5.
         ///
         /// The haze has almost no distance falloff, so the flare lights the
         /// whole frame in gradients that cross one 8-bit level every 20 to
@@ -42,7 +48,7 @@ namespace EdgeLighting
         /// 1920 x 1080, five scenes at 0.5): lit pixels in plateaus of 32 px
         /// or more 35.6-63.4% -> 0.1-2.6%, and pixels whose 9 x 9 box mean
         /// (which removes the dither and keeps the contours) is more than a
-        /// quarter level off it 30-48% -> 0.02-0.43%. The RGBA8 row below,
+        /// quarter level off it 30-48% -> 0.02-0.43%. The RGBA8 row,
         /// dithered in the pass AND in the blit, reaches 1.8-7.4% and
         /// 0.16-1.65%: no bands, but diagonal streaks one texel wide where
         /// the filter joins the per-texel noise. Alpha, which is not
@@ -51,20 +57,18 @@ namespace EdgeLighting
         /// is no wider (lens-flare.frag clamps for that). 1.06-1.07x the scaled
         /// frame, still or with the rays turning, wall clock.
         ///
-        /// Half float is renderable and blendable on GL 3.3 core, and on GLES
-        /// 3.x with EXT_color_buffer_half_float or EXT_color_buffer_float.
-        /// Twice the memory: 960 x 540 texels at 1080p and 0.5 is 4.1 MB
-        /// instead of 2.1.
+        /// RGB10_A2 is renderable and blendable on GL 3.3 core and GLES 3.0
+        /// with no extension, at RGBA8's size.
         ///
-        /// Whether a row holds the haze unrounded - the flare then draws into
-        /// it undithered and the blit alone dithers - is the format's own
-        /// property (HoldsSubLevels): RGBA16F does, RGBA8 does not, and there
-        /// lens-flare.frag dithers into the buffer too.
+        /// Whether a row holds the haze finer than a level - the flare then
+        /// draws into it undithered and the blit alone dithers - is the
+        /// format's own property (HoldsSubLevels): RGB10_A2 does, RGBA8 does
+        /// not, and there lens-flare.frag dithers into the buffer too.
         ///
         /// resizeScaledBuffer asks the effect's FormatAvailability and starts
         /// at the first row this driver renders. One of the library's lists
         /// (LIBRARY_FORMAT_LISTS), which the startup report asks.
-        constexpr auto &SCALED_FORMATS = RGBA16F_THEN_RGBA8;
+        constexpr auto &SCALED_FORMATS = RGB10_A2_THEN_RGBA8;
 
         /// CPU mirror of the shader's GhostBlock. std140 gives a vec4 array a
         /// 16-byte stride, which is glm::vec4's own size, so the array maps
@@ -362,7 +366,7 @@ namespace EdgeLighting
         mScaledBuffer.ClearBuffer();
 
         // Premultiplied "over", as the blit composites it back - see Render.
-        // Undithered into half float: the blit dithers once per destination
+        // Undithered into ten bits: the blit dithers once per destination
         // pixel (lens-flare-blit.frag).
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -510,8 +514,7 @@ namespace EdgeLighting
         // Give the scaled buffer back the moment this config stops wanting it -
         // the layer switched off, or the scale returned to 1.0. It is by far
         // the largest thing this renderer owns: at 1920x1080 and scale 0.5 it
-        // is 4.1 MB of half-float colour attachment (2.1 MB in the RGBA8
-        // fallback), against a 160-byte ghost block and
+        // is 2.0 MB of colour attachment, against a 160-byte ghost block and
         // one fullscreen quad for everything else. Nothing freed it before, so
         // a host that ran the flare at a reduced scale and then turned it off
         // held that for the life of the effect.

@@ -75,6 +75,7 @@ Studies of specific mechanisms:
 | [`neon-renderer-notes.md`](design/neon-renderer-notes.md) | The measured history behind `NeonRenderer`'s C++ comments, moved out of the code on 2026-11-12. |
 | [`corner-crease-and-filament-nyquist.md`](design/corner-crease-and-filament-nyquist.md) | The analytic emission's corner and filament defects and their fixes. Read before touching the halo / bloom or filament blocks. |
 | [`glow-side-comparison.md`](design/glow-side-comparison.md) | Edges as coverage on the graded output, and the one-sided cut moved into the blit. |
+| [`ten-bit-buffers-visual-check.md`](design/ten-bit-buffers-visual-check.md) | The neon's and the flare's reduced buffers at ten bits (I109) against half float: 87 scenes within 1 level, the worst random-config frames, and why not eight bits - with figures. |
 | [`glow-inner-reach.md`](design/glow-inner-reach.md) | The glow quad's interior hole with no cutoff set, and the proof it changes no pixel. |
 
 ## perf/

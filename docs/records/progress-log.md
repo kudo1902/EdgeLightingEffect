@@ -5,6 +5,97 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-11-16 - The reduced buffers at ten bits (I109); the glow field given back (I110)
+
+Not committed; on top of `5d1c044`.
+
+- **Measured first.** A scratch probe (GLAD hooks on `glTexImage2D` and
+  `glBufferData`, each texture named from the library's own
+  `Framebuffer[NAME] sized to` line) counted every texture and buffer per
+  scene, Apple M2 Pro, Release. The library's own heap and its vertex and
+  uniform buffers are noise (3-42 KB); the textures are the memory, and three
+  buffers are most of them: the neon's reduced buffer - its shared buffer,
+  the whole viewport at the scale - was 82-92% of the neon's textures in
+  every scene (3.96 of 4.40 MB for a production-style band at 1080p and 0.5,
+  15.82 of 17.18 MB at 4K), and with the flare and the spotlight at 0.5 the
+  three scaled buffers were 81-88% of everything. All three were RGBA16F, 8
+  bytes a texel.
+- **I109: RGB10_A2 for the two that hold finished colour.** The neon's
+  reduced buffer and the flare's scaled buffer store output - tone-mapped or
+  clamped to [0, 1], alpha = the brightest channel - so they need neither a
+  float nor their alpha, only more than 8 bits for the blit's dither (R7,
+  V32): a quarter level is enough for half a level of noise. A new list,
+  `RGB10_A2_THEN_RGBA8` (`core/format-availability.h`, in
+  `LIBRARY_FORMAT_LISTS`, so the startup report has a sixth row), is what both
+  walk; `HoldsSubLevels` counts RGB10_A2, so the flare still draws undithered
+  into it; `neon-blit.frag` and `lens-flare-blit.frag` rebuild the coverage
+  as `max(r, g, b)` after their fetch and declare the sampler `highp`. The
+  spotlight's buffer stays RGBA16F: it screens alpha on its own, so its
+  coverage is not the brightest channel.
+  - Textures, before -> after, 1080p / 4K: band at 0.5 4.40 -> 2.42 /
+    17.18 -> 9.27 MB; mid rect with 3 arcs and 3 segments 6.75 -> 4.77 /
+    22.35 -> 14.43; the neon at 1.0 19.43 -> 11.52 / 72.39 -> 40.75; every
+    layer with the flare and the spotlight at 0.5 14.66 -> 10.71 /
+    53.99 -> 38.17.
+  - Frame time (100-frame loops closed by `glFinish`, min of 7, three
+    interleaved runs a build): 1080p 0.99-1.03x on the neon's scenes, 1.06x
+    with every layer; 4K 1.06-1.19x on frames that write or blit the buffer
+    (band hue 0.367 -> 0.321 ms, the neon at 1.0 0.704 -> 0.593), 0.99-1.01x
+    on still and arc-moving frames.
+  - Pixels: `generate --set cover` on both builds and `diff` - 306 frames,
+    none more than 1 level off (alpha 2), 100% of lit pixels within 1, 6-25%
+    of them moved by 1 (median 16%). `check` reads the same table as before it (1.0 within
+    1 of the committed images, as the build before is).
+  - A driver without half-float render targets used to put this buffer on
+    RGBA8, where the tail's contour rings return; RGB10_A2 renders on GLES
+    3.0 with no extension, so `formats` case B now holds it at ten bits and a
+    new case B8 (everything finer than 8 bits refused) keeps the two RGBA8
+    rows gated, inside the same bounds.
+  - What a reader has to know: the shared buffer's alpha is 2 bits and is
+    not to be read ([`upgrade-notes.md`](../guides/upgrade-notes.md) section
+    14). The tools' readers rebuild it (`ReadSharedTexels`, `BlitBack`, the
+    guide figures' `OverClear`), and `DrawTargetWatch` names and fills the
+    format.
+- **I110: the glow's field is released when nothing uses it.**
+  `OnConfigChanged` releases it for a config that cannot use it, but an
+  intensity animation that stops with the hue still is followed by no config
+  change, so 0.82 MB (960 x 540 rect, 1080p) to 6.7 MB (full-screen two-sided
+  glow with segments, 4K) stayed for the effect's life. `Update` now counts
+  the frame time since a frame last baked or composited it
+  (`GlowField::unusedSeconds`) and releases it at
+  `GLOW_FIELD_RELEASE_SECONDS`, 5 s, as it does the coverage table; the frame
+  that next wants it bakes it. Byte-identical: `fuzz` seeds 1 to 3 against
+  the build before, and `sequence`.
+- **Verified.** `check`, `partition`, `shared-buffer`, `clock`,
+  `flare-reuse`, `sequence` and `formats` pass, and pass again under ASan
+  and UBSan with no report.
+  - `fuzz` seed 1, this build against the one before, the first 1,494 frames
+    that differ dumped from both and compared with `diff` (random configs over
+    random backgrounds, six viewports): 1,445 within 1 level; 49 reach 2 to 5
+    levels, on at most 0.02% of their lit pixels (alpha up to 9 on the frames
+    drawn over a transparent target). Those pixels are where the hue changes
+    within one buffer texel over a coloured background: the blit's rebuilt
+    coverage is the brightest channel of the FILTERED colour, where the
+    stored alpha was the filtered brightest channel - never more, so the
+    background shows through by that much more. Against each build's own 1.0
+    frame (the two worst frames replayed, 2026-11-16): on one the moved
+    pixels came closer to it (63 of 64, mean error 2.8 -> 1.2 levels), on
+    the other neither way (15 closer, 43 further, mean 11.7 -> 12.0 - those
+    pixels are 12 levels from 1.0 at that scale anyway). Over black nothing
+    moves by more than 1. A full dump of a seed whose every lit frame moves
+    is 3,740 PNGs and over an hour; `generate --set cover` and `diff` is the
+    quicker measure for a change like this one.
+  - The visual check, with figures:
+    [`ten-bit-buffers-visual-check.md`](../design/ten-bit-buffers-visual-check.md).
+- **Left as it is.** The spotlight's scaled buffer (15.8 MB at 4K and 0.5):
+  RGB10_A2 colour plus an R8 coverage attachment would be 5 bytes a texel for
+  8, at the cost of a second attachment on a path that pays only above six
+  lamps. The other samplers of float buffers (`uGather`, `uEmission`,
+  `uGlowCover`, `uField`, the spotlight's blit) still take GLSL ES's default
+  `lowp` - nothing new, but the same rule the two blits now follow. Packing
+  the shared buffer to the lit band (4-9% of it on a production band) would
+  break its reader contract. Not run on the AMD 5300M or a GLES device.
+
 ## 2026-11-14 (last) - `neon-scale-check fuzz`: a differential gate over random configs
 
 Not committed; on top of the entries below, which it checks.

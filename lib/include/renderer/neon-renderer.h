@@ -335,9 +335,12 @@ namespace EdgeLighting
     ///     edge ring re-shades every pixel it lights), so that the buffer
     ///     holds the line; that moves no pixel of the frame, by the ring's
     ///     guard (I62, reverted for this buffer);
-    ///   - premultiplied colour and coverage alpha (the brightest channel),
-    ///     tone-mapped as the frame is, NOT dithered - RGBA16F where the driver
-    ///     renders it, RGBA8 where not (SCALED_FORMATS);
+    ///   - premultiplied colour, tone-mapped as the frame is, NOT dithered -
+    ///     RGB10_A2 where the driver renders it, RGBA8 where not
+    ///     (SCALED_FORMATS). Its ALPHA is not to be read: the coverage is the
+    ///     brightest colour channel, max(r, g, b), which a reader rebuilds
+    ///     after its fetch as neon-blit.frag does - RGB10_A2 keeps 2 bits of
+    ///     alpha;
     ///   - NO opaque fill, which is drawn on the caller's framebuffer only;
     ///   - NOT the one-sided cut or the cutoffs, which the blit applies at full
     ///     resolution (neon-blit.frag): the buffer keeps the glow
@@ -1109,7 +1112,9 @@ namespace EdgeLighting
             /// (GetFieldRegion): the reduced buffer covers the whole viewport,
             /// and a field that size would fail FIELD_MIN_FILL for any rect
             /// smaller than the screen. Released with the
-            /// conditions that want it - see OnConfigChanged - and never allocated
+            /// conditions that want it - see OnConfigChanged - and once no
+            /// frame has used it for GLOW_FIELD_RELEASE_SECONDS (@c
+            /// unusedSeconds), and never allocated
             /// for a config that cannot use it (a hue that does not rotate with
             /// the intensity still).
             /// GL_NEAREST: the composite reads one texel per fragment, its
@@ -1127,6 +1132,14 @@ namespace EdgeLighting
             /// and uploaded as @c uFieldOrigin / @c uFieldTexelScale.
             glm::vec2 origin{0.0f};     ///< The region's lower-left corner, scaled rect-local px.
             glm::vec2 texelScale{1.0f}; ///< Texels per scaled px: 1 but on an axis capped to the viewport, whose texel count is truncated.
+
+            /// Seconds of frame time since a frame last baked or composited
+            /// @c buffer. @ref Update releases it at
+            /// GLOW_FIELD_RELEASE_SECONDS: OnConfigChanged releases it for a
+            /// config that cannot use it, but an intensity animation that
+            /// STOPS is followed by no config change, and kept the field for
+            /// as long as nothing else moved.
+            float unusedSeconds = 0.0f;
         } GlowField;
 
         /// The edge ring's field (pass 1r, read by 2r): its buffer, how the
@@ -1858,8 +1871,8 @@ namespace EdgeLighting
         /// Pass 1b's target and the neon's shared buffer (@ref SharedBuffer,
         /// claimed as SharedBufferId::NEON): the composited colour, one
         /// attachment at the reduced scale - full size at 1.0 - covering the
-        /// WHOLE viewport (GetViewportRegion): 4.1 MB at 1080p and 0.5.
-        /// RGBA16F where the driver renders to it, RGBA8 where not
+        /// WHOLE viewport (GetViewportRegion): 2.0 MB at 1080p and 0.5.
+        /// RGB10_A2 where the driver renders to it, RGBA8 where not
         /// (SCALED_FORMATS). Shared with the effect's registry, so a reader
         /// never outlives it; released when the layer is disabled.
         std::shared_ptr<SharedBuffer> mScaled;

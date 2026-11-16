@@ -113,12 +113,13 @@ namespace NeonScaleCheck
             /// framebuffer with the gather's segment attachment, as a driver
             /// that will not take two half-float attachments refuses it. The
             /// gather falls back to RGBA8 on the segment scenes only; every
-            /// one-attachment RGBA16F buffer stays half float, so every cell
-            /// without segments draws A's frame byte for byte and the shared
-            /// buffer is only ever RGBA16F. Kept by size alone, as every
-            /// failure was before the causes were told apart, the gather's
-            /// failure put the shared buffer on RGBA8 from the first segment
-            /// scene on.
+            /// one-attachment RGBA16F buffer stays half float - the gather
+            /// itself, without segments - so every cell without segments
+            /// draws A's frame byte for byte, and the shared buffer keeps its
+            /// own format (RGB10_A2). Kept by size alone, as every failure
+            /// was before the causes were told apart, the gather's failure
+            /// put every one-attachment half-float buffer on RGBA8 from the
+            /// first segment scene on.
             int CheckAttachmentFailure(const std::vector<Cell> &cells, const RunResult &a, bool verbose)
             {
                 Hooks hooks;
@@ -149,9 +150,9 @@ namespace NeonScaleCheck
                 }
                 const int fallbacks =
                     CountLines(run.errors, "NeonRenderer.Gather: target unavailable", "SetFailedAllocations");
-                const bool shared = SharedOnlyIn(run, GL_RGBA16F);
+                const bool shared = SharedOnlyIn(run, GL_RGB10_A2);
                 std::printf("  gather fallbacks logged %d%s, cells without segments as A %d / %d%s, shared buffer "
-                            "only RGBA16F %s\n",
+                            "only RGB10_A2 %s\n",
                             fallbacks, fallbacks == 0 ? "!" : "", withoutSegments - differing, withoutSegments,
                             differing ? "!" : "", shared ? "yes" : "NO!");
                 return failures + (fallbacks == 0) + (differing != 0) + !shared;
@@ -188,9 +189,9 @@ namespace NeonScaleCheck
                     3;
                 const int refusals = CountLines(run.warnings, "past this GL's texture size limit");
                 const int attempts = CountLines(run.errors, "target unavailable");
-                const bool shared = SharedOnlyIn(run, GL_RGBA16F);
+                const bool shared = SharedOnlyIn(run, GL_RGB10_A2);
                 std::printf("  at 0.5 as A at 1.0 %s, at 0.25 as A %s, size-limit refusals logged %d (expected 3)%s, "
-                            "allocations tried and failed %d%s, shared buffer ready only at 0.25, RGBA16F %s\n",
+                            "allocations tried and failed %d%s, shared buffer ready only at 0.25, RGB10_A2 %s\n",
                             large ? "yes" : "NO!", small ? "yes" : "NO!", refusals, refusals == 3 ? "" : "!",
                             attempts, attempts ? "!" : "", shared ? "yes" : "NO!");
                 return failures + !large + !small + (refusals != 3) + (attempts != 0) + !shared;
@@ -208,7 +209,7 @@ namespace NeonScaleCheck
             ///     is made - and from then on the gate keeps the segments in
             ///     the main table's bake without trying it again.
             /// Either way the frames stay within 2 levels of A's (1 on the M2
-            /// Pro) and the shared buffer is RGBA16F. A, which builds the fill
+            /// Pro) and the shared buffer is RGB10_A2. A, which builds the fill
             /// program, is the proof that check can fail.
             int CheckSegmentTable(const std::vector<Cell> &allCells, bool verbose)
             {
@@ -247,10 +248,10 @@ namespace NeonScaleCheck
                     const int tries = CountLines(run.errors, "NeonRenderer.GlowCoverSegments: target unavailable");
                     const int fills = CountLines(run.infos, fillLinked, " linked");
                     const int blocked = CountLines(run.warnings, "segment coverage table cannot be allocated");
-                    const bool shared = SharedOnlyIn(run, GL_RGBA16F);
+                    const bool shared = SharedOnlyIn(run, GL_RGB10_A2);
                     std::printf("  segment table tries that failed %d (expected %d)%s, fill programs built %d "
                                 "(expected %d)%s, held back logged %d (expected 1)%s, worst cell against A %d "
-                                "level(s) (at most 2)%s, shared buffer only RGBA16F %s\n",
+                                "level(s) (at most 2)%s, shared buffer only RGB10_A2 %s\n",
                                 tries, way.tries, tries == way.tries ? "" : "!", fills, way.fills,
                                 fills == way.fills ? "" : "!", blocked, blocked == 1 ? "" : "!", worstLevels,
                                 worstLevels > 2 ? "!" : "", shared ? "yes" : "NO!");

@@ -32,7 +32,7 @@ namespace EdgeLighting
     /// the same picture at lower resolution rather than a differently-shaped
     /// one. The third, @c uDither, says where the output is DITHERED (V32): at
     /// 1.0 the flare dithers its own write to the caller's 8-bit target; below
-    /// it, it draws undithered into a half-float buffer and the blit
+    /// it, it draws undithered into a ten-bit buffer and the blit
     /// (lens-flare-blit.frag) dithers once per destination pixel. See
     /// SCALED_FORMATS in the .cpp.
     ///
@@ -129,7 +129,7 @@ namespace EdgeLighting
         bool resizeScaledBuffer(int width, int height);
         /// Whether the scaled pass dithers its own write: only into a format
         /// that rounds the haze before the blit could - the RGBA8 fallback
-        /// (HoldsSubLevels). Into half float the blit dithers alone.
+        /// (HoldsSubLevels). Into ten bits the blit dithers alone.
         bool scaledPassDithers() const;
 
         /// Bake the per-ghost distance + colour table into @c mGhostBlock.
@@ -175,7 +175,7 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing. Drawn by @ref RenderOffscreen, read
-        /// by @ref Render. RGBA16F, with an RGBA8 fallback, whose format picks
+        /// by @ref Render. RGB10_A2, with an RGBA8 fallback, whose format picks
         /// the scaled pass's @c uDither (@ref scaledPassDithers).
         AdaptiveFormatTarget mScaledBuffer{"LensFlare.Scaled", GL_LINEAR,
                                            "The haze is rounded to 8 bits before the blit reads it."};

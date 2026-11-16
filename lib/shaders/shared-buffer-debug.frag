@@ -11,7 +11,7 @@ precision highp float;
 in vec2 vPos; // inset-local px, (0, 0) at its lower-left corner
 out vec4 fragColor;
 
-uniform sampler2D uBuffer;
+uniform highp sampler2D uBuffer;
 uniform vec2 uInsetSize;  // the inset, px
 uniform vec4 uFrameColor; // the frame round it
 

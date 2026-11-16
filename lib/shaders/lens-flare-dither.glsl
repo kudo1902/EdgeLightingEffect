@@ -9,8 +9,8 @@ precision highp float;
 //
 // ONLY for a write to the caller's 8-bit target. Never to the reduced buffer:
 // the blit reads that back bilinearly, which averages the noise into blotches
-// one buffer texel wide - and the buffer is half float so that it holds the
-// tail unrounded and the blit has something left to dither. The neon and the
+// one buffer texel wide - and the buffer is ten bits a channel so that it holds the
+// tail finer than a level and the blit has something left to dither. The neon and the
 // spotlight learned the same thing (R7, V27); see LensFlareRenderer's
 // SCALED_FORMATS.
 //

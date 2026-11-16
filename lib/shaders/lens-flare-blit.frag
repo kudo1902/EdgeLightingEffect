@@ -10,13 +10,17 @@ precision highp float;
 // on this path it writes a buffer the bilinear read below filters, and a
 // filtered read averages a per-texel dither into blotches - while an RGBA8
 // buffer has already rounded the haze into one-level plateaus that no later
-// noise can recover. So the buffer is half float and undithered, and the noise
+// noise can recover. So the buffer is ten bits a channel and undithered, and the noise
 // goes on here, once per destination pixel, after the filter: the split the
 // neon (R7) and the spotlight (V27) make.
 //
-// On a driver that will not render to half float the buffer falls back to
+// On a driver that will not render to RGB10_A2 the buffer falls back to
 // RGBA8 and lens-flare.frag dithers into it as well (uDither 1); this pass
 // still dithers on top.
+//
+// The buffer keeps 2 bits of alpha, so the coverage is rebuilt here from the
+// colour: lens-flare.frag writes alpha = its brightest channel, clamped, and
+// its colour clamped to [0, 1], so max(r, g, b) is that alpha.
 //
 // Two things are kept from spotlight-blit.frag, where both were measured for
 // speed (this pass covers the whole viewport): the pixel position comes from
@@ -27,7 +31,9 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uSource;
+// highp: GLSL ES gives a sampler2D lowp by default, which need not carry the
+// buffer's ten bits (desktop GL ignores the qualifier).
+uniform highp sampler2D uSource;
 
 /// The caller's viewport in pixels - what the blit's NDC quad covers - so
 /// `uv * uViewportSize` is the destination pixel the dither is keyed on.
@@ -35,11 +41,12 @@ uniform vec2 uViewportSize;
 
 void main() {
     vec2 uv = vPos * 0.5 + 0.5; // NDC [-1,1] (identity MVP) -> UV
-    vec4 c = texture(uSource, uv);
-    if (c == vec4(0.0)) {
+    vec3 c = texture(uSource, uv).rgb;
+    if (c == vec3(0.0)) {
         fragColor = vec4(0.0);
         return;
     }
+    float a = max(c.r, max(c.g, c.b)); // the coverage, rebuilt - see above
     // Colour only; see lens-flare-dither.glsl.
-    fragColor = vec4(max(c.rgb + flareDitherOffset(uv * uViewportSize), 0.0), c.a);
+    fragColor = vec4(max(c + flareDitherOffset(uv * uViewportSize), 0.0), a);
 }

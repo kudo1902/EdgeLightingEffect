@@ -120,6 +120,10 @@ namespace NeonScaleCheck
                             const float top = texel(x0, y0 + 1, k) * (1.0f - ax) + texel(x0 + 1, y0 + 1, k) * ax;
                             rgba[k] = bottom * (1.0f - ay) + top * ay;
                         }
+                        // The coverage, rebuilt from the filtered colour as
+                        // neon-blit.frag rebuilds it: the buffer's own alpha
+                        // is RGB10_A2's 2 bits.
+                        rgba[3] = std::max(rgba[0], std::max(rgba[1], rgba[2]));
                     }
                     for (int k = 0; k < 3; ++k)
                     {

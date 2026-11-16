@@ -361,21 +361,22 @@ library asks for. The refusal is forced through the effect's
 effect per run, before `Initialize`; see
 [`docs/design/render-target-format-check-plan.md`](../../docs/design/render-target-format-check-plan.md)
 sections 4 and 6. It prints the GPU and the startup report, then draws 112
-cells six times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
+cells seven times - every `check` scene at 1.0, 0.5 and 0.25, still, with the
 hue rotating and with the intensity moving (the frames the half-float fields
 serve), plus a flare and a spotlight at 0.5 and at 1.0 - with the neon, the
 flare, the spotlight and a reader of the neon's shared buffer registered:
 
 - **A**, nothing refused: the reference. It must reach half-float targets,
-  link all three field programs and hand the reader an RGBA16F buffer, or the
+  link all three field programs and hand the reader an RGB10_A2 buffer, or the
   checks on B could not fail.
 - **B**, RGBA16F, RG16F and R16F refused - GLES 3.0 with neither
   `EXT_color_buffer_half_float` nor `EXT_color_buffer_float`. No offscreen draw
   may write a refused format (a wrapper in front of `glad_glDrawArrays`,
   `tools/common/draw-target-watch.h`, reads each draw's target format), no
-  texture alive at the end may have one, the shared buffer must be RGBA8, no
-  field program may link (counted from the library's own "linked" log lines),
-  and every frame must match B with both fields bypassed byte for byte.
+  texture alive at the end may have one, the shared buffer must stay RGB10_A2
+  (the reduced buffers need no half float: ten bits render with no extension),
+  no field program may link (counted from the library's own "linked" log
+  lines), and every frame must match B with both fields bypassed byte for byte.
 - **B against A**, per layer, variant and scale: the worst cell's largest
   channel difference and its share of lit channels more than one level off,
   against `FORMAT_QUALITY_BOUNDS` - measured on an AMD Radeon Pro 5300M and
@@ -384,6 +385,12 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   ~53 off at every scale, because its boosts of 2.0 are clamped to 1.0 by the
   emission table's RGBA8 row (its own fallback line says so), and has a bound
   of its own.
+- **B8**, everything finer than 8 bits refused - half float and RGB10_A2. No
+  conforming driver is this one (GLES 3.0 renders RGB10_A2 with no extension);
+  it is what puts the reduced buffers - the neon's shared buffer, the flare's -
+  on their RGBA8 rows too, which B leaves in ten bits. No refused format may
+  be drawn into or alive, the shared buffer must be RGBA8, and **B8 against
+  A** must stay inside the same bounds.
 - **C**, every format the library allocates refused: the neon must be dropped
   (its emission table has no row left) and no neon cell may draw anything; the
   flare and the spotlight, with no scaled buffer to be had, must fall back to
@@ -400,7 +407,7 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   GL rejects - leaves, which must not count as "no". The report must print the
   three rows UNKNOWN, no row may be skipped or fall back, every half-float
   target and all three field programs must be reached, the shared buffer must
-  be RGBA16F, and every frame must match A's byte for byte: unknown leaves the
+  be RGB10_A2, and every frame must match A's byte for byte: unknown leaves the
   allocation to decide, and here it succeeds.
 - **D4**, **D5**, **D6** and **S**
   (`format-check-causes.cpp`): what each cause of a failed allocation may
@@ -412,10 +419,11 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
   - **D4**, on the main cells: RGBA16F incomplete with two attachments (a
     `ForcedFailure` reporting `GL_FRAMEBUFFER_UNSUPPORTED`), the gather's
     segment attachment. The gather falls back on the segment scenes only;
-    every cell without segments must match A byte for byte and the shared
-    buffer stay RGBA16F. Built with every failure kept by size alone, as
-    before the causes were told apart, 91 of 103 such cells differ and the
-    shared buffer goes to RGBA8.
+    every cell without segments must match A byte for byte - the gather's
+    one-attachment buffer stays half float - and the shared buffer stay
+    RGB10_A2. Built with every failure kept by size alone, as before the
+    causes were told apart, 91 of 103 such cells differed (the shared buffer,
+    RGBA16F then, went to RGBA8 with the gather).
   - **D5**, on cells of its own - the flare and the spotlight at 1.0, 0.5
     and 0.25, the neon on `arcs` at 0.5 and 0.25 - with the fields bypassed (the edge ring's is
     full resolution at every scale) beside its own A: a size limit one px
@@ -429,21 +437,21 @@ flare, the spotlight and a reader of the neon's shared buffer registered:
     the fill program built once before it (nothing knows an allocation fails
     until it is made). Either way the held-back warning is logged once, the
     frames stay within 2 levels of A's (1 on the M2 Pro) and the shared
-    buffer RGBA16F; A must build the fill program.
+    buffer RGB10_A2; A must build the fill program.
   - **S**: the neon, the flare and the spotlight drawn outside an effect,
-    each making its own `FormatAvailability`: five probes by the end of
+    each making its own `FormatAvailability`: six probes by the end of
     `Initialize` and none after, no GL error, and every frame byte for byte
     A's for the same cell.
 
 Every run must make exactly the report's probes less the formats a hook
-answers (5 for A, D, D4, D5 and D6 failing, 3 for D6 refused, 2 for B and E, 0 for C) and leave no GL error - the
+answers (6 for A, D, D4, D5 and D6 failing, 4 for D6 refused, 3 for B and E, 2 for B8, 0 for C) and leave no GL error - the
 scan of the textures alive at the end included, which looks up to the highest
 name `glGenTextures` returned (`DrawTargetWatch`). Every texture a run
 allocates with no data starts out 0x3C in every byte (`DrawTargetWatch`
 wraps `glTexImage2D`): the GL leaves those texels undefined - a device's may
 hold another buffer's old contents - and a desktop GL hands back zeros, so
 without it a buffer that reads a texel it never cleared or drew would pass on
-every Mac. Every case passes with it, so no buffer the gate reaches does. About 5 s on an M2 Pro; exits non-zero on any failure.
+every Mac. Every case passes with it, so no buffer the gate reaches does. About 6 s on an M2 Pro; exits non-zero on any failure.
 `--verbose` also prints each run's WARN and ERROR lines and every cell's
 B-against-A numbers, which is how to recalibrate the bounds on another GPU.
 Run it after adding a buffer or a format list: a buffer that allocates without

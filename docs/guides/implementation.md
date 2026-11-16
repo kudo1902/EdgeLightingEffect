@@ -59,11 +59,12 @@ Concretely it holds:
   refuses formats through.
 
 `Initialize()` logs the driver: every extension, the GL caps, then the
-render-target report - RGBA16F, RG16F, R16F, RGBA8 and RG8, each renderable or
+render-target report - RGBA16F, RG16F, R16F, RGB10_A2, RGBA8 and RG8, each renderable or
 not, and the four extensions that decide them on GLES - before it initialises
 any renderer, so the report's probes are the ones every renderer finds kept.
 On a device, that report is the first thing to read when the glow looks banded:
-a half-float format that does not render puts every buffer on its 8-bit row.
+a half-float format that does not render puts every half-float buffer on its
+8-bit row (the reduced buffers are RGB10_A2, which needs no extension).
 
 Renderers are independent visual layers with no scene graph and no depth
 sorting. They composite by blending, list order is stacking order, and any

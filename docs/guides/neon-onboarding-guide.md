@@ -242,7 +242,7 @@ GLSL offers three ways to read:
 | `uArcLUT` | 128 x 8 | RGBA8 | LINEAR | CLAMP | one row per arc with its own colours |
 | `uEmission` | 128 x 2 | RGBA16F (RGBA8 fallback) | NEAREST | CLAMP | per-sample colour and weight, rebaked by a pre-pass |
 | `uGather`, `uGatherSeg` | depends on the rect | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the gather's results |
-| `uSource` (blit) | the reduced buffer | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the glow shaded at reduced resolution |
+| `uSource` (blit) | the reduced buffer | RGB10_A2 (RGBA8 fallback) | LINEAR | CLAMP | the glow shaded at reduced resolution; its alpha is not read - the blit rebuilds the coverage as `max(r, g, b)` |
 
 The colour ring uses `REPEAT` so that rotating the hue is a single addition
 to u (u past 1 wraps). The atlases use `CLAMP` because an arc's gradient has
@@ -1378,7 +1378,7 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mGlowCover.buffer` | `GetGlowCoverWidth` x 128 - 256 to 1024 columns, from the rect and the halo width (448 for a 960 x 540 rect at the default glow, 704 for 1840 x 1000, 1024 for a thin glow on a large rect) - four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`); its layout is stored with it (`mGlowCover.layout`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`), reallocated when the wanted width rises past it or falls two steps below; never on a ring lit uniformly |
 | `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | every frame it gathers; resized then (no-op if unchanged) |
-| `mScaled` | the neon's shared buffer (`SharedBuffer`, `SharedBufferId::NEON`): the whole viewport at `resolutionScale` (`GetViewportRegion`), what the blit and any other renderer read | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | every frame that draws P1b or P1c, through `BeginWrite` - resized then, and cleared only over the glow quad's window and the last write's |
+| `mScaled` | the neon's shared buffer (`SharedBuffer`, `SharedBufferId::NEON`): the whole viewport at `resolutionScale` (`GetViewportRegion`), what the blit and any other renderer read | RGB10_A2, else RGBA8 (`SCALED_FORMATS`), 1 attachment - 4 bytes a texel, 2.0 MB at 1080p and 0.5 | every frame that draws P1b or P1c, through `BeginWrite` - resized then, and cleared only over the glow quad's window and the last write's |
 | `mGlowField.buffer` | the glow quad's box as a window of whole texels of the reduced buffer's grid (`GetFieldRegion`) | R16F, RG16F with segments (`GetFieldFormats`); no 8-bit fallback - where the driver cannot render it, the field is never built and the glow is shaded directly | only on configs the field serves (Part 5.5) |
 | `mRingField.buffer` | the edge ring's four strips, packed (`RingFieldLayout`) | R16F, RG16F with segments | only on configs the ring field serves |
 
@@ -1822,7 +1822,7 @@ scaled by its coverage.*
 | - | - |
 | **Purpose** | Shade the glow at `resolutionScale`, reading the gather's results instead of looping. |
 | **Runs** | At every scale, unless the offscreen buffers are reused or the field's composite (P1c) stands in for it (Part 5.5). |
-| **Target** | `mScaled`, the neon's shared buffer: RGBA16F (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has unrounded gradients to work on, one attachment, covering the whole viewport at the scale (`GetViewportRegion`), since it is the neon's shared buffer. Cleared to 0 where it can hold anything else: the glow quad's window and the last write's (`SharedBuffer::BeginWrite`). |
+| **Target** | `mScaled`, the neon's shared buffer: RGB10_A2 (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has gradients finer than an 8-bit level to work on - ten bits, at half the bytes of the RGBA16F it was until I109; its 2 bits of alpha are not read, the coverage being the brightest channel - one attachment, covering the whole viewport at the scale (`GetViewportRegion`), since it is the neon's shared buffer. Cleared to 0 where it can hold anything else: the glow quad's window and the last write's (`SharedBuffer::BeginWrite`). |
 | **State** | Blend off: the buffer is fresh and the quad covers each texel once, so blending would only add a destination read. Scissor off. |
 | **Geometry** | `mGlowMesh` through `GetRegionProjection(scaledRegion)`. |
 | **Uniforms** | all of `uploadNeonUniforms` at the real scale with `uBlitOwnsCut` 1, plus `uQuadMargin = mGlowLimits.quadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
@@ -2388,7 +2388,7 @@ except a small rect.
 
 The two offscreen buffers are sized differently:
 
-- **`mScaled`** (a `SharedBuffer`; RGBA16F, RGBA8 fallback) covers the WHOLE viewport at
+- **`mScaled`** (a `SharedBuffer`; RGB10_A2, RGBA8 fallback) covers the WHOLE viewport at
   the scale (`GetViewportRegion`), because it is the neon's shared buffer and
   a reader finds its pixel at `gl_FragCoord.xy / viewport`. It used to cover
   only the blit area plus its footprint, capped at this size; a full-screen

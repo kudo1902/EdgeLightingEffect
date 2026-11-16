@@ -11,6 +11,7 @@
 #include "renderer/base-renderer.h"
 
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -51,6 +52,11 @@ namespace NeonScaleCheck
     /// Every texel of @p buffer as RGBA floats, bottom row first, read
     /// through a framebuffer of its own - so nothing the frame has bound is
     /// touched. Empty when the buffer holds nothing.
+    ///
+    /// The alpha is the coverage AS A READER TAKES IT, max(r, g, b), not the
+    /// texture's own: the neon's buffer is RGB10_A2, whose 2 bits of alpha no
+    /// reader reads (NeonRenderer's SCALED_FORMATS) - and a colour a level
+    /// apart can move them by a third.
     inline std::vector<float> ReadSharedTexels(const SharedBuffer &buffer)
     {
         const glm::ivec2 texels = buffer.GetTexels();
@@ -69,6 +75,10 @@ namespace NeonScaleCheck
         {
             glPixelStorei(GL_PACK_ALIGNMENT, 1);
             glReadPixels(0, 0, texels.x, texels.y, GL_RGBA, GL_FLOAT, data.data());
+            for (size_t at = 0; at + 3 < data.size(); at += 4)
+            {
+                data[at + 3] = std::max(data[at], std::max(data[at + 1], data[at + 2]));
+            }
         }
         glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
         glDeleteFramebuffers(1, &fbo);
