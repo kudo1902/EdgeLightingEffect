@@ -30,7 +30,10 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uField;       ///< Fa (.r) and, with segments, Fs (.g): R16F or RG16F; NEAREST.
+// highp on every sampler of a float or ten-bit buffer: GLSL ES gives a sampler2D
+// lowp by default, which need guarantee only 2^-8 over (-2, 2) - too coarse for
+// these values. Desktop GL ignores the qualifier.
+uniform highp sampler2D uField; ///< Fa (.r) and, with segments, Fs (.g): R16F or RG16F; NEAREST.
 
 // The one-sided cut and the cutoffs, as the shading they stand in for takes
 // them (UploadEdgeMaskUniforms): the ring's at scale 1.0, pass 1b's at the
@@ -46,8 +49,8 @@ uniform float uInsideCutoff;
 uniform float uInsideCutoffSoftness;
 uniform float uOutsideCutoff;
 uniform float uOutsideCutoffSoftness;
-uniform sampler2D uGather;      ///< The gather buffer: the hue in .rgb.
-uniform sampler2D uGatherSeg;   ///< Its second attachment: the segment hue in .rgb. Read only when uFieldSegments is set.
+uniform highp sampler2D uGather;    ///< The gather buffer: the hue in .rgb.
+uniform highp sampler2D uGatherSeg; ///< Its second attachment: the segment hue in .rgb. Read only when uFieldSegments is set.
 uniform int       uFieldSegments; ///< 1 when the field carries Fs in .g (the config has segments), else 0.
 uniform float     uFieldGain;   ///< I / I0: the neon's intensity over the one the field was baked at; exactly 1 but while it moves (I56). Scales Fa only - the segments do not take the intensity.
 uniform vec2      uGatherUVScale;

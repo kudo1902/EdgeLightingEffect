@@ -40,7 +40,10 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform sampler2D uSource;
+// highp on every sampler of a float or ten-bit buffer: GLSL ES gives a sampler2D
+// lowp by default, which need guarantee only 2^-8 over (-2, 2) - too coarse for
+// these values. Desktop GL ignores the qualifier.
+uniform highp sampler2D uSource;
 
 /// The caller's viewport in pixels - what the blit's NDC quad covers - so
 /// `uv * uViewportSize` is the destination pixel the dither is keyed on.

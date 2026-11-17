@@ -5,6 +5,49 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-11-17 - Every sampler of a float buffer is `highp` (I111)
+
+Not committed; on top of `45ad100`.
+
+- **Why.** GLSL ES gives a `sampler2D` lowp by default, which need guarantee
+  only 2^-8 over (-2, 2). Nine samplers read half-float or ten-bit buffers -
+  `uEmission`, `uGlowCover`, `uSegCover`, `uGather` / `uGatherSeg` (in
+  `neon-shade.glsl` and `neon-field-common.glsl`), `uField` and
+  `spotlight-blit.frag`'s `uSource` - and took the default, so a GLES driver
+  that honours lowp may round what they fetch to about 8 bits: the emission
+  table's boosts past 1, the encoded coverages, the field's brightness and
+  the spotlight's tail before its dither. Open since the 2026-11-08 review;
+  the 2026-11-16 architecture recheck put it first, as the cheapest open
+  item with a device-side risk.
+- **What.** All nine are `highp`, with a note where each file declares them.
+  CLAUDE.md now states the rule beside the uniform-array one: like that one,
+  desktop GL cannot catch a miss. The 8-bit LUT samplers (`uGradientLUT`,
+  `uSegmentLUT`, `uArcLUT`) keep the default.
+- **Verified.** Desktop GL ignores precision qualifiers, so the frames must
+  not move: a scratch probe's 95 frames (114 with the hue scenes, also
+  byte-identical) (every `check` scene, five scenes
+  over bright, grey and transparent backgrounds, the flare and the
+  spotlight, at 1.0, 0.5 and 0.25) and `fuzz` seeds 1 to 3 (11,220 frames)
+  are byte-identical to the build before, and every gate passes. Not run on
+  a GLES device, the only place the change does anything.
+- **What it guards against, simulated.** A scratch build rounded every fetch
+  from the nine samplers as the spec's minimum lowp allows (range (-2, 2),
+  absolute precision 2^-8) and drew the same 95 frames. Nearly all of the
+  damage is `uField`: the edge ring's field stores the brightness before the
+  tone map, which runs well past 2 on the line, so the clamp drew the line
+  dimmer and washed out - up to 65-80 levels on 1-3% of the lit pixels in
+  most scenes, 32% on `bounded_band`, alpha down by as much over a
+  transparent target, and a hard-edged step where the ring meets the blit on
+  `overdrive`. The gather, emission and coverage tables alone moved at most
+  2 levels; the spotlight's blit at most 1. A GPU that runs lowp as 16-bit
+  float - as many do - fetches a half-float buffer exactly, so on such a
+  device nothing changes either way; this is the worst a conforming one may
+  do. Rerun with six scenes under a rotating hue, which read the glow's own
+  field: there the clamp flattens the whole glow - 32-42% of the lit pixels
+  off by more than a level on `overdrive`, `soft_wash` and `bounded_band`.
+  Figures and method:
+  [`sampler-precision-visual-check.md`](../design/sampler-precision-visual-check.md).
+
 ## 2026-11-16 - The reduced buffers at ten bits (I109); the glow field given back (I110)
 
 Not committed; on top of `5d1c044`.
@@ -92,7 +135,8 @@ Not committed; on top of `5d1c044`.
   8, at the cost of a second attachment on a path that pays only above six
   lamps. The other samplers of float buffers (`uGather`, `uEmission`,
   `uGlowCover`, `uField`, the spotlight's blit) still take GLSL ES's default
-  `lowp` - nothing new, but the same rule the two blits now follow. Packing
+  `lowp` - nothing new, but the same rule the two blits now follow (made
+  `highp` the next day, I111). Packing
   the shared buffer to the lit band (4-9% of it on a production band) would
   break its reader contract. Not run on the AMD 5300M or a GLES device.
 

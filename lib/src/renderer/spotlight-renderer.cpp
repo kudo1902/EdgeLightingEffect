@@ -28,8 +28,11 @@ namespace EdgeLighting
         /// strips are already the cheap part.
         constexpr float MIN_RESOLUTION_SCALE = 0.125f;
 
-        /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first - the
-        /// same pair, for the same reason, as the neon's SCALED_FORMATS.
+        /// @c mScaledBuffer's formats in PREFERENCE ORDER, best first. Half
+        /// float where the neon's and the flare's reduced buffers are ten bits
+        /// (RGB10_A2_THEN_RGBA8, I109): this layer screens alpha on its own,
+        /// so its coverage is not the brightest colour channel and cannot be
+        /// rebuilt from the colour, and RGB10_A2 keeps 2 bits of alpha.
         ///
         /// Half float leads because this layer's tail is the flattest gradient
         /// in the library - one 8-bit level every 13 to 50 px at default

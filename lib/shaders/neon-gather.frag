@@ -59,7 +59,10 @@ uniform int uNumSamples;
 // Read with texelFetch at integer sample index - never filtered, since
 // neighbouring texels are unrelated perimeter samples. See the gather loop
 // and docs/design/emission-prepass.md.
-uniform sampler2D uEmission;
+// highp on every sampler of a float or ten-bit buffer: GLSL ES gives a sampler2D
+// lowp by default, which need guarantee only 2^-8 over (-2, 2) - too coarse for
+// these values. Desktop GL ignores the qualifier.
+uniform highp sampler2D uEmission;
 
 // The gather's four results - its ONLY outputs, and all four smooth across
 // the screen (Lorentzian-weighted means over the whole perimeter), which is

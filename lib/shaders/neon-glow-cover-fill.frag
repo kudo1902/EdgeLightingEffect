@@ -35,7 +35,10 @@ precision highp float;
 
 out vec4 fragColor;
 
-uniform sampler2D uSegCover;       ///< The segment table, encoded segment (halo, bloom) on .r / .g.
+// highp on every sampler of a float or ten-bit buffer: GLSL ES gives a sampler2D
+// lowp by default, which need guarantee only 2^-8 over (-2, 2) - too coarse for
+// these values. Desktop GL ignores the qualifier.
+uniform highp sampler2D uSegCover; ///< The segment table, encoded segment (halo, bloom) on .r / .g.
 uniform vec4  uGlowCoverLayout;    ///< The MAIN table's layout - the texel being written.
 uniform vec2  uGlowCoverSplit;     ///< The main table's split.
 uniform vec4  uSegCoverLayout;     ///< The segment table's layout - where the value is read.
